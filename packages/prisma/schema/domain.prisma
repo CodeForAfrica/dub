@@ -57,7 +57,7 @@ model DefaultDomains {
   ggllink     Boolean @default(true)
   figpage     Boolean @default(true)
   loooooooong Boolean @default(false)
-  dubprodcodeforafricaorg Boolean @default(true)
+  cfafyi Boolean @default(true)
   projectId   String  @unique
   project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
