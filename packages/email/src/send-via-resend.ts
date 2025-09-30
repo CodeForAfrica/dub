@@ -27,7 +27,7 @@ export const sendEmailViaResend = async (opts: ResendEmailOptions) => {
     to: email,
     from: from || VARIANT_TO_FROM_MAP[variant],
     bcc: bcc,
-    replyTo: replyTo || "support@dub.co",
+    replyTo: replyTo || "support@codeforafrica.org",
     subject,
     text,
     react,
