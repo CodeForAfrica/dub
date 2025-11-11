@@ -3,19 +3,21 @@ import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
 import { prisma } from "@dub/prisma";
 import { log } from "@dub/utils";
 import { z } from "zod";
+import { logAndRespond } from "../../utils";
+import { queueExternalPayouts } from "./queue-external-payouts";
+import { queueStripePayouts } from "./queue-stripe-payouts";
 import { sendPaypalPayouts } from "./send-paypal-payouts";
-import { sendStripePayouts } from "./send-stripe-payouts";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 600; // This function can run for a maximum of 10 minutes
 
 const payloadSchema = z.object({
   invoiceId: z.string(),
 });
 
 // POST /api/cron/payouts/charge-succeeded
-// This route is used to process the charge-succeeded event from Stripe
-// we're intentionally offloading this to a cron job to avoid blocking the main thread
-// so that we can return a 200 to Stripe immediately
+// This route is used to process the charge-succeeded event from Stripe.
+// We're intentionally offloading this to a cron job so we can return a 200 to Stripe immediately.
 export async function POST(req: Request) {
   try {
     const rawBody = await req.text();
@@ -32,9 +34,7 @@ export async function POST(req: Request) {
           select: {
             payouts: {
               where: {
-                status: {
-                  not: "completed",
-                },
+                status: "processing",
               },
             },
           },
@@ -43,28 +43,27 @@ export async function POST(req: Request) {
     });
 
     if (!invoice) {
-      console.log(`Invoice with id ${invoiceId} not found.`);
-      return new Response(`Invoice with id ${invoiceId} not found.`);
+      return logAndRespond(`Invoice ${invoiceId} not found.`);
     }
 
     if (invoice._count.payouts === 0) {
-      console.log("No payouts found with status not completed, skipping...");
-      return new Response(
-        `No payouts found with status not completed for invoice ${invoiceId}`,
+      return logAndRespond(
+        `No payouts found with status 'processing' for invoice ${invoiceId}, skipping...`,
       );
     }
 
     await Promise.allSettled([
-      sendStripePayouts({
-        invoiceId,
-      }),
-
-      sendPaypalPayouts({
-        invoiceId,
-      }),
+      // Queue Stripe payouts
+      queueStripePayouts(invoice),
+      // Send PayPal payouts
+      sendPaypalPayouts(invoice),
+      // Queue external payouts
+      queueExternalPayouts(invoice),
     ]);
 
-    return new Response(`Invoice ${invoiceId} processed.`);
+    return logAndRespond(
+      `Completed processing all payouts for invoice ${invoiceId}.`,
+    );
   } catch (error) {
     await log({
       message: `Error sending payouts for invoice: ${error.message}`,

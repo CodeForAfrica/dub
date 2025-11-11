@@ -315,7 +315,15 @@ export const PLAN_COMPARE_FEATURES: {
           advanced: true,
           enterprise: true,
         },
-        text: "Email campaigns (beta)",
+        text: "Messaging center",
+      },
+      {
+        check: {
+          default: false,
+          advanced: true,
+          enterprise: true,
+        },
+        text: "Email campaigns",
       },
       {
         check: {

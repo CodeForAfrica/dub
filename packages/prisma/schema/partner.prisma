@@ -14,6 +14,14 @@ enum PartnerProfileType {
   company
 }
 
+enum MonthlyTraffic {
+  ZeroToOneThousand
+  OneThousandToTenThousand
+  TenThousandToFiftyThousand
+  FiftyThousandToOneHundredThousand
+  OneHundredThousandPlus
+}
+
 model Partner {
   id                           String             @id @default(cuid())
   name                         String
@@ -24,13 +32,21 @@ model Partner {
   description                  String?            @db.Text
   country                      String?
   status                       PartnerStatus      @default(default)
+
+  // payout fields
   paypalEmail                  String?            @unique
   stripeConnectId              String?            @unique
   payoutsEnabledAt             DateTime?
-  minWithdrawalAmount          Int                @default(10000) // Default minimum withdrawal amount of $100
+  payoutMethodHash             String?            @unique
   connectPayoutsLastRemindedAt DateTime?
+
+  // timestamp fields
   createdAt                    DateTime           @default(now())
   updatedAt                    DateTime           @updatedAt
+  discoverableAt               DateTime?
+  trustedAt                    DateTime?
+
+  // online presence fields
   website                      String?
   websiteTxtRecord             String?
   websiteVerifiedAt            DateTime?
@@ -48,14 +64,32 @@ model Partner {
   instagramVerifiedAt          DateTime?
   tiktok                       String?
   tiktokVerifiedAt             DateTime?
-  invoiceSettings              Json?
 
-  programs          ProgramEnrollment[]
-  users             PartnerUser[]
-  invites           PartnerInvite[]
-  payouts           Payout[]
-  commissions       Commission[]
-  bountySubmissions BountySubmission[]
+  // miscellaneous fields
+  invoiceSettings              Json?
+  changeHistoryLog             Json?
+
+  programs                   ProgramEnrollment[]
+  users                      PartnerUser[]
+  invites                    PartnerInvite[]
+  payouts                    Payout[]
+  commissions                Commission[]
+  bountySubmissions          BountySubmission[]
+  messages                   Message[]
+  sentMessages               Message[]                          @relation("SenderPartner")
+  comments                   PartnerComment[]
+  discountCodes              DiscountCode[]
+  notificationEmails         NotificationEmail[]
+  monthlyTraffic             MonthlyTraffic?
+  industryInterests          PartnerIndustryInterest[]
+  preferredEarningStructures PartnerPreferredEarningStructure[]
+  salesChannels              PartnerSalesChannel[]
+  discoveredByPrograms       DiscoveredPartner[]
+
+  @@index(discoverableAt)
+  @@index(trustedAt)
+  @@index(country)
+  @@fulltext([email, name]) // For full-text search
 }
 
 model PartnerInvite {
@@ -68,7 +102,7 @@ model PartnerInvite {
   partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
 
   @@unique([email, partnerId])
-  @@index([partnerId])
+  @@index(partnerId)
 }
 
 model PartnerUser {
@@ -85,40 +119,50 @@ model PartnerUser {
   notificationPreferences PartnerNotificationPreferences?
 
   @@unique([userId, partnerId])
-  @@index([partnerId])
+  @@index(partnerId)
 }
 
-model PartnerNotificationPreferences {
-  id            String @id @default(cuid())
-  partnerUserId String @unique
+model PartnerIndustryInterest {
+  partnerId        String
+  industryInterest IndustryInterest
 
-  commissionCreated   Boolean @default(true)
-  applicationApproved Boolean @default(true)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
 
-  partnerUser PartnerUser @relation(fields: [partnerUserId], references: [id], onDelete: Cascade)
+  @@unique([partnerId, industryInterest])
 }
 
-model PartnerGroup {
-  id            String   @id @default(cuid())
-  programId     String
-  name          String
-  slug          String
-  color         String?
-  clickRewardId String?  @unique
-  leadRewardId  String?  @unique
-  saleRewardId  String?  @unique
-  discountId    String?  @unique
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+enum PreferredEarningStructure {
+  Revenue_Share
+  Per_Lead
+  Per_Sale
+  Per_Click
+  One_Time_Payment
+}
 
-  program      Program              @relation(fields: [programId], references: [id], onDelete: Cascade)
-  clickReward  Reward?              @relation("ClickReward", fields: [clickRewardId], references: [id])
-  leadReward   Reward?              @relation("LeadReward", fields: [leadRewardId], references: [id])
-  saleReward   Reward?              @relation("SaleReward", fields: [saleRewardId], references: [id])
-  discount     Discount?            @relation(fields: [discountId], references: [id])
-  partners     ProgramEnrollment[]
-  applications ProgramApplication[]
-  bounties     BountyGroup[]
+model PartnerPreferredEarningStructure {
+  partnerId                 String
+  preferredEarningStructure PreferredEarningStructure
 
-  @@unique([programId, slug])
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, preferredEarningStructure])
+}
+
+enum SalesChannel {
+  Blogs
+  Coupons
+  Direct_Reselling
+  Newsletters
+  Social_Media
+  Events
+  Company_Referrals
+}
+
+model PartnerSalesChannel {
+  partnerId    String
+  salesChannel SalesChannel
+
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, salesChannel])
 }

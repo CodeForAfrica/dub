@@ -1,4 +1,4 @@
-import { PAYOUTS_SHEET_ITEMS_LIMIT } from "@/lib/partners/constants";
+import { PAYOUTS_SHEET_ITEMS_LIMIT } from "@/lib/constants/payouts";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { CommissionResponse, PayoutResponse } from "@/lib/types";
 import { CommissionTypeIcon } from "@/ui/partners/comission-type-icon";
@@ -61,7 +61,7 @@ function PayoutDetailsSheetContent({ payout }: PayoutDetailsSheetProps) {
     return {
       Partner: (
         <ConditionalLink
-          href={`/${slug}/program/partners?partnerId=${payout.partner.id}`}
+          href={`/${slug}/program/partners/${payout.partner.id}`}
           target="_blank"
         >
           <img
@@ -251,12 +251,12 @@ function PayoutDetailsSheetContent({ payout }: PayoutDetailsSheetProps) {
         {payout.status === "pending" ? (
           <Button
             type="button"
-            variant="secondary"
-            text="Confirm all pending payouts"
+            text="Confirm payout"
             onClick={() => {
               queryParams({
                 set: {
                   confirmPayouts: "true",
+                  selectedPayoutId: payout.id,
                 },
                 del: "payoutId",
                 scroll: false,

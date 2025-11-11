@@ -1,5 +1,5 @@
 import { cn } from "@dub/utils";
-import { Command, CommandInput, CommandItem, useCommandState } from "cmdk";
+import { Command, useCommandState } from "cmdk";
 import { ChevronDown } from "lucide-react";
 import {
   forwardRef,
@@ -9,12 +9,11 @@ import {
   ReactNode,
   useCallback,
   useEffect,
-  useRef,
   useState,
 } from "react";
 import { AnimatedSizeContainer } from "../animated-size-container";
 import { Button, ButtonProps } from "../button";
-import { useMediaQuery, useScrollProgress } from "../hooks";
+import { useMediaQuery } from "../hooks";
 import {
   Check2,
   CheckboxCheckedFill,
@@ -24,6 +23,7 @@ import {
   Plus,
 } from "../icons";
 import { Popover, PopoverProps } from "../popover";
+import { ScrollContainer } from "../scroll-container";
 import { Tooltip } from "../tooltip";
 
 export type ComboboxOption<TMeta = any> = {
@@ -49,13 +49,18 @@ export type ComboboxProps<
     : (option: ComboboxOption<TMeta> | null) => void;
   onSelect?: (option: ComboboxOption<TMeta>) => void;
   options?: ComboboxOption<TMeta>[];
+  trigger?: ReactNode;
   icon?: Icon | ReactNode;
   placeholder?: ReactNode;
   searchPlaceholder?: string;
   emptyState?: ReactNode;
   createLabel?: (search: string) => ReactNode;
+  createIcon?: Icon;
   onCreate?: (search: string) => Promise<boolean>;
   buttonProps?: ButtonProps;
+  labelProps?: { className?: string };
+  iconProps?: { className?: string };
+  popoverProps?: { contentClassName?: string };
   shortcutHint?: string;
   caret?: boolean | ReactNode;
   side?: PopoverProps["side"];
@@ -84,13 +89,18 @@ export function Combobox({
   setSelected,
   onSelect,
   options,
+  trigger,
   icon: Icon,
   placeholder = "Select...",
   searchPlaceholder = "Search...",
   emptyState,
   createLabel,
+  createIcon: CreateIcon = Plus,
   onCreate,
   buttonProps,
+  labelProps,
+  iconProps,
+  popoverProps,
   shortcutHint,
   caret,
   side,
@@ -190,6 +200,35 @@ export function Combobox({
 
   useEffect(() => onSearchChange?.(search), [search]);
 
+  const createOptionItem = (
+    <Command.Item
+      className={cn(
+        "flex cursor-pointer items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-neutral-700",
+        "data-[selected=true]:bg-neutral-100",
+        optionClassName,
+      )}
+      onSelect={async () => {
+        setIsCreating(true);
+        const success = await onCreate?.(search);
+        if (success) {
+          setSearch("");
+          setIsOpen(false);
+        }
+        setIsCreating(false);
+      }}
+    >
+      {isCreating ? (
+        <LoadingSpinner className="size-4 shrink-0" />
+      ) : (
+        <CreateIcon className="size-4 shrink-0" />
+      )}
+      <div className="grow truncate">
+        {createLabel?.(search) ??
+          `Create ${search ? `"${search}"` : "new option..."}`}
+      </div>
+    </Command.Item>
+  );
+
   return (
     <Popover
       openPopover={isOpen}
@@ -202,6 +241,7 @@ export function Combobox({
       }}
       popoverContentClassName={cn(
         matchTriggerWidth && "sm:w-[var(--radix-popover-trigger-width)]",
+        popoverProps?.contentClassName,
       )}
       content={
         <AnimatedSizeContainer
@@ -214,7 +254,7 @@ export function Combobox({
           <Command loop shouldFilter={shouldFilter}>
             {!hideSearch && (
               <div className="flex items-center overflow-hidden rounded-t-lg border-b border-neutral-200">
-                <CommandInput
+                <Command.Input
                   placeholder={searchPlaceholder}
                   value={search}
                   onValueChange={setSearch}
@@ -241,7 +281,12 @@ export function Combobox({
                 )}
               </div>
             )}
-            <Scroll>
+            <ScrollContainer
+              className={cn(
+                "max-h-[min(50vh,250px)]",
+                onCreate && !multiple && "max-h-[calc(min(50vh,250px)-3.5rem)]",
+              )}
+            >
               <Command.List
                 className={cn("flex w-full min-w-[100px] flex-col gap-1 p-1")}
               >
@@ -260,33 +305,11 @@ export function Combobox({
                         className={optionClassName}
                       />
                     ))}
-                    {search.length > 0 && onCreate && (
-                      <CommandItem
-                        className={cn(
-                          "flex cursor-pointer items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-neutral-700",
-                          "data-[selected=true]:bg-neutral-100",
-                          optionClassName,
-                        )}
-                        onSelect={async () => {
-                          setIsCreating(true);
-                          const success = await onCreate?.(search);
-                          if (success) {
-                            setSearch("");
-                            setIsOpen(false);
-                          }
-                          setIsCreating(false);
-                        }}
-                      >
-                        {isCreating ? (
-                          <LoadingSpinner className="size-4 shrink-0" />
-                        ) : (
-                          <Plus className="size-4 shrink-0" />
-                        )}
-                        <div className="grow truncate">
-                          {createLabel?.(search) || `Create "${search}"`}
-                        </div>
-                      </CommandItem>
-                    )}
+                    {/* for multiple selection, the create option item is shown at the bottom of the list */}
+                    {onCreate &&
+                      multiple &&
+                      search.length > 0 &&
+                      createOptionItem}
                     {shouldFilter ? (
                       <Empty className="flex min-h-12 items-center justify-center text-sm text-neutral-500">
                         {emptyState ? emptyState : "No matches"}
@@ -306,72 +329,62 @@ export function Combobox({
                   </Command.Loading>
                 )}
               </Command.List>
-            </Scroll>
+            </ScrollContainer>
+            {/* for single selection, the create option item is shown as a sticky item outside of the scroll container */}
+            {onCreate && !multiple && (
+              <div className="rounded-b-lg border-t border-neutral-200 bg-white p-1">
+                {createOptionItem}
+              </div>
+            )}
           </Command>
         </AnimatedSizeContainer>
       }
     >
-      <Button
-        variant="secondary"
-        {...buttonProps}
-        className={cn(buttonProps?.className, "flex gap-2")}
-        textWrapperClassName={cn(
-          buttonProps?.textWrapperClassName,
-          "w-full flex items-center justify-start",
-        )}
-        text={
-          <>
-            <div className="min-w-0 grow truncate text-left">
-              {children ||
-                selected.map((option) => option.label).join(", ") ||
-                placeholder}
-            </div>
-            {caret &&
-              (caret === true ? (
-                <ChevronDown
-                  className={`ml-1 size-4 shrink-0 text-neutral-400 transition-transform duration-75 group-data-[state=open]:rotate-180`}
-                />
+      {trigger ?? (
+        <Button
+          variant="secondary"
+          {...buttonProps}
+          className={cn(buttonProps?.className, "flex gap-2")}
+          textWrapperClassName={cn(
+            buttonProps?.textWrapperClassName,
+            "w-full flex items-center justify-start",
+          )}
+          text={
+            <>
+              <div
+                className={cn(
+                  "min-w-0 grow truncate text-left",
+                  labelProps?.className,
+                )}
+              >
+                {children ||
+                  selected.map((option) => option.label).join(", ") ||
+                  placeholder}
+              </div>
+              {caret &&
+                (caret === true ? (
+                  <ChevronDown
+                    className={`ml-1 size-4 shrink-0 text-neutral-400 transition-transform duration-75 group-data-[state=open]:rotate-180`}
+                  />
+                ) : (
+                  caret
+                ))}
+            </>
+          }
+          icon={
+            Icon ? (
+              isReactNode(Icon) ? (
+                Icon
               ) : (
-                caret
-              ))}
-          </>
-        }
-        icon={
-          Icon ? (
-            isReactNode(Icon) ? (
-              Icon
-            ) : (
-              <Icon className="size-4 shrink-0" />
-            )
-          ) : undefined
-        }
-      />
+                <Icon className={cn("size-4 shrink-0", iconProps?.className)} />
+              )
+            ) : undefined
+          }
+        />
+      )}
     </Popover>
   );
 }
-
-const Scroll = ({ children }: PropsWithChildren) => {
-  const ref = useRef<HTMLDivElement>(null);
-
-  const { scrollProgress, updateScrollProgress } = useScrollProgress(ref);
-
-  return (
-    <>
-      <div
-        className="scrollbar-hide max-h-[min(50vh,250px)] w-screen overflow-y-scroll sm:w-auto"
-        ref={ref}
-        onScroll={updateScrollProgress}
-      >
-        {children}
-      </div>
-      {/* Bottom scroll fade */}
-      <div
-        className="pointer-events-none absolute bottom-0 left-0 hidden h-16 w-full rounded-b-lg bg-gradient-to-t from-white sm:block"
-        style={{ opacity: 1 - Math.pow(scrollProgress, 2) }}
-      ></div>
-    </>
-  );
-};
 
 function Option({
   option,
@@ -411,7 +424,7 @@ function Option({
               )}
             </div>
           )}
-          <div className="flex min-w-0 grow items-center gap-1">
+          <div className="flex min-w-0 grow items-center gap-2">
             {option.icon && (
               <span className="shrink-0 text-neutral-600">
                 {isReactNode(option.icon) ? (

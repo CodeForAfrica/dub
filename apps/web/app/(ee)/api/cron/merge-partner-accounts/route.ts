@@ -1,12 +1,13 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { linkCache } from "@/lib/api/links/cache";
+import { includeProgramEnrollment } from "@/lib/api/links/include-program-enrollment";
 import { includeTags } from "@/lib/api/links/include-tags";
+import { syncTotalCommissions } from "@/lib/api/partners/sync-total-commissions";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
 import { storage } from "@/lib/storage";
 import { recordLink } from "@/lib/tinybird";
 import { redis } from "@/lib/upstash";
-import { resend, unsubscribe } from "@dub/email/resend";
-import { VARIANT_TO_FROM_MAP } from "@dub/email/resend/constants";
+import { sendBatchEmail } from "@dub/email";
 import PartnerAccountMerged from "@dub/email/templates/partner-account-merged";
 import { prisma } from "@dub/prisma";
 import { log, R2_URL } from "@dub/utils";
@@ -131,44 +132,31 @@ export async function POST(req: Request) {
       ({ programId }) => programId,
     );
 
-    // update links, commissions, and payouts
+    const updateManyPayload = {
+      where: {
+        programId: {
+          in: programIdsToTransfer,
+        },
+        partnerId: sourcePartnerId,
+      },
+      data: {
+        partnerId: targetPartnerId,
+      },
+    };
+
+    // update links, commissions, bounty submissions, and payouts
     if (programIdsToTransfer.length > 0) {
       await Promise.all([
-        prisma.link.updateMany({
-          where: {
-            programId: {
-              in: programIdsToTransfer,
-            },
-            partnerId: sourcePartnerId,
-          },
-          data: {
-            partnerId: targetPartnerId,
-          },
-        }),
+        prisma.link.updateMany(updateManyPayload),
+        prisma.commission.updateMany(updateManyPayload),
+        prisma.payout.updateMany(updateManyPayload),
+      ]);
 
-        prisma.commission.updateMany({
-          where: {
-            programId: {
-              in: programIdsToTransfer,
-            },
-            partnerId: sourcePartnerId,
-          },
-          data: {
-            partnerId: targetPartnerId,
-          },
-        }),
-
-        prisma.payout.updateMany({
-          where: {
-            programId: {
-              in: programIdsToTransfer,
-            },
-            partnerId: sourcePartnerId,
-          },
-          data: {
-            partnerId: targetPartnerId,
-          },
-        }),
+      // update notification emails, messages, and partner comments
+      await Promise.all([
+        prisma.notificationEmail.updateMany(updateManyPayload),
+        prisma.message.updateMany(updateManyPayload),
+        prisma.partnerComment.updateMany(updateManyPayload),
       ]);
 
       const updatedLinks = await prisma.link.findMany({
@@ -178,14 +166,51 @@ export async function POST(req: Request) {
           },
           partnerId: targetPartnerId,
         },
-        include: includeTags,
+        include: {
+          ...includeTags,
+          ...includeProgramEnrollment,
+        },
       });
 
-      await Promise.all([
+      // Bounty submissions to transfer to the target partner
+      const bountySubmissions = await prisma.bountySubmission.findMany({
+        where: {
+          programId: {
+            in: programIdsToTransfer,
+          },
+          partnerId: sourcePartnerId,
+        },
+      });
+
+      // Attempting to update all source submissions to the target partnerId fails
+      // if the target already has submissions for the same bounties.
+      if (bountySubmissions.length > 0) {
+        await Promise.allSettled(
+          bountySubmissions.map((submission) =>
+            prisma.bountySubmission.update({
+              where: {
+                id: submission.id,
+              },
+              data: {
+                partnerId: targetPartnerId,
+              },
+            }),
+          ),
+        );
+      }
+
+      await Promise.allSettled([
         // update link metadata in Tinybird
         recordLink(updatedLinks),
         // expire link cache in Redis
         linkCache.expireMany(updatedLinks),
+        // Sync total commissions for the target partner in each program
+        ...programIdsToTransfer.map((programId) =>
+          syncTotalCommissions({
+            partnerId: targetPartnerId,
+            programId,
+          }),
+        ),
       ]);
     }
 
@@ -201,71 +226,79 @@ export async function POST(req: Request) {
       });
 
       if (workspaceCount === 0) {
-        const deletedUser = await prisma.user.delete({
-          where: {
-            id: sourcePartnerUser.userId,
-          },
-          select: {
-            image: true,
-            email: true,
-          },
-        });
+        try {
+          const deletedUser = await prisma.user.delete({
+            where: {
+              id: sourcePartnerUser.userId,
+            },
+            select: {
+              image: true,
+              email: true,
+            },
+          });
 
-        await Promise.all([
-          deletedUser.image
-            ? storage.delete(deletedUser.image.replace(`${R2_URL}/`, ""))
-            : Promise.resolve(),
-
-          unsubscribe({
-            email: deletedUser.email!,
-          }),
-        ]);
+          if (deletedUser.image) {
+            await storage.delete({
+              key: deletedUser.image.replace(`${R2_URL}/`, ""),
+            });
+          }
+        } catch (error) {
+          console.error(
+            `Error deleting user ${sourcePartnerUser.userId}: ${error.message}`,
+          );
+        }
       }
     }
 
-    // Finally, delete the partner account
-    const deletedPartner = await prisma.partner.delete({
-      where: {
-        id: sourcePartnerId,
-      },
-    });
+    try {
+      // Finally, delete the partner account
+      const deletedPartner = await prisma.partner.delete({
+        where: {
+          id: sourcePartnerId,
+        },
+      });
 
-    await Promise.all([
-      deletedPartner.image
-        ? storage.delete(deletedPartner.image.replace(`${R2_URL}/`, ""))
-        : Promise.resolve(),
-
-      unsubscribe({
-        email: sourceEmail,
-        audience: "partners.dub.co",
-      }),
-    ]);
+      if (deletedPartner.image) {
+        await storage.delete({
+          key: deletedPartner.image.replace(`${R2_URL}/`, ""),
+        });
+      }
+    } catch (error) {
+      console.error(
+        `Error deleting partner ${sourcePartnerId}: ${error.message}`,
+      );
+    }
 
     // Make sure the cache is cleared
     await redis.del(`${CACHE_KEY_PREFIX}:${userId}`);
 
-    await resend.batch.send([
+    await sendBatchEmail(
+      [
+        {
+          variant: "notifications",
+          to: sourceEmail,
+          subject: "Your Dub partner accounts are now merged",
+          react: PartnerAccountMerged({
+            email: sourceEmail,
+            sourceEmail,
+            targetEmail,
+          }),
+        },
+        {
+          variant: "notifications",
+          to: targetEmail,
+          subject: "Your Dub partner accounts are now merged",
+          react: PartnerAccountMerged({
+            email: targetEmail,
+            sourceEmail,
+            targetEmail,
+          }),
+        },
+      ],
       {
-        from: VARIANT_TO_FROM_MAP.notifications,
-        to: sourceEmail,
-        subject: "Your Dub partner accounts are now merged",
-        react: PartnerAccountMerged({
-          email: sourceEmail,
-          sourceEmail,
-          targetEmail,
-        }),
+        idempotencyKey: `merge-partner-accounts/${userId}`,
       },
-      {
-        from: VARIANT_TO_FROM_MAP.notifications,
-        to: targetEmail,
-        subject: "Your Dub partner accounts are now merged",
-        react: PartnerAccountMerged({
-          email: targetEmail,
-          sourceEmail,
-          targetEmail,
-        }),
-      },
-    ]);
+    );
 
     return new Response(
       `Partner account ${sourceEmail} merged into ${targetEmail}.`,

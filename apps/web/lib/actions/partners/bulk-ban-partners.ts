@@ -1,15 +1,17 @@
 "use server";
 
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
+import { queueDiscountCodeDeletion } from "@/lib/api/discounts/queue-discount-code-deletion";
 import { linkCache } from "@/lib/api/links/cache";
+import { includeTags } from "@/lib/api/links/include-tags";
 import { syncTotalCommissions } from "@/lib/api/partners/sync-total-commissions";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { recordLink } from "@/lib/tinybird";
 import {
   BAN_PARTNER_REASONS,
   bulkBanPartnersSchema,
 } from "@/lib/zod/schemas/partners";
-import { resend } from "@dub/email/resend";
-import { VARIANT_TO_FROM_MAP } from "@dub/email/resend/constants";
+import { sendBatchEmail } from "@dub/email";
 import PartnerBanned from "@dub/email/templates/partner-banned";
 import { prisma } from "@dub/prisma";
 import { ProgramEnrollmentStatus } from "@prisma/client";
@@ -44,9 +46,9 @@ export const bulkBanPartnersAction = authActionClient
           },
         },
         links: {
-          select: {
-            domain: true,
-            key: true,
+          include: {
+            ...includeTags,
+            discountCode: true,
           },
         },
       },
@@ -85,6 +87,7 @@ export const bulkBanPartnersAction = authActionClient
           ...commonWhere,
         },
         data: {
+          disabledAt: new Date(),
           expiresAt: new Date(),
         },
       }),
@@ -108,6 +111,27 @@ export const bulkBanPartnersAction = authActionClient
           status: "canceled",
         },
       }),
+
+      prisma.bountySubmission.updateMany({
+        where: {
+          ...commonWhere,
+          status: {
+            not: "approved",
+          },
+        },
+        data: {
+          status: "rejected",
+        },
+      }),
+
+      prisma.discountCode.updateMany({
+        where: {
+          ...commonWhere,
+        },
+        data: {
+          discountId: null,
+        },
+      }),
     ]);
 
     waitUntil(
@@ -122,10 +146,20 @@ export const bulkBanPartnersAction = authActionClient
           ),
         );
 
-        // Expire links from cache
-        await linkCache.deleteMany(
-          programEnrollments.flatMap(({ links }) => links),
-        );
+        const links = programEnrollments.flatMap(({ links }) => links);
+
+        await Promise.allSettled([
+          // Expire links from cache
+          linkCache.expireMany(links),
+          // Delete links from Tinybird links metadata
+          recordLink(links, { deleted: true }),
+          // Queue discount code deletions
+          queueDiscountCodeDeletion(
+            links
+              .map((link) => link.discountCode?.id)
+              .filter((id): id is string => id !== undefined),
+          ),
+        ]);
 
         // Record audit log for each partner
         await recordAuditLog(
@@ -152,23 +186,19 @@ export const bulkBanPartnersAction = authActionClient
           },
           select: {
             name: true,
+            slug: true,
             supportEmail: true,
           },
         });
 
-        if (!resend) {
-          console.error("Resend is not configured, skipping email sending.");
-          return;
-        }
-
-        await resend.batch.send(
+        await sendBatchEmail(
           programEnrollments
             .filter(({ partner }) => partner.email)
             .map(({ partner }) => ({
-              from: VARIANT_TO_FROM_MAP.notifications,
               to: partner.email!,
               subject: `You've been banned from the ${program.name} Partner Program`,
               variant: "notifications",
+              replyTo: program.supportEmail || "noreply",
               react: PartnerBanned({
                 partner: {
                   name: partner.name,
@@ -176,7 +206,7 @@ export const bulkBanPartnersAction = authActionClient
                 },
                 program: {
                   name: program.name,
-                  supportEmail: program.supportEmail || "support@dub.co",
+                  slug: program.slug,
                 },
                 bannedReason: BAN_PARTNER_REASONS[parsedInput.reason],
               }),

@@ -4,9 +4,9 @@ import { includeTags } from "@/lib/api/links/include-tags";
 import { generateRandomName } from "@/lib/names";
 import { createPartnerCommission } from "@/lib/partners/create-partner-commission";
 import { isStored, storage } from "@/lib/storage";
-import { getClickEvent, recordLead, recordLeadSync } from "@/lib/tinybird";
+import { getClickEvent, recordLead } from "@/lib/tinybird";
 import { logConversionEvent } from "@/lib/tinybird/log-conversion-events";
-import { ClickEventTB, WorkspaceProps } from "@/lib/types";
+import { WebhookPartner, WorkspaceProps } from "@/lib/types";
 import { redis } from "@/lib/upstash";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { transformLeadEventData } from "@/lib/webhook/transform";
@@ -15,10 +15,11 @@ import {
   trackLeadResponseSchema,
 } from "@/lib/zod/schemas/leads";
 import { prisma } from "@dub/prisma";
-import { WorkflowTrigger } from "@dub/prisma/client";
+import { Link, WorkflowTrigger } from "@dub/prisma/client";
 import { nanoid, R2_URL } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
+import { syncPartnerLinksStats } from "../partners/sync-partner-links-stats";
 import { executeWorkflows } from "../workflows/execute-workflows";
 
 type TrackLeadParams = z.input<typeof trackLeadRequestSchema> & {
@@ -48,6 +49,7 @@ export const trackLead = async ({
       },
     },
   });
+  let link: Link | null = null;
 
   // if clickId is an empty string, use the existing customer's clickId if it exists
   // otherwise, throw an error (this is for mode="deferred" lead tracking)
@@ -102,32 +104,9 @@ export const trackLead = async ({
   // we can proceed with the lead tracking process
   if (!isDuplicateEvent) {
     // First, we need to find the click event
-    let clickData: ClickEventTB | null = null;
-    const clickEvent = await getClickEvent({ clickId });
+    const clickData = await getClickEvent({ clickId });
 
-    if (clickEvent && clickEvent.data && clickEvent.data.length > 0) {
-      clickData = clickEvent.data[0];
-    }
-
-    // if there is no click data in Tinybird yet, check the clickIdCache
-    if (!clickData) {
-      const cachedClickData = await redis.get<ClickEventTB>(
-        `clickIdCache:${clickId}`,
-      );
-
-      if (cachedClickData) {
-        clickData = {
-          ...cachedClickData,
-          timestamp: cachedClickData.timestamp
-            .replace("T", " ")
-            .replace("Z", ""),
-          qr: cachedClickData.qr ? 1 : 0,
-          bot: cachedClickData.bot ? 1 : 0,
-        };
-      }
-    }
-
-    // if there is still no click data, throw an error
+    // if there is no click data, throw an error
     if (!clickData) {
       throw new DubApiError({
         code: "not_found",
@@ -136,12 +115,9 @@ export const trackLead = async ({
     }
 
     // get the referral link from the from the clickData
-    const link = await prisma.link.findUnique({
+    link = await prisma.link.findUnique({
       where: {
         id: clickData.link_id,
-      },
-      select: {
-        projectId: true,
       },
     });
 
@@ -155,7 +131,14 @@ export const trackLead = async ({
     if (link.projectId !== workspace.id) {
       throw new DubApiError({
         code: "not_found",
-        message: `Link for clickId ${clickId} does not belong to the workspace`,
+        message: `Link ${link.id} for clickId ${clickId} does not belong to the workspace`,
+      });
+    }
+
+    if (link.disabledAt) {
+      throw new DubApiError({
+        code: "not_found",
+        message: `Link ${link.id} for clickId ${clickId} is disabled, lead not tracked`,
       });
     }
 
@@ -165,6 +148,7 @@ export const trackLead = async ({
     const createLeadEventPayload = (customerId: string) => {
       const basePayload = {
         ...clickData,
+        workspace_id: clickData.workspace_id || workspace.id, // in case for some reason the click event doesn't have workspace_id
         event_id: leadEventId,
         event_name: eventName,
         customer_id: customerId,
@@ -216,9 +200,6 @@ export const trackLead = async ({
         : leadEventPayload;
 
       await Promise.all([
-        // Use recordLeadSync which waits for the operation to complete
-        recordLeadSync(leadEventPayload),
-
         // Cache the latest lead event for 5 minutes because the ingested event is not available immediately on Tinybird
         // we're setting two keys because we want to support the use case where the customer has multiple lead events
         redis.set(`leadCache:${customer.id}`, cacheLeadEventPayload, {
@@ -237,9 +218,8 @@ export const trackLead = async ({
 
     waitUntil(
       (async () => {
-        // for async mode, record the lead event in the background
-        // for deferred mode, defer the lead event creation to a subsequent request
-        if (mode === "async") {
+        // for deferred mode, we defer the lead event creation to a subsequent request
+        if (mode !== "deferred") {
           await recordLead(createLeadEventPayload(customer.id));
         }
 
@@ -257,14 +237,14 @@ export const trackLead = async ({
           finalCustomerAvatar
         ) {
           // persist customer avatar to R2
-          await storage.upload(
-            finalCustomerAvatar.replace(`${R2_URL}/`, ""),
-            customerAvatar,
-            {
+          await storage.upload({
+            key: finalCustomerAvatar.replace(`${R2_URL}/`, ""),
+            body: customerAvatar,
+            opts: {
               width: 128,
               height: 128,
             },
-          );
+          });
         }
 
         // if not deferred mode, process the following right away:
@@ -273,7 +253,7 @@ export const trackLead = async ({
         // - send lead.created webhook
 
         if (mode !== "deferred") {
-          const [link, _project] = await Promise.all([
+          const [updatedLink, _project] = await Promise.all([
             // update link leads count
             prisma.link.update({
               where: {
@@ -283,6 +263,7 @@ export const trackLead = async ({
                 leads: {
                   increment: eventQuantity ?? 1,
                 },
+                lastLeadAt: new Date(),
               },
               include: includeTags,
             }),
@@ -299,9 +280,12 @@ export const trackLead = async ({
               },
             }),
           ]);
+          link = updatedLink; // update the link variable to the latest version
+
+          let webhookPartner: WebhookPartner | undefined;
 
           if (link.programId && link.partnerId && customer) {
-            await createPartnerCommission({
+            const createdCommission = await createPartnerCommission({
               event: "lead",
               programId: link.programId,
               partnerId: link.partnerId,
@@ -315,12 +299,25 @@ export const trackLead = async ({
                 },
               },
             });
+            webhookPartner = createdCommission?.webhookPartner;
 
-            await executeWorkflows({
-              trigger: WorkflowTrigger.leadRecorded,
-              programId: link.programId,
-              partnerId: link.partnerId,
-            });
+            await Promise.allSettled([
+              executeWorkflows({
+                trigger: WorkflowTrigger.leadRecorded,
+                context: {
+                  programId: link.programId,
+                  partnerId: link.partnerId,
+                  current: {
+                    leads: 1,
+                  },
+                },
+              }),
+              syncPartnerLinksStats({
+                partnerId: link.partnerId,
+                programId: link.programId,
+                eventType: "lead",
+              }),
+            ]);
           }
 
           await sendWorkspaceWebhook({
@@ -330,6 +327,8 @@ export const trackLead = async ({
               eventName,
               link,
               customer,
+              partner: webhookPartner,
+              metadata,
             }),
             workspace,
           });
@@ -342,6 +341,7 @@ export const trackLead = async ({
     click: {
       id: clickId,
     },
+    link,
     customer: customer ?? {
       name: finalCustomerName,
       email: customerEmail || null,

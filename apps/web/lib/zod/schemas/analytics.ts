@@ -6,7 +6,6 @@ import {
   TRIGGER_TYPES,
   VALID_ANALYTICS_ENDPOINTS,
 } from "@/lib/analytics/constants";
-import { prefixWorkspaceId } from "@/lib/api/workspace-id";
 import z from "@/lib/zod";
 import {
   CONTINENT_CODES,
@@ -17,7 +16,7 @@ import {
 } from "@dub/utils";
 import { booleanQuerySchema } from "./misc";
 import { parseDateSchema } from "./utils";
-import { utmTagsSchema } from "./utm";
+import { UTMTemplateSchema } from "./utm";
 
 const analyticsEvents = z
   .enum([...EVENT_TYPES, "composite"], {
@@ -215,6 +214,10 @@ export const analyticsQuerySchema = z
       .describe(
         "The folder ID to retrieve analytics for. If not provided, return analytics for unsorted links.",
       ),
+    groupId: z
+      .string()
+      .optional()
+      .describe("The group ID to retrieve analytics for."),
     root: booleanQuerySchema
       .optional()
       .describe(
@@ -251,16 +254,13 @@ export const analyticsQuerySchema = z
       )
       .openapi({ deprecated: true }),
   })
-  .merge(utmTagsSchema);
+  .merge(UTMTemplateSchema.omit({ id: true, name: true }));
 
 // Analytics filter params for Tinybird endpoints
 export const analyticsFilterTB = z
   .object({
     eventType: analyticsEvents,
-    workspaceId: z
-      .string()
-      .optional()
-      .transform((v) => (v ? prefixWorkspaceId(v) : undefined)),
+    workspaceId: z.string().optional(),
     customerId: z.string().optional(),
     root: z.boolean().optional(),
     saleType: z.string().optional(),
@@ -269,10 +269,6 @@ export const analyticsFilterTB = z
     end: z.string(),
     granularity: z.enum(["minute", "hour", "day", "month"]).optional(),
     timezone: z.string().optional(),
-    groupByUtmTag: z
-      .string()
-      .optional()
-      .describe("The UTM tag to group by. Defaults to `utm_source`."),
     // TODO: remove this once it's been added to the public API
     linkIds: z
       .union([z.string(), z.array(z.string())])
@@ -284,7 +280,6 @@ export const analyticsFilterTB = z
       .transform((v) => (Array.isArray(v) ? v : v.split(",")))
       .optional()
       .describe("The folder IDs to retrieve analytics for."),
-    isMegaFolder: z.boolean().optional(),
     filters: z
       .string()
       .optional()
@@ -292,6 +287,7 @@ export const analyticsFilterTB = z
   })
   .merge(
     analyticsQuerySchema.pick({
+      groupBy: true,
       browser: true,
       city: true,
       country: true,
@@ -314,6 +310,7 @@ export const analyticsFilterTB = z
       partnerId: true,
       tenantId: true,
       folderId: true,
+      groupId: true,
       sortBy: true,
     }),
   );

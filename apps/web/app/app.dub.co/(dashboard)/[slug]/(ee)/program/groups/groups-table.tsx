@@ -1,6 +1,7 @@
 "use client";
 
 import useGroupsCount from "@/lib/swr/use-groups-count";
+import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { GroupExtendedProps } from "@/lib/types";
 import { DEFAULT_PARTNER_GROUP } from "@/lib/zod/schemas/groups";
@@ -20,7 +21,15 @@ import {
   useRouterStuff,
   useTable,
 } from "@dub/ui";
-import { Copy, Dots, PenWriting, Tick, Trash, Users } from "@dub/ui/icons";
+import {
+  Copy,
+  Dots,
+  LinesY,
+  PenWriting,
+  Tick,
+  Trash,
+  Users,
+} from "@dub/ui/icons";
 import { cn, currencyFormatter, fetcher, nFormatter } from "@dub/utils";
 import { Row } from "@tanstack/react-table";
 import { Command } from "cmdk";
@@ -40,10 +49,13 @@ const getGroupUrl = ({
 export function GroupsTable() {
   const router = useRouter();
   const { id: workspaceId, slug, defaultProgramId } = useWorkspace();
+  const { program } = useProgram();
   const { pagination, setPagination } = usePagination();
   const { queryParams, searchParams, getQueryString } = useRouterStuff();
 
-  const sortBy = searchParams.get("sortBy") || "saleAmount";
+  const sortBy =
+    searchParams.get("sortBy") ||
+    (program?.primaryRewardEvent === "lead" ? "totalLeads" : "totalSaleAmount");
   const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc";
 
   const {
@@ -56,6 +68,8 @@ export function GroupsTable() {
       `/api/groups${getQueryString({
         workspaceId: workspaceId,
         includeExpandedFields: "true",
+        sortBy,
+        sortOrder,
       }).toString()}`,
     fetcher,
     {
@@ -100,34 +114,34 @@ export function GroupsTable() {
         ),
       },
       {
-        id: "partners",
+        id: "totalPartners",
         header: "Partners",
-        accessorFn: (d) => nFormatter(d.partners, { full: true }),
+        accessorFn: (d) => nFormatter(d.totalPartners, { full: true }),
       },
       {
-        id: "clicks",
+        id: "totalClicks",
         header: "Clicks",
-        accessorFn: (d) => nFormatter(d.clicks),
+        accessorFn: (d) => nFormatter(d.totalClicks),
       },
       {
-        id: "leads",
+        id: "totalLeads",
         header: "Leads",
-        accessorFn: (d) => nFormatter(d.leads),
+        accessorFn: (d) => nFormatter(d.totalLeads),
       },
       {
-        id: "conversions",
+        id: "totalConversions",
         header: "Conversions",
-        accessorFn: (d) => nFormatter(d.conversions),
+        accessorFn: (d) => nFormatter(d.totalConversions),
       },
       {
-        id: "saleAmount",
+        id: "totalSaleAmount",
         header: "Revenue",
-        accessorFn: (d) => currencyFormatter(d.saleAmount / 100),
+        accessorFn: (d) => currencyFormatter(d.totalSaleAmount / 100),
       },
       {
-        id: "commissions",
+        id: "totalCommissions",
         header: "Commissions",
-        accessorFn: (d) => currencyFormatter(d.commissions / 100),
+        accessorFn: (d) => currencyFormatter(d.totalCommissions / 100),
       },
       {
         id: "netRevenue",
@@ -161,13 +175,13 @@ export function GroupsTable() {
     pagination,
     onPaginationChange: setPagination,
     sortableColumns: [
-      "partners",
-      "clicks",
-      "leads",
-      "conversions",
-      "saleAmount",
-      "commissions",
-      "netRevenue",
+      "totalPartners",
+      "totalClicks",
+      "totalLeads",
+      "totalConversions",
+      "totalSaleAmount",
+      "totalCommissions",
+      // "netRevenue", // TODO: add back when we can sort by this again
     ],
     sortBy,
     sortOrder,
@@ -257,6 +271,17 @@ function RowMenuButton({ row }: { row: Row<GroupExtendedProps> }) {
                 onSelect={() =>
                   router.push(
                     `/${slug}/program/partners?groupId=${row.original.id}`,
+                  )
+                }
+              />
+
+              <MenuItem
+                icon={LinesY}
+                label="View analytics"
+                variant="default"
+                onSelect={() =>
+                  router.push(
+                    `/${slug}/program/analytics?groupId=${row.original.id}`,
                   )
                 }
               />

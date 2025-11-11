@@ -36,6 +36,7 @@ const subscriptionInvoices = async (stripeId: string) => {
   try {
     const invoices = await stripe.invoices.list({
       customer: stripeId,
+      limit: 100,
     });
 
     return invoices.data.map((invoice) => {
@@ -70,6 +71,7 @@ const otherInvoices = async ({
       total: true,
       createdAt: true,
       status: true,
+      paymentMethod: true,
       failedReason: true,
     },
     orderBy: {

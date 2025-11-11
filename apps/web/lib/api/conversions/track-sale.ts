@@ -12,7 +12,12 @@ import {
   recordSale,
 } from "@/lib/tinybird";
 import { logConversionEvent } from "@/lib/tinybird/log-conversion-events";
-import { ClickEventTB, LeadEventTB, WorkspaceProps } from "@/lib/types";
+import {
+  ClickEventTB,
+  LeadEventTB,
+  WebhookPartner,
+  WorkspaceProps,
+} from "@/lib/types";
 import { redis } from "@/lib/upstash";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import {
@@ -29,8 +34,8 @@ import { nanoid, R2_URL } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { z } from "zod";
 import { createId } from "../create-id";
+import { syncPartnerLinksStats } from "../partners/sync-partner-links-stats";
 import { executeWorkflows } from "../workflows/execute-workflows";
-
 type TrackSaleParams = z.input<typeof trackSaleRequestSchema> & {
   rawBody: any;
   workspace: Pick<WorkspaceProps, "id" | "stripeConnectId" | "webhookEnabled">;
@@ -57,14 +62,17 @@ export const trackSale = async ({
   let clickData: ClickEventTB | null = null;
   let leadEventData: LeadEventTB | null = null;
 
-  // Skip if invoice id is already processed
+  // Return idempotent response if invoiceId is already processed
   if (invoiceId) {
-    const ok = await redis.set(`dub_sale_events:invoiceId:${invoiceId}`, 1, {
-      ex: 60 * 60 * 24 * 7,
-      nx: true,
-    });
+    // TODO: remove oldKeyValue stuff after 7 days (on Sep 18)
+    const [newKeyValue, oldKeyValue] = await redis.mget([
+      `trackSale:${workspace.id}:invoiceId:${invoiceId}`,
+      `dub_sale_events:invoiceId:${invoiceId}`,
+    ]);
 
-    if (!ok) {
+    if (newKeyValue) {
+      return newKeyValue;
+    } else if (oldKeyValue) {
       return {
         eventName,
         customer: null,
@@ -117,9 +125,15 @@ export const trackSale = async ({
         });
       }
 
-      leadEventData = cachedLeadEvent;
+      leadEventData = {
+        ...cachedLeadEvent,
+        workspace_id: cachedLeadEvent.workspace_id || workspace.id, // in case for some reason the lead event doesn't have workspace_id
+      };
     } else {
-      leadEventData = leadEvent.data[0];
+      leadEventData = {
+        ...leadEvent.data[0],
+        workspace_id: leadEvent.data[0].workspace_id || workspace.id, // in case for some reason the lead event doesn't have workspace_id
+      };
     }
   }
 
@@ -143,31 +157,9 @@ export const trackSale = async ({
     }
 
     // Find the click event for the given clickId
-    const clickEvent = await getClickEvent({
+    const clickData = await getClickEvent({
       clickId,
     });
-
-    if (clickEvent && clickEvent.data && clickEvent.data.length > 0) {
-      clickData = clickEvent.data[0];
-    }
-
-    // If there is no click data in Tinybird yet, check the clickIdCache
-    if (!clickData) {
-      const cachedClickData = await redis.get<ClickEventTB>(
-        `clickIdCache:${clickId}`,
-      );
-
-      if (cachedClickData) {
-        clickData = {
-          ...cachedClickData,
-          timestamp: cachedClickData.timestamp
-            .replace("T", " ")
-            .replace("Z", ""),
-          qr: cachedClickData.qr ? 1 : 0,
-          bot: cachedClickData.bot ? 1 : 0,
-        };
-      }
-    }
 
     if (!clickData) {
       throw new DubApiError({
@@ -184,6 +176,7 @@ export const trackSale = async ({
       select: {
         id: true,
         projectId: true,
+        disabledAt: true,
       },
     });
 
@@ -197,7 +190,14 @@ export const trackSale = async ({
     if (link.projectId !== workspace.id) {
       throw new DubApiError({
         code: "not_found",
-        message: `Link for clickId ${clickData.click_id} does not belong to the workspace`,
+        message: `Link ${link.id} for clickId ${clickData.click_id} does not belong to the workspace`,
+      });
+    }
+
+    if (link.disabledAt) {
+      throw new DubApiError({
+        code: "not_found",
+        message: `Link ${link.id} for clickId ${clickData.click_id} is disabled, sale not tracked`,
       });
     }
 
@@ -228,14 +228,14 @@ export const trackSale = async ({
     if (customerAvatar && !isStored(customerAvatar) && finalCustomerAvatar) {
       // persist customer avatar to R2 if it's not already stored
       waitUntil(
-        storage.upload(
-          finalCustomerAvatar.replace(`${R2_URL}/`, ""),
-          customerAvatar,
-          {
+        storage.upload({
+          key: finalCustomerAvatar.replace(`${R2_URL}/`, ""),
+          body: customerAvatar,
+          opts: {
             width: 128,
             height: 128,
           },
-        ),
+        }),
       );
     }
 
@@ -314,9 +314,12 @@ const _trackLead = async ({
     (async () => {
       const [_leadEvent, link, _workspace] = await Promise.all([
         // Record the lead event for the customer
-        recordLead(leadEventData),
+        recordLead({
+          ...leadEventData,
+          workspace_id: leadEventData.workspace_id || workspace.id, // in case for some reason the lead event doesn't have workspace_id
+        }),
 
-        // Update link leads count
+        // Update link leads count + lastLeadAt date
         prisma.link.update({
           where: {
             id: leadEventData.link_id,
@@ -325,6 +328,7 @@ const _trackLead = async ({
             leads: {
               increment: 1,
             },
+            lastLeadAt: new Date(),
           },
           include: includeTags,
         }),
@@ -359,11 +363,23 @@ const _trackLead = async ({
           },
         });
 
-        await executeWorkflows({
-          trigger: WorkflowTrigger.leadRecorded,
-          programId: link.programId,
-          partnerId: link.partnerId,
-        });
+        await Promise.allSettled([
+          executeWorkflows({
+            trigger: WorkflowTrigger.leadRecorded,
+            context: {
+              programId: link.programId,
+              partnerId: link.partnerId,
+              current: {
+                leads: 1,
+              },
+            },
+          }),
+          syncPartnerLinksStats({
+            partnerId: link.partnerId,
+            programId: link.programId,
+            eventType: "lead",
+          }),
+        ]);
       }
 
       // Send workspace webhook
@@ -420,6 +436,7 @@ const _trackSale = async ({
 
   const saleData = {
     ...leadEventData,
+    workspace_id: leadEventData.workspace_id || workspace.id, // in case for some reason the lead event doesn't have workspace_id
     event_id: nanoid(16),
     event_name: eventName,
     customer_id: customer.id,
@@ -430,6 +447,11 @@ const _trackSale = async ({
     metadata: metadata ? JSON.stringify(metadata) : "",
     timestamp: undefined,
   };
+
+  const firstConversionFlag = isFirstConversion({
+    customer,
+    linkId: saleData.link_id,
+  });
 
   waitUntil(
     (async () => {
@@ -443,13 +465,11 @@ const _trackSale = async ({
             id: saleData.link_id,
           },
           data: {
-            ...(isFirstConversion({
-              customer,
-              linkId: saleData.link_id,
-            }) && {
+            ...(firstConversionFlag && {
               conversions: {
                 increment: 1,
               },
+              lastConversionAt: new Date(),
             }),
             sales: {
               increment: 1,
@@ -497,9 +517,10 @@ const _trackSale = async ({
         }),
       ]);
 
+      let webhookPartner: WebhookPartner | undefined;
       // Create partner commission and execute workflows
       if (link.programId && link.partnerId) {
-        await createPartnerCommission({
+        const createdCommission = await createPartnerCommission({
           event: "sale",
           programId: link.programId,
           partnerId: link.partnerId,
@@ -516,15 +537,31 @@ const _trackSale = async ({
             },
             sale: {
               productId: metadata?.productId as string,
+              amount: saleData.amount,
             },
           },
         });
 
-        await executeWorkflows({
-          trigger: WorkflowTrigger.saleRecorded,
-          programId: link.programId,
-          partnerId: link.partnerId,
-        });
+        webhookPartner = createdCommission?.webhookPartner;
+
+        await Promise.allSettled([
+          executeWorkflows({
+            trigger: WorkflowTrigger.saleRecorded,
+            context: {
+              programId: link.programId,
+              partnerId: link.partnerId,
+              current: {
+                saleAmount: saleData.amount,
+                conversions: firstConversionFlag ? 1 : 0,
+              },
+            },
+          }),
+          syncPartnerLinksStats({
+            partnerId: link.partnerId,
+            programId: link.programId,
+            eventType: "sale",
+          }),
+        ]);
       }
 
       // Send workspace webhook
@@ -533,6 +570,8 @@ const _trackSale = async ({
         clickedAt: customer.clickedAt || customer.createdAt,
         link,
         customer,
+        partner: webhookPartner,
+        metadata,
       });
 
       await sendWorkspaceWebhook({
@@ -543,7 +582,7 @@ const _trackSale = async ({
     })(),
   );
 
-  return trackSaleResponseSchema.parse({
+  const trackSaleResponse = trackSaleResponseSchema.parse({
     eventName,
     customer,
     sale: {
@@ -554,4 +593,18 @@ const _trackSale = async ({
       metadata,
     },
   });
+
+  if (invoiceId) {
+    waitUntil(
+      redis.set(
+        `trackSale:${workspace.id}:invoiceId:${invoiceId}`,
+        trackSaleResponse,
+        {
+          ex: 60 * 60 * 24 * 7, // cache for 1 week
+        },
+      ),
+    );
+  }
+
+  return trackSaleResponse;
 };

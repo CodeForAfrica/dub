@@ -2,9 +2,9 @@
 
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { REJECT_BOUNTY_SUBMISSION_REASONS } from "@/lib/constants/bounties";
 import {
   BountySubmissionSchema,
-  REJECT_BOUNTY_SUBMISSION_REASONS,
   rejectBountySubmissionSchema,
 } from "@/lib/zod/schemas/bounties";
 import { sendEmail } from "@dub/email";
@@ -38,36 +38,28 @@ export const rejectBountySubmissionAction = authActionClient
       throw new Error("Bounty submission does not belong to this program.");
     }
 
+    if (bountySubmission.status === "draft") {
+      throw new Error(
+        "Bounty submission is in progress and cannot be rejected.",
+      );
+    }
+
     if (bountySubmission.status === "rejected") {
       throw new Error("Bounty submission already rejected.");
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.bountySubmission.update({
-        where: {
-          id: submissionId,
-        },
-        data: {
-          status: "rejected",
-          reviewedAt: new Date(),
-          userId: user.id,
-          rejectionReason,
-          rejectionNote,
-          commissionId: null,
-        },
-      });
-
-      if (bountySubmission.commissionId) {
-        await tx.commission.update({
-          where: {
-            id: bountySubmission.commissionId,
-          },
-          data: {
-            status: "canceled",
-            payoutId: null,
-          },
-        });
-      }
+    await prisma.bountySubmission.update({
+      where: {
+        id: submissionId,
+      },
+      data: {
+        status: "rejected",
+        reviewedAt: new Date(),
+        userId: user.id,
+        rejectionReason,
+        rejectionNote,
+        commissionId: null,
+      },
     });
 
     waitUntil(
@@ -89,14 +81,14 @@ export const rejectBountySubmissionAction = authActionClient
         partner.email &&
           sendEmail({
             subject: "Bounty rejected",
-            email: partner.email,
+            to: partner.email,
             variant: "notifications",
+            replyTo: program.supportEmail || "noreply",
             react: BountyRejected({
               email: partner.email,
               program: {
                 name: program.name,
                 slug: program.slug,
-                supportEmail: program.supportEmail || "support@dub.co",
               },
               bounty: {
                 name: bounty.name,
@@ -104,6 +96,7 @@ export const rejectBountySubmissionAction = authActionClient
               submission: {
                 rejectionReason:
                   REJECT_BOUNTY_SUBMISSION_REASONS[rejectionReason],
+                rejectionNote,
               },
             }),
           }),

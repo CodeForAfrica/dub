@@ -19,6 +19,7 @@ import {
   MenuItem,
   Popover,
   Table,
+  TimestampTooltip,
   useColumnVisibility,
   useCopyToClipboard,
   usePagination,
@@ -171,7 +172,18 @@ export function CustomerTable() {
         {
           id: "createdAt",
           header: "Created",
-          accessorFn: (d) => formatDate(d.createdAt, { month: "short" }),
+          cell: ({ row }) => (
+            <TimestampTooltip
+              timestamp={row.original.createdAt}
+              rows={["local"]}
+              side="left"
+              delayDuration={150}
+            >
+              <span>
+                {formatDate(row.original.createdAt, { month: "short" })}
+              </span>
+            </TimestampTooltip>
+          ),
         },
         {
           id: "link",
@@ -282,8 +294,8 @@ export function CustomerTable() {
             onRemove={onRemove}
           />
           <SearchBoxPersisted
-            placeholder="Search by email, name, or external ID"
-            inputClassName="md:w-[21rem]"
+            placeholder="Search by email or name"
+            inputClassName="md:w-[16rem]"
           />
         </div>
         <AnimatedSizeContainer height>
@@ -293,6 +305,7 @@ export function CustomerTable() {
                 <Filter.List
                   filters={filters}
                   activeFilters={activeFilters}
+                  onSelect={onSelect}
                   onRemove={onRemove}
                   onRemoveAll={onRemoveAll}
                 />
@@ -367,7 +380,7 @@ export function CustomerTable() {
               : "No customers have been recorded for your workspace yet. Learn how to track your first customer."
           }
           {...(!isFiltered && {
-            learnMoreHref: `/${workspaceSlug}/guides`,
+            learnMoreHref: `/${workspaceSlug}/settings/analytics`,
             learnMoreTarget: "_self",
             learnMoreText: "Read the guides",
           })}

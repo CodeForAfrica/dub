@@ -1,6 +1,10 @@
-import { DiscountProps, PartnerProps } from "@/lib/types";
+import {
+  DiscountProps,
+  PartnerProps,
+  ProgramEnrollmentProps,
+} from "@/lib/types";
 import { Dashboard, Link, Tag } from "@dub/prisma/client";
-import { prefixWorkspaceId } from "../../workspace-id";
+import { prefixWorkspaceId } from "../../workspaces/workspace-id";
 import { decodeLinkIfCaseSensitive } from "../case-sensitivity";
 
 // used in API (e.g. transformLink)
@@ -14,6 +18,7 @@ export type ExpandedLink = Link & {
     DiscountProps,
     "id" | "amount" | "type" | "maxDuration" | "couponId" | "couponTestId"
   > | null;
+  programEnrollment?: Pick<ProgramEnrollmentProps, "groupId"> | null;
 };
 
 // Transform link with additional properties
@@ -28,8 +33,17 @@ export const transformLink = (
     link = decodeLinkIfCaseSensitive(link);
   }
 
-  // remove webhooks array, dashboard from link
-  const { webhooks, dashboard, ...rest } = link;
+  const {
+    // remove webhooks array, dashboard, partnerGroupDefaultLinkId
+    webhooks,
+    dashboard,
+    partnerGroupDefaultLinkId,
+    // hide undocumented fields from the API response for now
+    lastLeadAt,
+    lastConversionAt,
+    programEnrollment,
+    ...rest
+  } = link;
 
   return {
     ...rest,

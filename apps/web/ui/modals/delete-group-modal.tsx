@@ -1,6 +1,5 @@
 import { mutatePrefix } from "@/lib/swr/mutate";
 import { useApiMutation } from "@/lib/swr/use-api-mutation";
-import useWorkspace from "@/lib/swr/use-workspace";
 import { GroupExtendedProps } from "@/lib/types";
 import { Button, Modal, useMediaQuery } from "@dub/ui";
 import { pluralize } from "@dub/utils";
@@ -10,7 +9,7 @@ import { toast } from "sonner";
 import { GroupColorCircle } from "../partners/groups/group-color-circle";
 
 interface DeleteGroupModalProps {
-  group: Pick<GroupExtendedProps, "id" | "name" | "color" | "partners">;
+  group: Pick<GroupExtendedProps, "id" | "name" | "color" | "totalPartners">;
   showModal: boolean;
   setShowModal: (showModal: boolean) => void;
   onDelete?: () => void;
@@ -22,7 +21,6 @@ const DeleteGroupModal = ({
   setShowModal,
   onDelete,
 }: DeleteGroupModalProps) => {
-  const workspace = useWorkspace();
   const { isMobile } = useMediaQuery();
   const { makeRequest: deleteGroup, isSubmitting } = useApiMutation();
 
@@ -32,9 +30,9 @@ const DeleteGroupModal = ({
     await deleteGroup(`/api/groups/${group.id}`, {
       method: "DELETE",
       onSuccess: async () => {
-        toast.success(`Group deleted successfully!`);
-        await mutatePrefix(`/api/groups?workspaceId=${workspace.id}`);
         setShowModal(false);
+        await mutatePrefix("/api/groups");
+        toast.success("Group deleted successfully!");
         onDelete?.();
       },
     });
@@ -60,7 +58,8 @@ const DeleteGroupModal = ({
               <div className="flex items-center gap-2">
                 <Users className="size-4" />
                 <span className="text-content-default text-sm font-medium">
-                  {group.partners} {pluralize("partner", group.partners)}
+                  {group.totalPartners}{" "}
+                  {pluralize("partner", group.totalPartners)}
                 </span>
               </div>
             </div>
@@ -72,7 +71,7 @@ const DeleteGroupModal = ({
                 <li>Rewards created for this group will be deleted.</li>
                 <li>Discount created for this group will be deleted.</li>
 
-                {group.partners && group.partners > 0 ? (
+                {group.totalPartners && group.totalPartners > 0 ? (
                   <>
                     <li>
                       Partners in this group will be moved to your{" "}
@@ -99,7 +98,7 @@ const DeleteGroupModal = ({
                 <p className="block text-sm text-neutral-500">
                   To verify, type{" "}
                   <span className="font-medium text-neutral-700">
-                    Delete group
+                    confirm delete group
                   </span>{" "}
                   below
                 </p>
@@ -114,7 +113,7 @@ const DeleteGroupModal = ({
                     className="block w-full rounded-md border-neutral-300 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500 sm:text-sm"
                     aria-invalid="true"
                     autoFocus={!isMobile}
-                    pattern="Delete group"
+                    pattern="confirm delete group"
                   />
                 </div>
               </div>
@@ -145,7 +144,7 @@ const DeleteGroupModal = ({
 };
 
 export function useDeleteGroupModal(
-  group: Pick<GroupExtendedProps, "id" | "name" | "color" | "partners">,
+  group: Pick<GroupExtendedProps, "id" | "name" | "color" | "totalPartners">,
   onDelete?: () => void,
 ) {
   const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);

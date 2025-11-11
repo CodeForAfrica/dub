@@ -1,6 +1,8 @@
+import { includeProgramEnrollment } from "@/lib/api/links/include-program-enrollment";
+import { includeTags } from "@/lib/api/links/include-tags";
 import { prisma } from "@dub/prisma";
 import "dotenv-flow/config";
-import { recordLinkTB, transformLinkTB } from "../lib/tinybird";
+import { recordLink } from "../lib/tinybird";
 
 const programId = "prog_xxx";
 
@@ -9,17 +11,16 @@ async function main() {
     where: {
       programId,
     },
+    include: {
+      ...includeTags,
+      ...includeProgramEnrollment,
+    },
   });
 
   console.log(`Found ${links.length} links to delete`);
   console.table(links.slice(-10), ["domain", "key"]);
 
-  const response = await recordLinkTB(
-    links.map((link) => ({
-      ...transformLinkTB(link),
-      deleted: true,
-    })),
-  );
+  const response = await recordLink(links, { deleted: true });
 
   console.log("Deleted links in Tinybird", response);
 

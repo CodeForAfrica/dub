@@ -1,4 +1,5 @@
 import { createId } from "@/lib/api/create-id";
+import { getPayoutEligibilityFilter } from "@/lib/api/payouts/payout-eligibility-filter";
 import {
   CUTOFF_PERIOD,
   CUTOFF_PERIOD_TYPES,
@@ -10,29 +11,25 @@ import { endOfMonth } from "date-fns";
 export async function splitPayouts({
   program,
   cutoffPeriod,
+  selectedPayoutId,
   excludedPayoutIds,
 }: {
-  program: Pick<Program, "id" | "name" | "minPayoutAmount">;
+  program: Pick<Program, "id" | "name" | "minPayoutAmount" | "payoutMode">;
   cutoffPeriod: CUTOFF_PERIOD_TYPES;
+  selectedPayoutId?: string;
   excludedPayoutIds?: string[];
 }) {
   const payouts = await prisma.payout.findMany({
     where: {
-      programId: program.id,
-      status: "pending",
-      invoiceId: null,
-      amount: {
-        gte: program.minPayoutAmount,
-      },
-      partner: {
-        payoutsEnabledAt: {
-          not: null,
-        },
-      },
+      ...(selectedPayoutId
+        ? { id: selectedPayoutId }
+        : excludedPayoutIds && excludedPayoutIds.length > 0
+          ? { id: { notIn: excludedPayoutIds } }
+          : {}),
       periodStart: {
         not: null, // exclude the manual payouts
       },
-      ...(excludedPayoutIds && { id: { notIn: excludedPayoutIds } }),
+      ...getPayoutEligibilityFilter(program),
     },
     include: {
       commissions: true,

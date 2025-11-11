@@ -1,16 +1,15 @@
 import { createPayPalBatchPayout } from "@/lib/paypal/create-batch-payout";
-import { resend } from "@dub/email/resend";
-import { VARIANT_TO_FROM_MAP } from "@dub/email/resend/constants";
+import { sendBatchEmail } from "@dub/email";
 import PartnerPayoutProcessed from "@dub/email/templates/partner-payout-processed";
 import { prisma } from "@dub/prisma";
+import { Invoice } from "@dub/prisma/client";
 
-export async function sendPaypalPayouts({ invoiceId }: { invoiceId: string }) {
+export async function sendPaypalPayouts(invoice: Pick<Invoice, "id">) {
   const payouts = await prisma.payout.findMany({
     where: {
-      invoiceId,
-      status: {
-        not: "completed",
-      },
+      invoiceId: invoice.id,
+      status: "processing",
+      mode: "internal",
       partner: {
         payoutsEnabledAt: {
           not: null,
@@ -43,16 +42,28 @@ export async function sendPaypalPayouts({ invoiceId }: { invoiceId: string }) {
 
   const batchPayout = await createPayPalBatchPayout({
     payouts,
-    invoiceId,
+    invoiceId: invoice.id,
   });
 
   console.log("PayPal batch payout created", batchPayout);
 
-  const batchEmails = await resend.batch.send(
+  // update the payouts to "sent" status
+  const updatedPayouts = await prisma.payout.updateMany({
+    where: {
+      id: { in: payouts.map((p) => p.id) },
+    },
+    data: {
+      status: "sent",
+      paidAt: new Date(),
+    },
+  });
+  console.log(`Updated ${updatedPayouts.count} payouts to "sent" status`);
+
+  const batchEmails = await sendBatchEmail(
     payouts
       .filter((payout) => payout.partner.email)
       .map((payout) => ({
-        from: VARIANT_TO_FROM_MAP.notifications,
+        variant: "notifications",
         to: payout.partner.email!,
         subject: "You've been paid!",
         react: PartnerPayoutProcessed({
@@ -64,5 +75,5 @@ export async function sendPaypalPayouts({ invoiceId }: { invoiceId: string }) {
       })),
   );
 
-  console.log("Resend batch emails sent", batchEmails);
+  console.log("Resend batch emails sent", JSON.stringify(batchEmails, null, 2));
 }

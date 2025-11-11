@@ -1,8 +1,10 @@
 "use server";
 
+import { ExpandedLink } from "@/lib/api/links";
 import { linkCache } from "@/lib/api/links/cache";
+import { includeTags } from "@/lib/api/links/include-tags";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
-import { recordLinkTB, transformLinkTB } from "@/lib/tinybird";
+import { recordLink } from "@/lib/tinybird";
 import { prisma } from "@dub/prisma";
 import { waitUntil } from "@vercel/functions";
 import z from "../../zod";
@@ -30,7 +32,13 @@ export const revokeProgramInviteAction = authActionClient
           },
         },
         include: {
-          links: true,
+          links: {
+            include: {
+              ...includeTags,
+              // no need to includeProgramEnrollment because we're already fetching the programEnrollment
+              // so we can just polyfill below
+            },
+          },
         },
       });
 
@@ -66,18 +74,20 @@ export const revokeProgramInviteAction = authActionClient
 
     console.log("Deleted program enrollment", res);
 
+    const deletedPartnerLinksToRecord: ExpandedLink[] = partnerLinks.map(
+      (link) => ({
+        ...link,
+        programEnrollment: { groupId: programEnrollment.groupId },
+      }),
+    );
+
     waitUntil(
       Promise.all([
-        // Delete the links from Redis
-        linkCache.deleteMany(partnerLinks),
+        // Expire the links from Redis
+        linkCache.expireMany(partnerLinks),
 
         // Record the links deletion in Tinybird
-        recordLinkTB(
-          partnerLinks.map((link) => ({
-            ...transformLinkTB(link),
-            deleted: true,
-          })),
-        ),
+        recordLink(deletedPartnerLinksToRecord, { deleted: true }),
 
         // Update totalLinks for the workspace
         prisma.project.update({

@@ -3,22 +3,22 @@
 import usePartnerProgramBounties from "@/lib/swr/use-partner-program-bounties";
 import useProgramEnrollment from "@/lib/swr/use-program-enrollment";
 import useProgramEnrollmentsCount from "@/lib/swr/use-program-enrollments-count";
+import { useProgramMessagesCount } from "@/lib/swr/use-program-messages-count";
 import { useRouterStuff } from "@dub/ui";
 import {
   Bell,
   CircleDollar,
-  CircleInfo,
-  CircleUser,
   ColorPalette2,
   Gauge6,
   Gear2,
-  Globe,
   GridIcon,
   MoneyBills2,
+  Msgs,
   ShieldCheck,
   SquareUserSparkle2,
   Trophy,
   UserCheck,
+  Users2,
 } from "@dub/ui/icons";
 import { useParams, usePathname } from "next/navigation";
 import { ReactNode, useMemo } from "react";
@@ -36,10 +36,15 @@ type SidebarNavData = {
   programSlug?: string;
   isUnapproved: boolean;
   invitationsCount?: number;
+  unreadMessagesCount?: number;
   programBountiesCount?: number;
+  showDetailedAnalytics?: boolean;
 };
 
-const NAV_GROUPS: SidebarNavGroups<SidebarNavData> = ({ pathname }) => [
+const NAV_GROUPS: SidebarNavGroups<SidebarNavData> = ({
+  pathname,
+  unreadMessagesCount,
+}) => [
   {
     name: "Programs",
     description:
@@ -63,6 +68,14 @@ const NAV_GROUPS: SidebarNavGroups<SidebarNavData> = ({ pathname }) => [
     icon: SquareUserSparkle2,
     href: "/profile",
     active: pathname.startsWith("/profile"),
+  },
+  {
+    name: "Messages",
+    description: "Chat with programs you're enrolled in",
+    icon: Msgs,
+    href: "/messages",
+    active: pathname.startsWith("/messages"),
+    badge: unreadMessagesCount ? Math.min(9, unreadMessagesCount) : undefined,
   },
 ];
 
@@ -98,11 +111,44 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
     ],
   }),
 
+  profile: () => ({
+    title: "Partner profile",
+    direction: "left",
+    content: [
+      {
+        items: [
+          {
+            name: "Profile",
+            icon: SquareUserSparkle2,
+            href: "/profile",
+            exact: true,
+          },
+          {
+            name: "Members",
+            icon: Users2,
+            href: "/profile/members",
+          },
+        ],
+      },
+      {
+        name: "Account",
+        items: [
+          {
+            name: "Notifications",
+            icon: Bell,
+            href: "/profile/notifications",
+          },
+        ],
+      },
+    ],
+  }),
+
   program: ({
     programSlug,
     isUnapproved,
     queryString,
     programBountiesCount,
+    showDetailedAnalytics,
   }) => ({
     title: (
       <div className="mb-3">
@@ -124,22 +170,12 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             href: `/programs/${programSlug}/links`,
             locked: isUnapproved,
           },
-          ...(programBountiesCount // TODO: remove this when we launch Bounties to GA
-            ? [
-                {
-                  name: "Bounties",
-                  icon: Trophy,
-                  href: `/programs/${programSlug}/bounties` as `/${string}`,
-                  badge: programBountiesCount,
-                  locked: isUnapproved,
-                },
-              ]
-            : []),
           {
-            name: "Resources",
-            icon: ColorPalette2,
-            href: `/programs/${programSlug}/resources`,
+            name: "Messages",
+            icon: Msgs,
+            href: `/messages/${programSlug}` as `/${string}`,
             locked: isUnapproved,
+            arrow: true,
           },
         ],
       },
@@ -152,75 +188,43 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             href: `/programs/${programSlug}/earnings${queryString}`,
             locked: isUnapproved,
           },
+          ...(showDetailedAnalytics
+            ? [
+                {
+                  name: "Analytics",
+                  icon: LinesY,
+                  href: `/programs/${programSlug}/analytics` as `/${string}`,
+                  locked: isUnapproved,
+                },
+                {
+                  name: "Events",
+                  icon: CursorRays,
+                  href: `/programs/${programSlug}/events` as `/${string}`,
+                  locked: isUnapproved,
+                },
+              ]
+            : []),
+        ],
+      },
+      {
+        name: "Engage",
+        items: [
           {
-            name: "Analytics",
-            icon: LinesY,
-            href: `/programs/${programSlug}/analytics`,
+            name: "Bounties",
+            icon: Trophy,
+            href: `/programs/${programSlug}/bounties` as `/${string}`,
+            badge: programBountiesCount
+              ? programBountiesCount > 99
+                ? "99+"
+                : programBountiesCount
+              : "New",
             locked: isUnapproved,
           },
           {
-            name: "Events",
-            icon: CursorRays,
-            href: `/programs/${programSlug}/events`,
+            name: "Resources",
+            icon: ColorPalette2,
+            href: `/programs/${programSlug}/resources`,
             locked: isUnapproved,
-          },
-        ],
-      },
-    ],
-  }),
-
-  // Partner profile
-  profile: () => ({
-    title: "Partner profile",
-    direction: "left",
-    content: [
-      {
-        items: [
-          {
-            name: "Profile info",
-            icon: CircleUser,
-            href: "/profile",
-            exact: true,
-          },
-          {
-            name: "Website and socials",
-            icon: Globe,
-            href: "/profile/sites",
-          },
-        ],
-      },
-    ],
-  }),
-
-  // Payouts
-  payouts: () => ({
-    title: "Payouts",
-    content: [
-      {
-        items: [
-          {
-            name: "Payouts",
-            icon: MoneyBills2,
-            href: "/payouts",
-          },
-        ],
-      },
-    ],
-  }),
-
-  // Partner settings
-  partnerSettings: () => ({
-    title: "Settings",
-    direction: "left",
-    content: [
-      {
-        name: "Account",
-        items: [
-          {
-            name: "Notifications",
-            icon: CircleInfo,
-            href: "/settings/notifications",
-            exact: true,
           },
         ],
       },
@@ -246,11 +250,6 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             icon: ShieldCheck,
             href: "/account/settings/security",
           },
-          {
-            name: "Notifications",
-            icon: Bell,
-            href: "/account/settings/notifications",
-          },
         ],
       },
     ],
@@ -267,7 +266,7 @@ export function PartnersSidebarNav({
   const { programSlug } = useParams() as {
     programSlug?: string;
   };
-  const { programEnrollment } = useProgramEnrollment();
+  const { programEnrollment, showDetailedAnalytics } = useProgramEnrollment();
   const pathname = usePathname();
   const { getQueryString } = useRouterStuff();
 
@@ -278,23 +277,28 @@ export function PartnersSidebarNav({
   const currentArea = useMemo(() => {
     return pathname.startsWith("/account/settings")
       ? "userSettings"
-      : pathname.startsWith("/settings")
-        ? "partnerSettings"
-        : pathname.startsWith("/profile")
-          ? "profile"
-          : pathname.startsWith("/payouts")
-            ? null
-            : isEnrolledProgramPage
-              ? "program"
-              : "programs";
+      : pathname.startsWith("/profile")
+        ? "profile"
+        : ["/payouts", "/messages"].some((p) => pathname.startsWith(p))
+          ? null
+          : isEnrolledProgramPage
+            ? "program"
+            : "programs";
   }, [pathname, programSlug, isEnrolledProgramPage]);
 
   const { count: invitationsCount } = useProgramEnrollmentsCount({
     status: "invited",
   });
 
-  const { bounties } = usePartnerProgramBounties({
+  const { bountiesCount } = usePartnerProgramBounties({
     enabled: isEnrolledProgramPage,
+  });
+
+  const { count: unreadMessagesCount } = useProgramMessagesCount({
+    enabled: true,
+    query: {
+      unread: true,
+    },
   });
 
   return (
@@ -307,9 +311,14 @@ export function PartnersSidebarNav({
         queryString: getQueryString(),
         programSlug: programSlug || "",
         isUnapproved:
-          !!programEnrollment && programEnrollment.status !== "approved",
+          !!programEnrollment &&
+          !["approved", "deactivated", "archived"].includes(
+            programEnrollment.status,
+          ),
         invitationsCount,
-        programBountiesCount: bounties?.length,
+        unreadMessagesCount,
+        programBountiesCount: bountiesCount.active,
+        showDetailedAnalytics,
       }}
       toolContent={toolContent}
       newsContent={newsContent}
