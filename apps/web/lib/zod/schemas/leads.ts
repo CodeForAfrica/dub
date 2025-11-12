@@ -2,14 +2,14 @@ import z from "@/lib/zod";
 import { clickEventSchema, clickEventSchemaTB } from "./clicks";
 import { CustomerSchema } from "./customers";
 import { commonDeprecatedEventFields } from "./deprecated";
-import { linkEventSchema } from "./links";
+import { linkEventSchema, LinkSchema } from "./links";
 
 export const trackLeadRequestSchema = z.object({
   clickId: z
     .string()
     .trim()
     .describe(
-      "The unique ID of the click that the lead conversion event is attributed to. You can read this value from `dub_id` cookie. If an empty string is provided, Dub will try to find an existing customer with the provided `customerExternalId` and use the `clickId` from the customer if found.",
+      "The unique ID of the click that the lead conversion event is attributed to. You can read this value from `dub_id` cookie. [For deferred lead tracking]: If an empty string is provided, Dub will try to find an existing customer with the provided `customerExternalId` and use the `clickId` from the customer if found.",
     ),
   eventName: z
     .string()
@@ -76,6 +76,17 @@ export const trackLeadResponseSchema = z.object({
   click: z.object({
     id: z.string(),
   }),
+  link: LinkSchema.pick({
+    id: true,
+    domain: true,
+    key: true,
+    shortLink: true,
+    url: true,
+    partnerId: true,
+    programId: true,
+    tenantId: true,
+    externalId: true,
+  }).nullable(),
   customer: z.object({
     name: z.string().nullable(),
     email: z.string().nullable(),

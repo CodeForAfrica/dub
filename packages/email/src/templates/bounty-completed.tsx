@@ -23,7 +23,6 @@ export default function BountyCompleted({
   program = {
     name: "Acme",
     slug: "acme",
-    supportEmail: "support@example.com",
   },
   email = "panic@thedis.co",
 }: {
@@ -32,9 +31,8 @@ export default function BountyCompleted({
     type: "performance" | "submission";
   };
   program: {
-    slug: string;
     name: string;
-    supportEmail: string;
+    slug: string;
   };
   email: string;
 }) {
@@ -62,25 +60,21 @@ export default function BountyCompleted({
               <BountyThumbnailImage type={bounty.type} />
             </Section>
 
-            {bounty.type === "submission" ? (
-              <Text className="text-sm leading-5 text-neutral-600">
-                Once <strong>{program.name}</strong> has confirmed your bounty,
-                you will receive an email with the commission details.
-              </Text>
-            ) : (
-              <Text className="text-sm leading-5 text-neutral-600">
-                The commission from the bounty has been added to your upcoming
-                payout, and will be sent to your bank account when{" "}
-                <strong>{program.name}</strong> processes their next payout.
-              </Text>
-            )}
+            <Text className="text-sm leading-5 text-neutral-600">
+              What happens next? <strong>{program.name}</strong> will review
+              your bounty submission. After their approval, you will receive an
+              email with the commission details.
+            </Text>
 
             <Text className="text-sm leading-5 text-neutral-600">
-              If you have any questions, please don't hesitate to reach out to
-              the <strong>{program.name}</strong> team{" "}
-              <span className="font-semibold text-blue-600">
-                ({program.supportEmail})
-              </span>
+              If you have any questions, please don't hesitate to{" "}
+              <Link
+                href={`https://partners.dub.co/messages/${program.slug}`}
+                className="font-semibold text-neutral-700 underline underline-offset-2"
+              >
+                reach out to the {program.name} team ↗
+              </Link>
+              .
             </Text>
 
             <Section className="mb-10 mt-6">

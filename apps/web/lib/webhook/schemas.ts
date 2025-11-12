@@ -3,7 +3,11 @@ import { clickEventSchema } from "../zod/schemas/clicks";
 import { CommissionWebhookSchema } from "../zod/schemas/commissions";
 import { CustomerSchema } from "../zod/schemas/customers";
 import { linkEventSchema } from "../zod/schemas/links";
-import { EnrolledPartnerSchema } from "../zod/schemas/partners";
+import {
+  EnrolledPartnerSchema,
+  WebhookPartnerSchema,
+} from "../zod/schemas/partners";
+import { partnerApplicationWebhookSchema } from "../zod/schemas/program-application";
 import { WEBHOOK_TRIGGERS } from "./constants";
 
 const webhookSaleSchema = z.object({
@@ -23,6 +27,8 @@ export const leadWebhookEventSchema = z.object({
   customer: CustomerSchema,
   click: clickEventSchema,
   link: linkEventSchema,
+  partner: WebhookPartnerSchema.nullish(),
+  metadata: z.record(z.unknown()).nullable().default(null),
 });
 
 export const saleWebhookEventSchema = z.object({
@@ -31,6 +37,8 @@ export const saleWebhookEventSchema = z.object({
   click: clickEventSchema,
   link: linkEventSchema,
   sale: webhookSaleSchema,
+  partner: WebhookPartnerSchema.nullish(),
+  metadata: z.record(z.unknown()).nullable().default(null),
 });
 
 // Schema of the payload sent to the webhook endpoint by Dub
@@ -110,6 +118,19 @@ export const webhookEventSchema = z
       .openapi({
         ref: "PartnerEnrolledEvent",
         description: "Triggered when a partner is enrolled.",
+      }),
+
+    z
+      .object({
+        id: z.string(),
+        event: z.literal("partner.application_submitted"),
+        createdAt: z.string(),
+        data: partnerApplicationWebhookSchema,
+      })
+      .openapi({
+        ref: "PartnerApplicationSubmittedEvent",
+        description:
+          "Triggered when a partner submits an application to join a program.",
       }),
 
     z

@@ -2,7 +2,7 @@ import useWorkspace from "@/lib/swr/use-workspace";
 import { CustomerProps } from "@/lib/types";
 import { createCustomerBodySchema } from "@/lib/zod/schemas/customers";
 import { Button, Modal, useMediaQuery } from "@dub/ui";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { mutate } from "swr";
@@ -12,6 +12,7 @@ interface AddCustomerModalProps {
   showModal: boolean;
   setShowModal: (showModal: boolean) => void;
   onSuccess?: (customer: CustomerProps) => void;
+  initialName?: string;
 }
 
 type FormData = z.infer<typeof createCustomerBodySchema>;
@@ -20,6 +21,7 @@ const AddCustomerModal = ({
   showModal,
   setShowModal,
   onSuccess,
+  initialName,
 }: AddCustomerModalProps) => {
   const { id: workspaceId } = useWorkspace();
   const { isMobile } = useMediaQuery();
@@ -28,14 +30,34 @@ const AddCustomerModal = ({
     register,
     handleSubmit,
     watch,
+    reset,
     formState: { isSubmitting },
   } = useForm<FormData>({
     defaultValues: {
       name: null,
       email: null,
       externalId: "",
+      stripeCustomerId: null,
     },
   });
+
+  useEffect(() => {
+    if (showModal && initialName) {
+      reset({
+        name: initialName,
+        email: null,
+        externalId: "",
+        stripeCustomerId: null,
+      });
+    } else if (showModal) {
+      reset({
+        name: null,
+        email: null,
+        externalId: "",
+        stripeCustomerId: null,
+      });
+    }
+  }, [showModal, initialName, reset]);
 
   const onSubmit = async (data: FormData) => {
     try {
@@ -131,6 +153,24 @@ const AddCustomerModal = ({
                 })}
               />
             </div>
+
+            <div>
+              <label className="text-sm font-normal text-neutral-500">
+                Stripe Customer ID
+              </label>
+              <input
+                type="text"
+                autoComplete="off"
+                className="mt-2 block w-full rounded-md border-neutral-300 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500 sm:text-sm"
+                placeholder="cus_NffrFeUfNV2Hib"
+                {...register("stripeCustomerId", {
+                  setValueAs: (value) => (value === "" ? null : value),
+                })}
+              />
+              <p className="mt-2 text-xs text-neutral-500">
+                The customer's Stripe customer ID (optional)
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center justify-end border-t border-neutral-200 px-4 py-4 sm:px-6">
@@ -164,22 +204,37 @@ export function useAddCustomerModal({
   onSuccess?: (customer: CustomerProps) => void;
 } = {}) {
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [initialName, setInitialName] = useState<string | undefined>();
 
   const AddCustomerModalCallback = useCallback(() => {
     return (
       <AddCustomerModal
         showModal={showAddCustomerModal}
-        setShowModal={setShowAddCustomerModal}
+        setShowModal={(show) => {
+          setShowAddCustomerModal(show);
+          if (!show) {
+            setInitialName(undefined);
+          }
+        }}
         onSuccess={onSuccess}
+        initialName={initialName}
       />
     );
-  }, [showAddCustomerModal, setShowAddCustomerModal]);
+  }, [showAddCustomerModal, initialName, onSuccess]);
+
+  const setShowAddCustomerModalWithName = useCallback(
+    (show: boolean, name?: string) => {
+      setShowAddCustomerModal(show);
+      setInitialName(name);
+    },
+    [],
+  );
 
   return useMemo(
     () => ({
-      setShowAddCustomerModal,
+      setShowAddCustomerModal: setShowAddCustomerModalWithName,
       AddCustomerModal: AddCustomerModalCallback,
     }),
-    [setShowAddCustomerModal, AddCustomerModalCallback],
+    [setShowAddCustomerModalWithName, AddCustomerModalCallback],
   );
 }

@@ -1,16 +1,13 @@
+import { generatePerformanceBountyName } from "@/lib/api/bounties/generate-performance-bounty-name";
 import { isCurrencyAttribute } from "@/lib/api/workflows/utils";
+import { BOUNTY_DESCRIPTION_MAX_LENGTH } from "@/lib/constants/bounties";
 import { mutatePrefix } from "@/lib/swr/mutate";
 import { useApiMutation } from "@/lib/swr/use-api-mutation";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
-import {
-  BountyExtendedProps,
-  BountyProps,
-  BountySubmissionRequirement,
-} from "@/lib/types";
+import { BountyProps, BountySubmissionRequirement } from "@/lib/types";
 import { createBountySchema } from "@/lib/zod/schemas/bounties";
 import { workflowConditionSchema } from "@/lib/zod/schemas/workflows";
-import { useConfirmModal } from "@/ui/modals/confirm-modal";
 import { BountyLogic } from "@/ui/partners/bounties/bounty-logic";
 import { GroupsMultiSelect } from "@/ui/partners/groups/groups-multi-select";
 import {
@@ -21,18 +18,24 @@ import {
 } from "@/ui/partners/program-sheet-accordion";
 import { AmountInput } from "@/ui/shared/amount-input";
 import { X } from "@/ui/shared/icons";
+import { MaxCharactersCounter } from "@/ui/shared/max-characters-counter";
 import {
   AnimatedSizeContainer,
   Button,
   CardSelector,
   CardSelectorOption,
+  NumberStepper,
+  RichTextArea,
+  RichTextProvider,
+  RichTextToolbar,
   Sheet,
   SmartDateTimePicker,
   Switch,
+  ToggleGroup,
   useRouterStuff,
 } from "@dub/ui";
-import { cn } from "@dub/utils";
-import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
+import { cn, formatDate } from "@dub/utils";
+import { Dispatch, SetStateAction, useMemo, useState } from "react";
 import {
   Controller,
   FormProvider,
@@ -41,10 +44,11 @@ import {
 } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { useConfirmCreateBountyModal } from "./confirm-create-bounty-modal";
 
 type BountySheetProps = {
   setIsOpen: Dispatch<SetStateAction<boolean>>;
-  bounty?: BountyExtendedProps;
+  bounty?: BountyProps;
 };
 
 type FormData = z.infer<typeof createBountySchema>;
@@ -64,6 +68,18 @@ const BOUNTY_TYPES: CardSelectorOption[] = [
   },
 ];
 
+// Only valid for submission bounties
+const REWARD_TYPES = [
+  {
+    value: "flat",
+    label: "Flat rate",
+  },
+  {
+    value: "custom",
+    label: "Custom",
+  },
+];
+
 const ACCORDION_ITEMS = [
   "bounty-type",
   "bounty-details",
@@ -71,10 +87,32 @@ const ACCORDION_ITEMS = [
   "groups",
 ];
 
+type RewardType = "flat" | "custom";
+
+// Helper to check required fields
+const isEmpty = (value: any) =>
+  value === undefined || value === null || value === "";
+
 function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
-  const { id: workspaceId } = useWorkspace();
   const { program } = useProgram();
+  const { id: workspaceId } = useWorkspace();
+  const { makeRequest, isSubmitting } = useApiMutation<BountyProps>();
+
+  const [hasStartDate, setHasStartDate] = useState(!!bounty?.startsAt);
   const [hasEndDate, setHasEndDate] = useState(!!bounty?.endsAt);
+  const [openAccordions, setOpenAccordions] = useState(ACCORDION_ITEMS);
+  const originalSubmissionWindow = useMemo(() => {
+    return bounty?.submissionsOpenAt && bounty?.endsAt
+      ? Math.ceil(
+          (new Date(bounty.endsAt).getTime() -
+            new Date(bounty.submissionsOpenAt).getTime()) /
+            (1000 * 60 * 60 * 24),
+        )
+      : null;
+  }, [bounty]);
+  const [submissionWindow, setSubmissionWindow] = useState<number | null>(
+    originalSubmissionWindow,
+  );
 
   const [requireImage, setRequireImage] = useState(
     bounty?.submissionRequirements?.includes("image") || false,
@@ -84,8 +122,9 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
     bounty?.submissionRequirements?.includes("url") || false,
   );
 
-  const [openAccordions, setOpenAccordions] = useState(ACCORDION_ITEMS);
-  const { makeRequest, isSubmitting } = useApiMutation<BountyProps>();
+  const [rewardType, setRewardType] = useState<RewardType>(
+    bounty ? (bounty.rewardAmount ? "flat" : "custom") : "flat",
+  );
 
   const form = useForm<FormData>({
     defaultValues: {
@@ -93,9 +132,11 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
       description: bounty?.description || undefined,
       startsAt: bounty?.startsAt || undefined,
       endsAt: bounty?.endsAt || undefined,
+      submissionsOpenAt: bounty?.submissionsOpenAt || undefined,
       rewardAmount: bounty?.rewardAmount
         ? bounty.rewardAmount / 100
         : undefined,
+      rewardDescription: bounty?.rewardDescription || undefined,
       type: bounty?.type || "performance",
       submissionRequirements: bounty?.submissionRequirements || null,
       groupIds: bounty?.groups?.map(({ id }) => id) || null,
@@ -109,6 +150,7 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
         : {
             operator: "gte",
           },
+      performanceScope: bounty?.performanceScope ?? "new",
     },
   });
 
@@ -118,21 +160,24 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
     setValue,
     control,
     register,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = form;
 
   const [
     startsAt,
     endsAt,
     rewardAmount,
+    rewardDescription,
     type,
     name,
     description,
     performanceCondition,
+    groupIds,
   ] = watch([
     "startsAt",
     "endsAt",
     "rewardAmount",
+    "rewardDescription",
     "type",
     "name",
     "description",
@@ -140,84 +185,253 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
     "groupIds",
   ]);
 
-  // Make sure endsAt is null if hasEndDate is false
-  useEffect(() => {
-    if (!hasEndDate) {
-      setValue("endsAt", null);
+  // Helper functions to update form values
+  const handleStartDateToggle = (checked: boolean) => {
+    setHasStartDate(checked);
+    if (!checked) {
+      setValue("startsAt", null, { shouldDirty: true, shouldValidate: true });
     }
-  }, [hasEndDate, setValue]);
+  };
 
-  // Set submission requirements
-  useEffect(() => {
-    const requirements: BountySubmissionRequirement[] = [];
-
-    if (requireImage) {
-      requirements.push("image");
+  const handleEndDateToggle = (checked: boolean) => {
+    setHasEndDate(checked);
+    if (!checked) {
+      setValue("endsAt", null, { shouldDirty: true, shouldValidate: true });
+      setSubmissionWindow(null);
+      setValue("submissionsOpenAt", null, { shouldDirty: true });
     }
+  };
 
-    if (requireUrl) {
-      requirements.push("url");
+  // Update submissionsOpenAt when endsAt or submissionWindow changes
+  const handleEndDateChange = (date: Date | null) => {
+    setValue("endsAt", date, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    if (date && submissionWindow) {
+      const submissionsOpenAt = new Date(date);
+      submissionsOpenAt.setDate(submissionsOpenAt.getDate() - submissionWindow);
+      setValue("submissionsOpenAt", submissionsOpenAt, { shouldDirty: true });
     }
+  };
 
-    if (requirements.length > 0) {
-      setValue("submissionRequirements", requirements);
+  const handleSubmissionWindowToggle = (checked: boolean) => {
+    if (checked) {
+      setSubmissionWindow(originalSubmissionWindow || 2);
+      if (bounty?.submissionsOpenAt) {
+        setValue("submissionsOpenAt", bounty.submissionsOpenAt);
+      }
     } else {
-      setValue("submissionRequirements", null);
+      setSubmissionWindow(null);
+      setValue("submissionsOpenAt", null, { shouldDirty: true });
     }
-  }, [requireImage, requireUrl, setValue]);
+  };
 
-  // Confirmation modal for bounty creation only
-  const { setShowConfirmModal, confirmModal } = useConfirmModal({
-    title: "Confirm bounty creation",
-    description:
-      "This will create the bounty and notify all partners in the selected partner groups. Are you sure you want to continue?",
-    confirmText: "Confirm",
-    onConfirm: async () => {
-      await performSubmit();
-    },
-  });
+  const handleSubmissionWindowChange = (value: number) => {
+    setSubmissionWindow(value);
+    if (endsAt) {
+      const submissionsOpenAt = new Date(endsAt);
+      submissionsOpenAt.setDate(submissionsOpenAt.getDate() - value);
+      setValue("submissionsOpenAt", submissionsOpenAt, { shouldDirty: true });
+    }
+  };
 
-  // Decide if the submit button should be disabled
-  const shouldDisableSubmit = useMemo(() => {
-    if (!startsAt || !rewardAmount) {
-      return true;
+  const updateSubmissionRequirements = (
+    imageRequired: boolean,
+    urlRequired: boolean,
+  ) => {
+    const requirements: BountySubmissionRequirement[] = [];
+    if (imageRequired) requirements.push("image");
+    if (urlRequired) requirements.push("url");
+
+    setValue(
+      "submissionRequirements",
+      requirements.length > 0 ? requirements : null,
+      { shouldDirty: true },
+    );
+  };
+
+  const handleRequireImageToggle = (checked: boolean) => {
+    setRequireImage(checked);
+    updateSubmissionRequirements(checked, requireUrl);
+  };
+
+  const handleRequireUrlToggle = (checked: boolean) => {
+    setRequireUrl(checked);
+    updateSubmissionRequirements(requireImage, checked);
+  };
+
+  // Comprehensive validation logic
+  const validationError = useMemo(() => {
+    const now = new Date();
+
+    // Date validations
+    if (startsAt && startsAt !== bounty?.startsAt) {
+      const startDate = new Date(startsAt);
+      if (startDate < now) {
+        return "Please choose a start date that is in the future.";
+      }
     }
 
-    if (endsAt && endsAt <= startsAt) {
-      return true;
+    const effectiveStartDate = startsAt ? new Date(startsAt) : now;
+
+    if (endsAt) {
+      const endDate = new Date(endsAt);
+
+      if (endDate <= effectiveStartDate) {
+        return `Please choose an end date that is after the start date (${formatDate(effectiveStartDate)}).`;
+      }
+
+      // Ensure end date is at least 1 hour from start
+      const minEndDate = new Date(
+        effectiveStartDate.getTime() + 60 * 60 * 1000,
+      );
+      if (endDate < minEndDate) {
+        return "End date must be at least 1 hour after the start date.";
+      }
     }
 
-    if (type === "submission" && !name?.trim()) {
-      return true;
+    // Submission window validations
+    if (submissionWindow !== null) {
+      if (!endsAt) {
+        return "An end date is required to determine when the submission window opens.";
+      }
+
+      if (submissionWindow < 1 || submissionWindow > 30) {
+        return "Submission window must be between 1 and 30 days.";
+      }
+
+      // Check if submission window doesn't push submissionsOpenAt before start date
+      const calculatedSubmissionsOpenAt = new Date(endsAt);
+      calculatedSubmissionsOpenAt.setDate(
+        calculatedSubmissionsOpenAt.getDate() - submissionWindow,
+      );
+
+      if (calculatedSubmissionsOpenAt <= effectiveStartDate) {
+        return "Submission window is too long. It would open before the bounty starts.";
+      }
     }
 
-    if (
-      type === "performance" &&
-      ["attribute", "operator", "value"].some(
-        (key) => performanceCondition?.[key] === undefined,
-      )
-    ) {
-      return true;
+    // Type-specific validations
+    if (type === "submission") {
+      if (!name?.trim()) {
+        return "Name is required for submission bounties.";
+      }
+
+      if (name && name.length > 100) {
+        return "Name must be 100 characters or less.";
+      }
+
+      if (rewardType === "flat") {
+        if (isEmpty(rewardAmount)) {
+          return "Reward amount is required for flat rate rewards.";
+        }
+        if (rewardAmount !== null && rewardAmount <= 0) {
+          return "Reward amount must be greater than 0.";
+        }
+        if (rewardAmount !== null && rewardAmount > 1000000) {
+          return "Reward amount cannot exceed $1,000,000.";
+        }
+      }
+
+      if (rewardType === "custom") {
+        if (!rewardDescription?.trim()) {
+          return "Reward description is required for custom rewards.";
+        }
+        if (rewardDescription && rewardDescription.length > 100) {
+          return "Reward description must be 100 characters or less.";
+        }
+      }
     }
 
-    return false;
+    if (type === "performance") {
+      const condition = performanceCondition;
+
+      if (!condition?.attribute) {
+        return "Performance attribute is required.";
+      }
+
+      if (!condition?.operator) {
+        return "Performance operator is required.";
+      }
+
+      if (isEmpty(condition?.value)) {
+        return "Performance value is required.";
+      }
+
+      if (condition?.value !== null && condition.value < 0) {
+        return "Performance value must be greater than or equal to 0.";
+      }
+
+      if (isEmpty(rewardAmount)) {
+        return "Reward amount is required for performance bounties.";
+      }
+
+      if (rewardAmount !== null && rewardAmount <= 0) {
+        return "Reward amount must be greater than 0.";
+      }
+
+      if (rewardAmount !== null && rewardAmount > 1000000) {
+        return "Reward amount cannot exceed $1,000,000.";
+      }
+    }
+
+    // Description validation
+    if (description && description.length > BOUNTY_DESCRIPTION_MAX_LENGTH) {
+      return `Description must be ${BOUNTY_DESCRIPTION_MAX_LENGTH} characters or less.`;
+    }
+
+    return null;
   }, [
+    bounty,
     startsAt,
     endsAt,
     rewardAmount,
+    rewardDescription,
+    submissionWindow,
+    rewardType,
     type,
     name,
+    description,
     performanceCondition?.attribute,
     performanceCondition?.operator,
     performanceCondition?.value,
   ]);
 
+  const { setShowConfirmCreateBountyModal, confirmCreateBountyModal } =
+    useConfirmCreateBountyModal({
+      bounty:
+        !validationError && rewardAmount
+          ? {
+              type,
+              name:
+                type === "performance" && performanceCondition
+                  ? generatePerformanceBountyName({
+                      rewardAmount: rewardAmount ? rewardAmount * 100 : 0,
+                      condition: performanceCondition,
+                    })
+                  : name || "New bounty",
+              startsAt: startsAt || new Date(),
+              endsAt: endsAt || null,
+              rewardAmount: rewardAmount ? rewardAmount * 100 : null,
+              rewardDescription: rewardDescription || null,
+              groups: groupIds?.map((id) => ({ id })) || [],
+            }
+          : undefined,
+      onConfirm: async ({ sendNotificationEmails }) => {
+        await performSubmit({ sendNotificationEmails });
+      },
+    });
+
   // Handle actual form submission (called after confirmation)
-  const performSubmit = async () => {
-    const data = form.getValues();
+  const performSubmit = async ({
+    sendNotificationEmails,
+  }: { sendNotificationEmails?: boolean } = {}) => {
     if (!workspaceId) return;
 
-    data.rewardAmount = data.rewardAmount * 100;
+    const data = form.getValues();
+
+    data.rewardAmount = data.rewardAmount ? data.rewardAmount * 100 : null;
 
     // Parse performance logic
     if (data.type === "performance") {
@@ -233,22 +447,31 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
       }
 
       let { data: condition } = result;
-      const isCurrency = isCurrencyAttribute(condition.attribute);
 
       // Format the value to be in cents if it's a currency attribute
       condition = {
         ...condition,
-        value: isCurrency ? condition.value * 100 : condition.value,
+        value: isCurrencyAttribute(condition.attribute)
+          ? condition.value * 100
+          : condition.value,
       };
 
       data.performanceCondition = condition;
+      data.rewardDescription = null;
+      data.submissionsOpenAt = null;
     } else if (type === "submission") {
       data.performanceCondition = null;
+
+      if (rewardType === "custom") {
+        data.rewardAmount = null;
+      } else if (rewardType === "flat") {
+        data.rewardDescription = null;
+      }
     }
 
     await makeRequest(bounty ? `/api/bounties/${bounty.id}` : "/api/bounties", {
       method: bounty ? "PATCH" : "POST",
-      body: data,
+      body: { ...data, sendNotificationEmails },
       onSuccess: () => {
         mutatePrefix("/api/bounties");
         setIsOpen(false);
@@ -258,13 +481,13 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
   };
 
   // Handle form submission (shows confirmation modal for creation only)
-  const onSubmit = handleSubmit(async (data: FormData) => {
+  const onSubmit = handleSubmit(async () => {
     if (bounty) {
       // For updates, submit directly without confirmation
       await performSubmit();
     } else {
       // For creation, show confirmation modal
-      setShowConfirmModal(true);
+      setShowConfirmCreateBountyModal(true);
     }
   });
 
@@ -324,38 +547,64 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
                 <ProgramSheetAccordionContent>
                   <div className="space-y-6">
                     <p className="text-content-default text-sm">
-                      Set the schedule, reward, and additional details. Partners
-                      who already met the goal before the start date will
-                      auto-qualify and be rewarded.
+                      Set the schedule, reward, and additional details.
                     </p>
-
-                    <div>
-                      <Controller
-                        control={control}
-                        name="startsAt"
-                        render={({ field }) => (
-                          <SmartDateTimePicker
-                            value={field.value}
-                            onChange={(date) =>
-                              field.onChange(date ?? undefined)
-                            }
-                            label="Start date"
-                            placeholder='E.g. "2024-03-01", "Last Thursday", "2 hours ago"'
-                          />
-                        )}
-                      />
-                      {errors.startsAt && "test"}
-                    </div>
 
                     <AnimatedSizeContainer
                       height
                       transition={{ ease: "easeInOut", duration: 0.2 }}
-                      className={!hasEndDate ? "hidden" : ""}
-                      style={{ display: !hasEndDate ? "none" : "block" }}
+                      style={{
+                        height: hasStartDate ? "auto" : "0px",
+                        overflow: "hidden",
+                      }}
                     >
                       <div className="flex items-center gap-4">
                         <Switch
-                          fn={setHasEndDate}
+                          fn={handleStartDateToggle}
+                          checked={hasStartDate}
+                          trackDimensions="w-8 h-4"
+                          thumbDimensions="w-3 h-3"
+                          thumbTranslate="translate-x-4"
+                          disabled={Boolean(bounty?.startsAt)}
+                        />
+                        <div className="flex flex-col gap-1">
+                          <h3 className="text-sm font-medium text-neutral-700">
+                            Start date
+                          </h3>
+                        </div>
+                      </div>
+
+                      {hasStartDate && (
+                        <div className="mt-3 p-px">
+                          <Controller
+                            control={control}
+                            name="startsAt"
+                            render={({ field }) => (
+                              <SmartDateTimePicker
+                                value={field.value}
+                                onChange={(date) =>
+                                  field.onChange(date ?? undefined)
+                                }
+                                placeholder='E.g. "2024-03-01", "Last Thursday", "2 hours ago"'
+                              />
+                            )}
+                          />
+                          {errors.startsAt && "test"}
+                        </div>
+                      )}
+                    </AnimatedSizeContainer>
+
+                    <AnimatedSizeContainer
+                      height
+                      transition={{ ease: "easeInOut", duration: 0.2 }}
+                      style={{
+                        height: hasEndDate ? "auto" : "0px",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div className="flex items-center gap-4">
+                        <Switch
+                          fn={handleEndDateToggle}
                           checked={hasEndDate}
                           trackDimensions="w-8 h-4"
                           thumbDimensions="w-3 h-3"
@@ -363,13 +612,13 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
                         />
                         <div className="flex flex-col gap-1">
                           <h3 className="text-sm font-medium text-neutral-700">
-                            Add end date
+                            End date
                           </h3>
                         </div>
                       </div>
 
                       {hasEndDate && (
-                        <div className="mt-6 p-px">
+                        <div className="mt-3 p-px">
                           <Controller
                             control={control}
                             name="endsAt"
@@ -377,9 +626,8 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
                               <SmartDateTimePicker
                                 value={field.value}
                                 onChange={(date) =>
-                                  field.onChange(date ?? undefined)
+                                  handleEndDateChange(date ?? null)
                                 }
-                                label="End date"
                                 placeholder='E.g. "in 3 months"'
                               />
                             )}
@@ -388,73 +636,161 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
                       )}
                     </AnimatedSizeContainer>
 
-                    <div>
-                      <label
-                        htmlFor="rewardAmount"
-                        className="text-sm font-medium text-neutral-800"
-                      >
-                        Reward
-                      </label>
-                      <div className="mt-2">
-                        <Controller
-                          name="rewardAmount"
-                          control={control}
-                          rules={{
-                            required: true,
-                            min: 0,
-                          }}
-                          render={({ field }) => (
-                            <AmountInput
-                              {...field}
-                              id="rewardAmount"
-                              amountType="flat"
-                              placeholder="200"
-                              error={errors.rewardAmount?.message}
-                              value={
-                                field.value == null || isNaN(field.value)
-                                  ? ""
-                                  : field.value
-                              }
-                              onChange={(e) => {
-                                const val = e.target.value;
-
-                                field.onChange(
-                                  val === "" ? null : parseFloat(val),
-                                );
-                              }}
-                            />
-                          )}
-                        />
-                      </div>
-                    </div>
-
                     {type === "submission" && (
+                      <>
+                        <AnimatedSizeContainer
+                          height
+                          transition={{ ease: "easeInOut", duration: 0.2 }}
+                          style={{
+                            height: submissionWindow ? "auto" : "0px",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div className="flex items-center gap-4">
+                            <Switch
+                              fn={handleSubmissionWindowToggle}
+                              checked={submissionWindow !== null}
+                              trackDimensions="w-8 h-4"
+                              thumbDimensions="w-3 h-3"
+                              thumbTranslate="translate-x-4"
+                              disabled={!Boolean(endsAt)}
+                            />
+                            <div className="flex flex-col gap-1">
+                              <h3 className="text-sm font-medium text-neutral-700">
+                                Submission window
+                              </h3>
+                            </div>
+                          </div>
+
+                          {submissionWindow !== null && (
+                            <div className="mt-3 p-px">
+                              <NumberStepper
+                                value={submissionWindow ?? 2}
+                                onChange={handleSubmissionWindowChange}
+                                min={1} // Min 1 day
+                                max={30} // Max 30 days
+                                step={1}
+                                className="w-full"
+                              />
+                              <p className="mt-2 text-xs text-neutral-500">
+                                Submissions open {submissionWindow} days before
+                                the end date. Drafts can be saved until then.
+                              </p>
+                            </div>
+                          )}
+                        </AnimatedSizeContainer>
+
+                        <div>
+                          <label
+                            htmlFor="name"
+                            className="text-sm font-medium text-neutral-800"
+                          >
+                            Name
+                          </label>
+                          <div className="mt-2">
+                            <input
+                              id="name"
+                              type="text"
+                              maxLength={100}
+                              className={cn(
+                                "block w-full rounded-md border-neutral-300 px-3 py-2 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500 sm:text-sm",
+                                errors.name &&
+                                  "border-red-600 focus:border-red-500 focus:ring-red-600",
+                              )}
+                              placeholder={`Create a YouTube video about${program?.name ? ` ${program.name}` : ""}...`}
+                              {...register("name", {
+                                setValueAs: (value) =>
+                                  value === "" ? null : value,
+                              })}
+                            />
+                            <div className="mt-1 text-left">
+                              <span className="text-xs text-neutral-400">
+                                {name?.length || 0}/100
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <ToggleGroup
+                          className="mt-2 flex w-full items-center gap-1 rounded-md border border-neutral-200 bg-neutral-100 p-1"
+                          optionClassName="h-8 flex items-center justify-center rounded-md flex-1 text-sm"
+                          indicatorClassName="bg-white border-none rounded-md"
+                          options={REWARD_TYPES}
+                          selected={rewardType}
+                          selectAction={(id: RewardType) => setRewardType(id)}
+                        />
+                      </>
+                    )}
+
+                    {(rewardType === "flat" || type === "performance") && (
                       <div>
                         <label
-                          htmlFor="name"
+                          htmlFor="rewardAmount"
                           className="text-sm font-medium text-neutral-800"
                         >
-                          Name
+                          Reward
+                        </label>
+                        <div className="mt-2">
+                          <Controller
+                            name="rewardAmount"
+                            control={control}
+                            rules={{
+                              required: true,
+                              min: 0,
+                            }}
+                            render={({ field }) => (
+                              <AmountInput
+                                {...field}
+                                id="rewardAmount"
+                                amountType="flat"
+                                placeholder="200"
+                                error={errors.rewardAmount?.message}
+                                value={
+                                  field.value == null || isNaN(field.value)
+                                    ? ""
+                                    : field.value
+                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+
+                                  field.onChange(
+                                    val === "" ? null : parseFloat(val),
+                                  );
+                                }}
+                              />
+                            )}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {rewardType === "custom" && type === "submission" && (
+                      <div>
+                        <label
+                          htmlFor="rewardDescription"
+                          className="text-sm font-medium text-neutral-800"
+                        >
+                          Reward
                         </label>
                         <div className="mt-2">
                           <input
-                            id="name"
+                            id="rewardDescription"
                             type="text"
                             maxLength={100}
                             className={cn(
                               "block w-full rounded-md border-neutral-300 px-3 py-2 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500 sm:text-sm",
-                              errors.name &&
+                              errors.rewardDescription &&
                                 "border-red-600 focus:border-red-500 focus:ring-red-600",
                             )}
-                            placeholder={`Create a YouTube video about${program?.name ? ` ${program.name}` : ""}...`}
-                            {...register("name", {
+                            placeholder="Earn an additional 10% if you hit your revenue goal"
+                            {...register("rewardDescription", {
                               setValueAs: (value) =>
                                 value === "" ? null : value,
                             })}
                           />
                           <div className="mt-1 text-left">
                             <span className="text-xs text-neutral-400">
-                              {name?.length || 0}/100
+                              {rewardDescription?.length || 0}/100
                             </span>
                           </div>
                         </div>
@@ -471,38 +807,65 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
                     )}
 
                     <div>
-                      <label
-                        htmlFor="description"
-                        className="text-sm font-medium text-neutral-800"
-                      >
+                      <label className="text-sm font-medium text-neutral-800">
                         Details
                         <span className="ml-1 font-normal text-neutral-500">
                           (optional)
                         </span>
                       </label>
                       <div className="mt-2">
-                        <textarea
-                          id="description"
-                          rows={3}
-                          maxLength={500}
-                          className={cn(
-                            "block w-full rounded-md border-neutral-300 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500 sm:text-sm",
-                            errors.description &&
-                              "border-red-600 focus:border-red-500 focus:ring-red-600",
+                        <Controller
+                          control={control}
+                          name="description"
+                          render={({ field }) => (
+                            <RichTextProvider
+                              features={["bold", "italic", "links"]}
+                              markdown
+                              placeholder="Provide any bounty requirements to the partner"
+                              editorClassName="block max-h-48 overflow-auto scrollbar-hide w-full resize-none border-none p-3 text-base sm:text-sm"
+                              initialValue={field.value}
+                              onChange={(editor) =>
+                                field.onChange(
+                                  (editor as any).getMarkdown() || null,
+                                )
+                              }
+                            >
+                              <div
+                                className={cn(
+                                  "border-border-subtle overflow-hidden rounded-md border border-neutral-300 focus-within:border-neutral-500 focus-within:ring-1 focus-within:ring-neutral-500",
+                                  errors.description &&
+                                    "border-red-600 focus-within:border-red-500 focus-within:ring-red-600",
+                                )}
+                              >
+                                <div className="flex flex-col">
+                                  <RichTextArea />
+                                  <RichTextToolbar className="px-1 pb-1" />
+                                </div>
+                              </div>
+                            </RichTextProvider>
                           )}
-                          placeholder="Provide any bounty requirements to the partner"
-                          {...register("description", {
-                            setValueAs: (value) =>
-                              value === "" ? null : value,
-                          })}
                         />
+
                         <div className="mt-1 text-left">
-                          <span className="text-xs text-neutral-400">
-                            {description?.length || 0}/500
-                          </span>
+                          <MaxCharactersCounter
+                            name="description"
+                            control={control}
+                            maxLength={BOUNTY_DESCRIPTION_MAX_LENGTH}
+                            spaced
+                            className="text-content-muted"
+                          />
                         </div>
                       </div>
                     </div>
+
+                    {rewardType === "custom" && (
+                      <div className="gap-4 rounded-lg bg-orange-50 px-4 py-2.5 text-center">
+                        <span className="text-sm font-medium text-orange-800">
+                          When reviewing these submissions, a custom reward
+                          amount will be required to approve.
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </ProgramSheetAccordionContent>
               </ProgramSheetAccordionItem>
@@ -522,7 +885,7 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
                       <div className="space-y-4">
                         <div className="flex items-center gap-4">
                           <Switch
-                            fn={setRequireImage}
+                            fn={handleRequireImageToggle}
                             checked={requireImage}
                             trackDimensions="w-8 h-4"
                             thumbDimensions="w-3 h-3"
@@ -537,7 +900,7 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
 
                         <div className="flex items-center gap-4">
                           <Switch
-                            fn={setRequireUrl}
+                            fn={handleRequireUrlToggle}
                             checked={requireUrl}
                             trackDimensions="w-8 h-4"
                             thumbDimensions="w-3 h-3"
@@ -593,17 +956,16 @@ function BountySheetContent({ setIsOpen, bounty }: BountySheetProps) {
               text={bounty ? "Update bounty" : "Create bounty"}
               className="w-fit"
               loading={isSubmitting}
-              disabled={shouldDisableSubmit}
+              disabled={Boolean(validationError) || (bounty && !isDirty)}
               disabledTooltip={
-                shouldDisableSubmit
-                  ? "Please fill all required fields."
-                  : undefined
+                validationError ||
+                (bounty && !isDirty ? "No changes to save" : undefined)
               }
             />
           </div>
         </div>
       </FormProvider>
-      {!bounty && confirmModal}
+      {!bounty && confirmCreateBountyModal}
     </form>
   );
 }

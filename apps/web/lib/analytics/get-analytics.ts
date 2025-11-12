@@ -1,8 +1,8 @@
 import { combineTagIds } from "@/lib/api/tags/combine-tag-ids";
 import { tb } from "@/lib/tinybird";
-import { UTM_TAGS_PLURAL_LIST } from "@/lib/zod/schemas/utm";
-import { prismaEdge } from "@dub/prisma/edge";
+import { prisma } from "@dub/prisma";
 import { linkConstructor, punyEncode } from "@dub/utils";
+import { FolderAccessLevel } from "@prisma/client";
 import { decodeKeyIfCaseSensitive } from "../api/links/case-sensitivity";
 import { conn } from "../planetscale";
 import z from "../zod";
@@ -23,6 +23,7 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
     groupBy,
     workspaceId,
     linkId,
+    linkIds,
     interval,
     start,
     end,
@@ -39,13 +40,13 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
   const tagIds = combineTagIds(params);
 
   // get all-time clicks count if:
-  // 1. linkId is defined
+  // 1. linkId or linkIds is defined
   // 2. type is count
   // 3. interval is all
   // 4. no custom start or end date is provided
   // 5. no other dimensional filters are applied
   if (
-    linkId &&
+    (linkId || linkIds) &&
     groupBy === "count" &&
     interval === "all" &&
     !start &&
@@ -61,12 +62,33 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
           ? `sales, saleAmount`
           : `${event}`;
 
-    const response = await conn.execute(
-      `SELECT ${columns} FROM Link WHERE id = ?`,
-      [linkId],
-    );
+    // Handle single linkId
+    if (linkId) {
+      const response = await conn.execute(
+        `SELECT ${columns} FROM Link WHERE id = ?`,
+        [linkId],
+      );
 
-    return response.rows[0];
+      return analyticsResponse["count"].parse(response.rows[0]);
+    }
+
+    // Handle multiple linkIds with aggregation
+    if (linkIds && linkIds.length > 0) {
+      const linkIdsToFilter = linkIds.map(() => "?").join(",");
+      const aggregateColumns =
+        event === "composite"
+          ? `SUM(clicks) as clicks, SUM(leads) as leads, SUM(sales) as sales, SUM(saleAmount) as saleAmount`
+          : event === "sales"
+            ? `SUM(sales) as sales, SUM(saleAmount) as saleAmount`
+            : `SUM(${event}) as ${event}`;
+
+      const response = await conn.execute(
+        `SELECT ${aggregateColumns} FROM Link WHERE id IN (${linkIdsToFilter})`,
+        linkIds,
+      );
+
+      return analyticsResponse["count"].parse(response.rows[0]);
+    }
   }
 
   if (groupBy === "trigger") {
@@ -78,6 +100,7 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
     start,
     end,
     dataAvailableFrom,
+    timezone,
   });
 
   if (qr) {
@@ -92,23 +115,35 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
 
   // Create a Tinybird pipe
   const pipe = tb.buildPipe({
-    pipe: UTM_TAGS_PLURAL_LIST.includes(groupBy) ? "v2_utms" : `v2_${groupBy}`,
+    pipe: ["count", "timeseries"].includes(groupBy)
+      ? `v3_${groupBy}`
+      : [
+            "top_folders",
+            "top_link_tags",
+            "top_domains",
+            "top_partners",
+            "top_groups",
+          ].includes(groupBy)
+        ? "v3_group_by_link_metadata"
+        : "v3_group_by",
     parameters: analyticsFilterTB,
-    data:
-      groupBy === "top_links" ||
-      groupBy === "top_partners" ||
-      UTM_TAGS_PLURAL_LIST.includes(groupBy)
-        ? z.any()
-        : analyticsResponse[groupBy],
+    data: z.object({
+      groupByField: z.string(),
+      clicks: z.number().default(0),
+      leads: z.number().default(0),
+      sales: z.number().default(0),
+      saleAmount: z.number().default(0),
+      // only for cities and regions groupBy
+      country: z.string().optional(),
+      region: z.string().optional(),
+    }),
   });
 
   const filters = queryParser(query);
 
   const response = await pipe({
     ...params,
-    ...(UTM_TAGS_PLURAL_LIST.includes(groupBy)
-      ? { groupByUtmTag: SINGULAR_ANALYTICS_ENDPOINTS[groupBy] }
-      : {}),
+    groupBy,
     eventType: event,
     workspaceId,
     tagIds,
@@ -123,23 +158,19 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
   });
 
   if (groupBy === "count") {
-    // Return the count value for deprecated endpoints
+    const { groupByField, ...rest } = response.data[0];
+    // Return the count value for deprecated count endpoints
     if (isDeprecatedClicksEndpoint) {
-      return response.data[0][event];
-      // Return the object for count endpoints
+      return rest[event];
+      // Return the object for regular count endpoints
     } else {
-      return response.data[0];
+      return rest;
     }
   } else if (groupBy === "top_links") {
-    const topLinksData = response.data as {
-      link: string;
-    }[];
-
-    const links = await prismaEdge.link.findMany({
+    const links = await prisma.link.findMany({
       where: {
-        projectId: workspaceId,
         id: {
-          in: topLinksData.map((item) => item.link),
+          in: response.data.map((item) => item.groupByField),
         },
       },
       select: {
@@ -153,9 +184,9 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
       },
     });
 
-    return topLinksData
-      .map((topLink) => {
-        const link = links.find((l) => l.id === topLink.link);
+    return response.data
+      .map((item) => {
+        const link = links.find((l) => l.id === item.groupByField);
         if (!link) {
           return null;
         }
@@ -167,6 +198,7 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
 
         return analyticsResponse[groupBy].parse({
           id: link.id,
+          link: link.id,
           domain: link.domain,
           key: punyEncode(link.key),
           url: link.url,
@@ -177,30 +209,15 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
           comments: link.comments,
           title: link.title || null,
           createdAt: link.createdAt.toISOString(),
-          ...topLink,
+          ...item,
         });
       })
       .filter((d) => d !== null);
-
-    // special case for utm tags
-  } else if (UTM_TAGS_PLURAL_LIST.includes(groupBy)) {
-    const schema = analyticsResponse[groupBy];
-
-    return response.data.map((item) =>
-      schema.parse({
-        ...item,
-        [SINGULAR_ANALYTICS_ENDPOINTS[groupBy]]: item.utm,
-      }),
-    );
   } else if (groupBy === "top_partners") {
-    const topPartnersData = response.data as {
-      partnerId: string;
-    }[];
-
-    const partners = await prismaEdge.partner.findMany({
+    const partners = await prisma.partner.findMany({
       where: {
         id: {
-          in: topPartnersData.map((item) => item.partnerId),
+          in: response.data.map((item) => item.groupByField),
         },
       },
       select: {
@@ -212,18 +229,108 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
       },
     });
 
-    return topPartnersData
+    return response.data
       .map((item) => {
-        const partner = partners.find((p) => p.id === item.partnerId);
+        const partner = partners.find((p) => p.id === item.groupByField);
         if (!partner) return null;
-        return {
+        return analyticsResponse[groupBy].parse({
           ...item,
-          partner,
-        };
+          partnerId: item.groupByField,
+          partner: {
+            ...partner,
+            payoutsEnabledAt: partner.payoutsEnabledAt?.toISOString() || null,
+          },
+        });
+      })
+      .filter((d) => d !== null);
+  } else if (groupBy === "top_link_tags") {
+    const tags = await prisma.tag.findMany({
+      where: {
+        id: {
+          in: response.data.map((item) => item.groupByField),
+        },
+      },
+    });
+
+    return response.data
+      .map((item) => {
+        const tag = tags.find((t) => t.id === item.groupByField);
+        if (!tag) return null;
+        return analyticsResponse[groupBy].parse({
+          ...item,
+          tagId: item.groupByField,
+          tag,
+        });
+      })
+      .filter((d) => d !== null);
+  } else if (groupBy === "top_folders") {
+    const folders = await prisma.folder.findMany({
+      where: {
+        id: {
+          in: response.data.map((item) => item.groupByField),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        accessLevel: true,
+      },
+    });
+
+    return response.data
+      .map((item) => {
+        const folder = folders.find((f) => f.id === item.groupByField);
+        if (!folder) return null;
+        return analyticsResponse.top_folders
+          .extend({
+            folder: analyticsResponse.top_folders.shape.folder.extend({
+              accessLevel: z.nativeEnum(FolderAccessLevel).nullish(),
+            }),
+          })
+          .parse({
+            ...item,
+            folderId: item.groupByField,
+            folder,
+          });
+      })
+      .filter((d) => d !== null);
+  } else if (groupBy === "top_groups") {
+    const groups = await prisma.partnerGroup.findMany({
+      where: {
+        id: {
+          in: response.data.map((item) => item.groupByField),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        color: true,
+      },
+    });
+
+    return response.data
+      .map((item) => {
+        const group = groups.find((g) => g.id === item.groupByField);
+
+        if (!group) return null;
+
+        return analyticsResponse[groupBy].parse({
+          ...item,
+          groupId: item.groupByField,
+          group,
+        });
       })
       .filter((d) => d !== null);
   }
 
   // Return array for other endpoints
-  return response.data;
+  const schema = analyticsResponse[groupBy];
+
+  return response.data.map((item) =>
+    schema.parse({
+      ...item,
+      [SINGULAR_ANALYTICS_ENDPOINTS[groupBy]]: item.groupByField,
+    }),
+  );
 };

@@ -1,8 +1,8 @@
-import z from "@/lib/zod";
+import { waitUntil } from "@vercel/functions";
+import { z } from "zod";
 import { ExpandedLink } from "../api/links";
 import { decodeKeyIfCaseSensitive } from "../api/links/case-sensitivity";
-import { prefixWorkspaceId } from "../api/workspace-id";
-import { tb } from "./client";
+import { tb, tbOld } from "./client";
 
 export const dubLinksMetadataSchema = z.object({
   link_id: z.string(),
@@ -26,14 +26,15 @@ export const dubLinksMetadataSchema = z.object({
     .string()
     .nullish()
     .transform((v) => (v ? v : "")),
+  partner_group_id: z
+    .string()
+    .nullish()
+    .transform((v) => (v ? v : "")),
+  partner_tag_ids: z.array(z.string()).default([]),
   workspace_id: z
     .string()
     .nullish()
-    .transform((v) => {
-      if (!v) return ""; // return empty string if null or undefined
-
-      return prefixWorkspaceId(v);
-    }),
+    .transform((v) => (v ? v : "")),
   created_at: z
     .date()
     .transform((v) => v.toISOString().replace("T", " ").replace("Z", "")),
@@ -43,13 +44,20 @@ export const dubLinksMetadataSchema = z.object({
     .transform((v) => (v ? 1 : 0)),
 });
 
-export const recordLinkTB = tb.buildIngestEndpoint({
+const recordLinkTB = tb.buildIngestEndpoint({
   datasource: "dub_links_metadata",
   event: dubLinksMetadataSchema,
   wait: true,
 });
 
-export const transformLinkTB = (link: ExpandedLink) => {
+// TODO: Remove after Tinybird migration
+const recordLinkTBOld = tbOld.buildIngestEndpoint({
+  datasource: "dub_links_metadata",
+  event: dubLinksMetadataSchema,
+  wait: true,
+});
+
+const transformLinkTB = (link: ExpandedLink) => {
   const key = decodeKeyIfCaseSensitive({
     domain: link.domain,
     key: link.key,
@@ -60,20 +68,33 @@ export const transformLinkTB = (link: ExpandedLink) => {
     domain: link.domain,
     key,
     url: link.url,
-    tag_ids: link.tags?.map(({ tag }) => tag.id),
+    tag_ids: link.tags?.map(({ tag }) => tag.id) ?? [],
     folder_id: link.folderId ?? "",
     tenant_id: link.tenantId ?? "",
     program_id: link.programId ?? "",
     partner_id: link.partnerId ?? "",
+    partner_group_id: link.programEnrollment?.groupId ?? "",
+    partner_tag_ids: [],
     workspace_id: link.projectId,
     created_at: link.createdAt,
   };
 };
 
-export const recordLink = async (payload: ExpandedLink | ExpandedLink[]) => {
+export const recordLink = async (
+  payload: ExpandedLink | ExpandedLink[],
+  { deleted }: { deleted?: boolean } = {},
+) => {
   if (Array.isArray(payload)) {
-    return await recordLinkTB(payload.map(transformLinkTB));
+    waitUntil(
+      recordLinkTBOld(
+        payload.map(transformLinkTB).map((p) => ({ ...p, deleted })),
+      ),
+    );
+    return await recordLinkTB(
+      payload.map(transformLinkTB).map((p) => ({ ...p, deleted })),
+    );
   } else {
-    return await recordLinkTB(transformLinkTB(payload));
+    waitUntil(recordLinkTBOld({ ...transformLinkTB(payload), deleted }));
+    return await recordLinkTB({ ...transformLinkTB(payload), deleted });
   }
 };

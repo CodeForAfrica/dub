@@ -3,19 +3,39 @@ import { transformCustomer } from "@/lib/api/customers/transform-customer";
 import { DubApiError } from "@/lib/api/errors";
 import { getProgramEnrollmentOrThrow } from "@/lib/api/programs/get-program-enrollment-or-throw";
 import { withPartnerProfile } from "@/lib/auth/partner";
+import {
+  LARGE_PROGRAM_IDS,
+  LARGE_PROGRAM_MIN_TOTAL_COMMISSIONS_CENTS,
+} from "@/lib/constants/program";
 import { generateRandomName } from "@/lib/names";
 import { PartnerProfileCustomerSchema } from "@/lib/zod/schemas/partner-profile";
 import { prisma } from "@dub/prisma";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 // GET /api/partner-profile/programs/:programId/customers/:customerId – Get a customer by ID
 export const GET = withPartnerProfile(async ({ partner, params }) => {
   const { customerId, programId } = params;
 
-  const { program, links } = await getProgramEnrollmentOrThrow({
-    partnerId: partner.id,
-    programId: programId,
-  });
+  const { program, links, totalCommissions, customerDataSharingEnabledAt } =
+    await getProgramEnrollmentOrThrow({
+      partnerId: partner.id,
+      programId: programId,
+      include: {
+        program: true,
+        links: true,
+      },
+    });
+
+  if (
+    LARGE_PROGRAM_IDS.includes(program.id) &&
+    totalCommissions < LARGE_PROGRAM_MIN_TOTAL_COMMISSIONS_CENTS
+  ) {
+    throw new DubApiError({
+      code: "forbidden",
+      message: "This feature is not available for your program.",
+    });
+  }
 
   const customer = await prisma.customer.findUnique({
     where: {
@@ -72,10 +92,16 @@ export const GET = withPartnerProfile(async ({ partner, params }) => {
       : null;
 
   return NextResponse.json(
-    PartnerProfileCustomerSchema.parse({
+    PartnerProfileCustomerSchema.extend({
+      ...(customerDataSharingEnabledAt && { name: z.string().nullish() }),
+    }).parse({
       ...transformCustomer({
         ...customer,
-        email: customer.email || customer.name || generateRandomName(),
+        email: customer.email
+          ? customerDataSharingEnabledAt
+            ? customer.email
+            : customer.email.replace(/(?<=^.).+(?=.@)/, "****")
+          : customer.name || generateRandomName(),
       }),
       activity: {
         ltv,

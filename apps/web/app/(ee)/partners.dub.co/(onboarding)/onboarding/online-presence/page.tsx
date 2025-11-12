@@ -62,6 +62,11 @@ async function OnlinePresenceFormRSC() {
       },
       select: {
         website: true,
+        youtube: true,
+        twitter: true,
+        linkedin: true,
+        instagram: true,
+        tiktok: true,
       },
       orderBy: {
         createdAt: "desc",
@@ -80,6 +85,21 @@ async function OnlinePresenceFormRSC() {
         ...partner,
         ...(application?.website && !partner.website
           ? { website: application?.website }
+          : {}),
+        ...(application?.tiktok && !partner.tiktok
+          ? { tiktok: application?.tiktok }
+          : {}),
+        ...(application?.youtube && !partner.youtube
+          ? { youtube: application?.youtube }
+          : {}),
+        ...(application?.twitter && !partner.twitter
+          ? { twitter: application?.twitter }
+          : {}),
+        ...(application?.linkedin && !partner.linkedin
+          ? { linkedin: application?.linkedin }
+          : {}),
+        ...(application?.instagram && !partner.instagram
+          ? { instagram: application?.instagram }
           : {}),
       }}
     />

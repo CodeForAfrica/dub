@@ -27,6 +27,8 @@ export default function PartnerPayoutConfirmed({
     amount: 490,
     startDate: new Date("2024-11-01"),
     endDate: new Date("2024-11-30"),
+    paymentMethod: "ach_fast",
+    mode: "internal",
   },
 }: {
   email: string;
@@ -40,6 +42,8 @@ export default function PartnerPayoutConfirmed({
     amount: number;
     startDate?: Date | null;
     endDate?: Date | null;
+    paymentMethod: string;
+    mode: "internal" | "external" | null;
   };
 }) {
   const saleAmountInDollars = currencyFormatter(payout.amount / 100);
@@ -88,7 +92,7 @@ export default function PartnerPayoutConfirmed({
               {startDate && endDate ? (
                 <>
                   {" "}
-                  for affiliate sales made from{" "}
+                  for affiliate commissions made from{" "}
                   <strong className="text-black">{startDate}</strong> to{" "}
                   <strong className="text-black">{endDate}</strong>
                 </>
@@ -99,15 +103,31 @@ export default function PartnerPayoutConfirmed({
             </Text>
 
             <Text className="text-sm leading-6 text-neutral-600">
-              The payout is currently being processed and is expected to be
-              credited to your account within 5 business days (excluding
-              weekends and public holidays).
+              {payout.mode === "external" ? (
+                <>
+                  The payout is currently being processed and is expected to be
+                  credited to your{" "}
+                  <strong className="text-black">{program.name}</strong> account{" "}
+                  <strong className="text-black">shortly</strong>.
+                </>
+              ) : (
+                <>
+                  The payout is currently being processed and is expected to be
+                  credited to your account within
+                  <strong>
+                    {payout.paymentMethod === "ach_fast"
+                      ? " 2 business days"
+                      : " 5 business days"}
+                  </strong>{" "}
+                  (excluding weekends and public holidays).
+                </>
+              )}
             </Text>
 
             <Section className="mb-12 mt-8">
               <Link
                 className="rounded-lg bg-neutral-900 px-4 py-3 text-[12px] font-semibold text-white no-underline"
-                href={`https://partners.dub.co/settings/payouts?payoutId=${payout.id}`}
+                href={`https://partners.dub.co/payouts?payoutId=${payout.id}`}
               >
                 View payout
               </Link>
