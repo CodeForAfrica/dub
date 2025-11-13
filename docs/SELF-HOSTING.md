@@ -6,7 +6,6 @@ This guide provides comprehensive instructions for deploying Dub on your own inf
 
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
-- [System Requirements](#system-requirements)
 - [Quick Start (Local Development)](#quick-start-local-development)
 - [Production Deployment](#production-deployment)
   - [Step 1: Clone and Setup](#step-1-clone-and-setup)
@@ -37,7 +36,7 @@ Before you begin, ensure you have:
 - **Domain names**:
   - Primary domain for the app (e.g., `yourdub.com`)
   - Short domain for links (e.g., `yourdub.sh`)
-
+- ** CFA-specific ENV variables available on Vault
 ### Required External Services
 
 These services are currently required for Dub to function:
@@ -57,21 +56,6 @@ These services enable additional features:
 - **Google OAuth** - Google login
 - **Cloudflare R2 / AWS S3** - User-generated asset storage (logos, avatars, social cards)
 - **Unsplash** - Custom social media card images
-- **Anthropic Claude** - AI-powered features
-
-## System Requirements
-
-### Minimum Requirements
-- **CPU**: 2 cores
-- **RAM**: 4GB
-- **Storage**: 20GB (more for user-generated content if not using external storage)
-- **OS**: Linux, macOS, or Windows with WSL2
-
-### Recommended Requirements
-- **CPU**: 4+ cores
-- **RAM**: 8GB+
-- **Storage**: 50GB+ SSD
-- **OS**: Linux (Ubuntu 22.04 LTS or similar)
 
 ## Quick Start (Local Development)
 
@@ -288,19 +272,7 @@ NEXTAUTH_SECRET=your_generated_secret
 NEXTAUTH_URL=https://yourdub.com  # Your production URL
 ```
 
-#### GitHub OAuth (Recommended)
-
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
-2. Create a new OAuth App
-3. Set callback URL: `https://yourdub.com/api/auth/callback/github`
-4. Add to `.env`:
-
-```env
-GITHUB_CLIENT_ID=your_client_id
-GITHUB_CLIENT_SECRET=your_client_secret
-```
-
-#### Google OAuth (Optional)
+#### Google OAuth (Recommended -to integrate with existing Google Workspace)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create OAuth 2.0 credentials
@@ -312,28 +284,23 @@ GOOGLE_CLIENT_ID=your_client_id
 GOOGLE_CLIENT_SECRET=your_client_secret
 ```
 
+#### GitHub OAuth (Optional)
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Create a new OAuth App
+3. Set callback URL: `https://yourdub.com/api/auth/callback/github`
+4. Add to `.env`:
+
+```env
+GITHUB_CLIENT_ID=your_client_id
+GITHUB_CLIENT_SECRET=your_client_secret
+```
+
 ### Step 7: Storage Configuration
 
 For storing user-generated assets (logos, avatars, custom social cards), you need S3-compatible storage.
 
-#### Option A: Cloudflare R2 (Recommended)
-
-1. Create a Cloudflare account and enable R2
-2. Create an R2 bucket
-3. Generate API tokens with object read/write permissions
-4. Configure public domain access
-5. Add to `.env`:
-
-```env
-STORAGE_ACCESS_KEY_ID=your_access_key
-STORAGE_SECRET_ACCESS_KEY=your_secret_key
-STORAGE_ENDPOINT=https://your-account.r2.cloudflarestorage.com
-STORAGE_BASE_URL=https://your-bucket.your-domain.com
-STORAGE_PUBLIC_BUCKET=your-public-bucket-name
-STORAGE_PRIVATE_BUCKET=your-private-bucket-name
-```
-
-#### Option B: AWS S3
+#### Option B: AWS S3 (Recommended)
 
 1. Create an S3 bucket
 2. Configure bucket policy for public access (if needed)
@@ -347,6 +314,24 @@ STORAGE_ENDPOINT=https://s3.amazonaws.com
 STORAGE_BASE_URL=https://your-bucket.s3.amazonaws.com
 STORAGE_PUBLIC_BUCKET=your-public-bucket
 STORAGE_PRIVATE_BUCKET=your-private-bucket
+```
+
+#### Option A: Cloudflare R2 (Optional)
+
+N/B - Our cloudflare plan currently does not support R2
+1. Create a Cloudflare account and enable R2
+2. Create an R2 bucket
+3. Generate API tokens with object read/write permissions
+4. Configure public domain access
+5. Add to `.env`:
+
+```env
+STORAGE_ACCESS_KEY_ID=your_access_key
+STORAGE_SECRET_ACCESS_KEY=your_secret_key
+STORAGE_ENDPOINT=https://your-account.r2.cloudflarestorage.com
+STORAGE_BASE_URL=https://your-bucket.your-domain.com
+STORAGE_PUBLIC_BUCKET=your-public-bucket-name
+STORAGE_PRIVATE_BUCKET=your-private-bucket-name
 ```
 
 ### Step 8: Email Service (Optional)
@@ -376,7 +361,7 @@ SMTP_PASSWORD=your_smtp_password
 
 ### Step 9: Deploy Your Application
 
-#### Option A: Vercel (Easiest)
+#### Option A: Vercel
 
 1. Push your repository to GitHub
 2. Create a new Vercel project
@@ -399,67 +384,12 @@ AUTH_BEARER_TOKEN=your_vercel_api_token
 
 4. Configure your custom domains in Vercel dashboard
 
-#### Option B: Self-Hosted with Docker
-
-Create a `Dockerfile` in the root:
-
-```dockerfile
-FROM node:23-alpine AS base
-
-# Install pnpm
-RUN npm install -g pnpm@9.15.9
-
-FROM base AS dependencies
-WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/
-COPY packages/*/package.json ./packages/*/
-RUN pnpm install --frozen-lockfile
-
-FROM base AS build
-WORKDIR /app
-COPY . .
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=dependencies /app/apps/web/node_modules ./apps/web/node_modules
-RUN pnpm build --filter=web
-
-FROM base AS runner
-WORKDIR /app
-ENV NODE_ENV production
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-COPY --from=build /app/apps/web/public ./apps/web/public
-COPY --from=build --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-COPY --from=build --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
-
-USER nextjs
-EXPOSE 3000
-ENV PORT 3000
-
-CMD ["node", "apps/web/server.js"]
-```
-
-Build and run:
-
-```bash
-docker build -t dub .
-docker run -p 3000:3000 --env-file apps/web/.env dub
-```
-
-#### Option C: Railway / Render / Other PaaS
-
-1. Connect your GitHub repository
-2. Configure build command: `pnpm install && pnpm build --filter=web`
-3. Configure start command: `cd apps/web && pnpm start`
-4. Set root directory: `/`
-5. Add all environment variables
-6. Deploy
 
 ### Step 10: Cron Jobs Setup
 
 Dub includes several cron jobs for maintenance tasks. In production (non-Vercel), you'll need to schedule these manually.
+
+N/B - For our vercel deployment we deleted the cronjobs
 
 Create a cron configuration file `/etc/cron.d/dub`:
 
@@ -739,18 +669,6 @@ volumes:
 - **Without Tinybird**: Analytics will not work. This is currently a hard requirement.
 - **Without Upstash**: Redis is essential for caching and redirects. Use self-hosted Redis by updating the connection configuration.
 
-## Contributing
-
-We welcome contributions to improve self-hosting support! Areas where help is needed:
-
-- Native ClickHouse support (replacing Tinybird)
-- Self-hosted Redis examples
-- Alternative deployment guides (AWS, GCP, Azure, etc.)
-- Docker improvements
-- Kubernetes configurations
-
-Please see the main [Contributing Guide](../README.md#contributing) for more information.
-
 ## Support
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/dubinc/dub/issues)
@@ -760,8 +678,6 @@ Please see the main [Contributing Guide](../README.md#contributing) for more inf
 ## License
 
 Dub is open-source under the [AGPL-3.0 license](../LICENSE.md), with some Enterprise Edition features requiring a commercial license.
-
----
 
 **Last Updated**: November 2024
 
