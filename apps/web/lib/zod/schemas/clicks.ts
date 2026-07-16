@@ -1,4 +1,4 @@
-import z from "@/lib/zod";
+import * as z from "zod/v4";
 import { commonDeprecatedEventFields } from "./deprecated";
 import { linkEventSchema } from "./links";
 
@@ -49,6 +49,7 @@ export const clickEventSchemaTBEndpoint = z.object({
   device: z.string().nullable(),
   browser: z.string().nullable(),
   os: z.string().nullable(),
+  ua: z.string().nullish(),
   trigger: z.string().nullish(), // backwards compatibility
   referer: z.string().nullable(),
   referer_url: z.string().nullable(),
@@ -68,6 +69,7 @@ export const clickEventSchema = z.object({
   device: z.string(),
   browser: z.string(),
   os: z.string(),
+  ua: z.string().nullish(),
   trigger: z.string().nullish(), // backwards compatibility
   referer: z.string(),
   refererUrl: z.string(),
@@ -82,5 +84,5 @@ export const clickEventResponseSchema = z
     click: clickEventSchema,
     link: linkEventSchema,
   })
-  .merge(commonDeprecatedEventFields)
-  .openapi({ ref: "ClickEvent", title: "ClickEvent" });
+  .extend(commonDeprecatedEventFields.shape)
+  .meta({ title: "ClickEvent" });

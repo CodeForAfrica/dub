@@ -1,13 +1,14 @@
 "use server";
 
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
-import { getPartnerInviteRewardsAndBounties } from "@/lib/api/partners/get-partner-invite-rewards-and-bounties";
+import { getGroupRewardsAndBounties } from "@/lib/api/partners/get-group-rewards-and-bounties";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@dub/email";
 import ProgramInvite from "@dub/email/templates/program-invite";
-import { prisma } from "@dub/prisma";
-import z from "../../zod";
+import * as z from "zod/v4";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 const resendProgramInviteSchema = z.object({
   workspaceId: z.string(),
@@ -15,10 +16,15 @@ const resendProgramInviteSchema = z.object({
 });
 
 export const resendProgramInviteAction = authActionClient
-  .schema(resendProgramInviteSchema)
+  .inputSchema(resendProgramInviteSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { partnerId } = parsedInput;
     const { workspace, user } = ctx;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -52,6 +58,12 @@ export const resendProgramInviteAction = authActionClient
 
     await Promise.allSettled([
       (async () => {
+        const { group, rewards, bounties } = await getGroupRewardsAndBounties({
+          programId,
+          groupId: programEnrollment.groupId || program.defaultGroupId,
+        });
+        const programWebsite = group.partnerGroupDefaultLinks[0]?.url;
+
         await sendEmail({
           subject: `${program.name} invited you to join Dub Partners`,
           variant: "notifications",
@@ -64,11 +76,10 @@ export const resendProgramInviteAction = authActionClient
               name: program.name,
               slug: program.slug,
               logo: program.logo,
+              website: programWebsite,
             },
-            ...(await getPartnerInviteRewardsAndBounties({
-              programId,
-              groupId: programEnrollment.groupId || program.defaultGroupId,
-            })),
+            rewards,
+            bounties,
           }),
         });
       })(),

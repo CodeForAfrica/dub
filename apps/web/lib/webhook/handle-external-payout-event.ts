@@ -1,6 +1,6 @@
-import { prisma } from "@dub/prisma";
-import { PayoutStatus, Webhook } from "@dub/prisma/client";
-import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { PayoutStatus, Webhook } from "@prisma/client";
+import * as z from "zod/v4";
 import { payoutWebhookEventSchema } from "../zod/schemas/payouts";
 
 interface WebhookPayload {

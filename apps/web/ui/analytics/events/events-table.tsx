@@ -5,6 +5,7 @@ import useWorkspace from "@/lib/swr/use-workspace";
 import { useWorkspacePreferences } from "@/lib/swr/use-workspace-preferences";
 import { ClickEvent, LeadEvent, SaleEvent } from "@/lib/types";
 import { CustomerRowItem } from "@/ui/customers/customer-row-item";
+import { CountryFlag } from "@/ui/shared/country-flag";
 import EmptyState from "@/ui/shared/empty-state";
 import { FilterButtonTableRow } from "@/ui/shared/filter-button-table-row";
 import {
@@ -15,6 +16,7 @@ import {
   TimestampTooltip,
   Tooltip,
   useColumnVisibility,
+  useCurrentProduct,
   usePagination,
   useRouterStuff,
   useTable,
@@ -39,8 +41,8 @@ import { useParams } from "next/navigation";
 import { ReactNode, useCallback, useContext, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import { AnalyticsContext } from "../analytics-provider";
-import ContinentIcon from "../continent-icon";
-import DeviceIcon from "../device-icon";
+import { ContinentIcon } from "../continent-icon";
+import { DeviceIcon } from "../device-icon";
 import { TRIGGER_DISPLAY } from "../trigger-display";
 import { EventsContext } from "./events-provider";
 import { EXAMPLE_EVENTS_DATA } from "./example-data";
@@ -75,6 +77,8 @@ const eventColumns = {
       "link",
       "url",
       "customer",
+      "customerName",
+      "customerExternalId",
       "country",
       "city",
       "region",
@@ -86,6 +90,7 @@ const eventColumns = {
       "refererUrl",
       "ip",
       "clickId",
+      "eventId",
       "metadata",
     ],
     defaultVisible: ["timestamp", "event", "link", "customer", "referer"],
@@ -96,6 +101,8 @@ const eventColumns = {
       "saleAmount",
       "event",
       "customer",
+      "customerName",
+      "customerExternalId",
       "link",
       "url",
       "invoiceId",
@@ -110,6 +117,7 @@ const eventColumns = {
       "refererUrl",
       "ip",
       "clickId",
+      "eventId",
       "metadata",
     ],
     defaultVisible: [
@@ -205,7 +213,7 @@ export default function EventsTable({
           cell: ({ getValue }) => (
             <div className="flex items-center gap-2">
               <span>
-                {currencyFormatter(getValue() / 100, {
+                {currencyFormatter(getValue(), {
                   trailingZeroDisplay: "stripIfInteger",
                 })}
               </span>
@@ -259,23 +267,62 @@ export default function EventsTable({
           minSize: 300,
           size: 300,
           maxSize: 400,
+          meta: {
+            filterParams: ({ getValue }) => ({ customerId: getValue().id }),
+          },
           cell: ({ getValue }) => (
             <CustomerRowItem
               customer={getValue()}
               href={
                 partnerPage
                   ? `/programs/${programSlug}/customers/${getValue().id}`
-                  : `/${slug}/customers/${getValue().id}`
+                  : `/${slug}/links/customers/${getValue().id}`
               }
               className="px-4 py-2.5"
             />
           ),
-          meta: {
-            filterParams: ({ getValue }) => ({
-              customerId: getValue().id,
-            }),
-          },
         },
+        {
+          id: "customerName",
+          header: "Customer Name",
+          accessorKey: "customer.name",
+          minSize: 300,
+          size: 300,
+          maxSize: 300,
+          cell: ({ getValue }) =>
+            getValue() ? (
+              <span className="truncate" title={getValue()}>
+                {getValue()}
+              </span>
+            ) : (
+              <span className="text-neutral-400">-</span>
+            ),
+        },
+        ...(partnerPage
+          ? []
+          : [
+              {
+                id: "customerExternalId",
+                header: "Customer External ID",
+                accessorKey: "customer.externalId",
+                minSize: 300,
+                size: 300,
+                maxSize: 300,
+                cell: ({ getValue }) =>
+                  getValue() ? (
+                    <CopyText
+                      value={getValue()}
+                      successMessage="Copied customer external ID to clipboard!"
+                    >
+                      <span className="truncate font-mono" title={getValue()}>
+                        {getValue()}
+                      </span>
+                    </CopyText>
+                  ) : (
+                    <span className="text-neutral-400">-</span>
+                  ),
+              },
+            ]),
         {
           id: "link",
           header: "Link",
@@ -284,10 +331,7 @@ export default function EventsTable({
           size: 250,
           maxSize: 400,
           meta: {
-            filterParams: ({ getValue }) => ({
-              domain: getValue().domain,
-              key: getValue().key,
-            }),
+            filterParams: ({ getValue }) => ({ linkId: getValue().id }),
           },
           cell: ({ getValue }) => {
             const content = (
@@ -348,13 +392,13 @@ export default function EventsTable({
         },
         {
           id: "referer",
-          header: "Referer",
+          header: "Referrer",
           accessorKey: "click.referer",
           meta: {
             filterParams: ({ getValue }) => ({ referer: getValue() }),
           },
           cell: ({ getValue }) => (
-            <div className="flex items-center gap-3" title={getValue()}>
+            <div className="flex items-center gap-3">
               {getValue() === "(direct)" ? (
                 <Link2 className="h-4 w-4" />
               ) : (
@@ -415,11 +459,7 @@ export default function EventsTable({
               {getValue() === "Unknown" ? (
                 <Globe className="size-4 shrink-0" />
               ) : (
-                <img
-                  alt={getValue()}
-                  src={`https://hatscripts.github.io/circle-flags/flags/${getValue().toLowerCase()}.svg`}
-                  className="size-4 shrink-0"
-                />
+                <CountryFlag countryCode={getValue()} />
               )}
               <span className="truncate">
                 {COUNTRIES[getValue()] ?? getValue()}
@@ -431,49 +471,47 @@ export default function EventsTable({
           id: "city",
           header: "City",
           accessorKey: "click.city",
+          minSize: 160,
           meta: {
             filterParams: ({ getValue }) => ({ city: getValue() }),
           },
-          minSize: 160,
-          cell: ({ getValue, row }) => (
-            <div className="flex items-center gap-3" title={getValue()}>
-              {!row.original.country || row.original.country === "Unknown" ? (
-                <Globe className="size-4 shrink-0" />
-              ) : (
-                <img
-                  alt={row.original.country}
-                  src={`https://hatscripts.github.io/circle-flags/flags/${row.original.country.toLowerCase()}.svg`}
-                  className="size-4 shrink-0"
-                />
-              )}
-              <span className="truncate">{getValue()}</span>
-            </div>
-          ),
+          cell: ({ getValue, row }) => {
+            const country = row.original.click?.country;
+            return (
+              <div className="flex items-center gap-3" title={getValue()}>
+                {!country || country === "Unknown" ? (
+                  <Globe className="size-4 shrink-0" />
+                ) : (
+                  <CountryFlag countryCode={country} />
+                )}
+                <span className="truncate">{getValue()}</span>
+              </div>
+            );
+          },
         },
         {
           id: "region",
           header: "Region",
           accessorKey: "click.region",
+          minSize: 160,
           meta: {
             filterParams: ({ getValue }) => ({ region: getValue() }),
           },
-          minSize: 160,
-          cell: ({ getValue, row }) => (
-            <div className="flex items-center gap-3" title={getValue()}>
-              {!row.original.country || row.original.country === "Unknown" ? (
-                <Globe className="size-4 shrink-0" />
-              ) : (
-                <img
-                  alt={row.original.country}
-                  src={`https://hatscripts.github.io/circle-flags/flags/${row.original.country.toLowerCase()}.svg`}
-                  className="size-4 shrink-0"
-                />
-              )}
-              <span className="truncate">
-                {REGIONS[getValue()] || getValue().split("-")[1]}
-              </span>
-            </div>
-          ),
+          cell: ({ getValue, row }) => {
+            const country = row.original.click?.country;
+            return (
+              <div className="flex items-center gap-3" title={getValue()}>
+                {!country || country === "Unknown" ? (
+                  <Globe className="size-4 shrink-0" />
+                ) : (
+                  <CountryFlag countryCode={country} />
+                )}
+                <span className="truncate">
+                  {REGIONS[getValue()] || getValue().split("-")[1]}
+                </span>
+              </div>
+            );
+          },
         },
         {
           id: "continent",
@@ -567,12 +605,17 @@ export default function EventsTable({
                 id: "invoiceId",
                 header: "Invoice ID",
                 accessorKey: "sale.invoiceId",
-                maxSize: 200,
+                minSize: 200,
                 cell: ({ getValue }) =>
                   getValue() ? (
-                    <span className="truncate" title={getValue()}>
-                      {getValue()}
-                    </span>
+                    <CopyText
+                      value={getValue()}
+                      successMessage="Copied invoice ID to clipboard!"
+                    >
+                      <span className="truncate font-mono" title={getValue()}>
+                        {getValue()}
+                      </span>
+                    </CopyText>
                   ) : (
                     <span className="text-neutral-400">-</span>
                   ),
@@ -588,6 +631,26 @@ export default function EventsTable({
                     <CopyText
                       value={getValue()}
                       successMessage="Copied click ID to clipboard!"
+                    >
+                      <span className="truncate font-mono" title={getValue()}>
+                        {getValue()}
+                      </span>
+                    </CopyText>
+                  ) : (
+                    <span className="text-neutral-400">-</span>
+                  ),
+              },
+              // Event ID
+              {
+                id: "eventId",
+                header: "Event ID",
+                accessorKey: "eventId",
+                maxSize: 200,
+                cell: ({ getValue }) =>
+                  getValue() ? (
+                    <CopyText
+                      value={getValue()}
+                      successMessage="Copied event ID to clipboard!"
                     >
                       <span className="truncate font-mono" title={getValue()}>
                         {getValue()}
@@ -620,9 +683,6 @@ export default function EventsTable({
         {
           id: "menu",
           enableHiding: false,
-          minSize: 43,
-          size: 43,
-          maxSize: 43,
           header: ({ table }) => <EditColumnsButton table={table} />,
           cell: ({ row }) => <RowMenuButton row={row} />,
         },
@@ -669,8 +729,12 @@ export default function EventsTable({
     [setExportQueryString, queryString, columnVisibility, tab],
   );
 
+  const { product } = useCurrentProduct();
+
   const { data, isLoading, error } = useSWR<EventDatum[]>(
-    !requiresUpgrade && `${eventsApiPath || "/api/events"}?${queryString}`,
+    !requiresUpgrade &&
+      product &&
+      `${eventsApiPath || "/api/events"}?${queryString}`,
     fetcher,
     {
       keepPreviousData: true,

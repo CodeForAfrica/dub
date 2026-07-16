@@ -1,4 +1,8 @@
 import { recordMetatags } from "@/lib/upstash";
+import {
+  linkPreviewImageBase64PrefixRegex,
+  publicHostedImageSchema,
+} from "@/lib/zod/schemas/images";
 import { fetchWithTimeout, isValidUrl } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import he from "he";
@@ -62,12 +66,27 @@ export const getRelativeUrl = (url: string, imageUrl: string) => {
   if (!imageUrl) {
     return null;
   }
-  if (isValidUrl(imageUrl)) {
-    return imageUrl;
+  let resolved: string;
+  try {
+    resolved = isValidUrl(imageUrl)
+      ? new URL(imageUrl).toString()
+      : (() => {
+          const { protocol, host } = new URL(url);
+          const baseURL = `${protocol}//${host}`;
+          return new URL(imageUrl, baseURL).toString();
+        })();
+  } catch {
+    return null;
   }
-  const { protocol, host } = new URL(url);
-  const baseURL = `${protocol}//${host}`;
-  return new URL(imageUrl, baseURL).toString();
+  if (linkPreviewImageBase64PrefixRegex.test(resolved)) {
+    return resolved;
+  }
+  // Apply the same image rule as link creation so a scraped preview can't block it:
+  // publicHostedImageSchema drops non-public hosts (localhost, IPs) that can't be proxied.
+  if (publicHostedImageSchema.safeParse(resolved).success) {
+    return resolved;
+  }
+  return null;
 };
 
 const generateFallbackMetadata = (url: string) => {

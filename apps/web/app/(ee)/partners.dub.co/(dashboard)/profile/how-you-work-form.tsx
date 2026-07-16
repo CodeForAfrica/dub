@@ -1,5 +1,5 @@
 import { updatePartnerProfileAction } from "@/lib/actions/partners/update-partner-profile";
-import { hasPermission } from "@/lib/auth/partner-user-permissions";
+import { hasPermission } from "@/lib/auth/partner-users/partner-user-permissions";
 import { PartnerProps } from "@/lib/types";
 import { Button, Check2 } from "@dub/ui";
 import { useAction } from "next-safe-action/hooks";
@@ -13,8 +13,8 @@ import {
   salesChannels,
 } from "@/lib/partners/partner-profile";
 import { mutatePrefix } from "@/lib/swr/mutate";
-import { PreferredEarningStructure, SalesChannel } from "@dub/prisma/client";
 import { cn } from "@dub/utils";
+import { PreferredEarningStructure, SalesChannel } from "@prisma/client";
 
 type HowYouWorkFormData = {
   preferredEarningStructures: PreferredEarningStructure[];

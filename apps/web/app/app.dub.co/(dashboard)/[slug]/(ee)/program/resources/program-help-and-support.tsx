@@ -43,17 +43,16 @@ export function ProgramHelpAndSupportContent({
 }: {
   program?: ProgramProps;
 }) {
-  const { id: workspaceId, slug: workspaceSlug, plan } = useWorkspace();
+  const { id: workspaceId, plan } = useWorkspace();
 
   const { partnersUpgradeModal, setShowPartnersUpgradeModal } =
-    usePartnersUpgradeModal({
-      plan: "Advanced",
-    });
+    usePartnersUpgradeModal();
 
   const {
     control,
     register,
     handleSubmit,
+    getValues,
     formState: { isDirty, isValid, isSubmitting },
   } = useForm<FormData>({
     mode: "onBlur",
@@ -69,6 +68,15 @@ export function ProgramHelpAndSupportContent({
     onSuccess: async () => {
       toast.success("Communication settings updated successfully.");
       await mutate(`/api/programs/${program?.id}?workspaceId=${workspaceId}`);
+
+      // Notify other tabs (e.g., the application builder) that program data changed
+      try {
+        const channel = new BroadcastChannel("program-terms-updated");
+        channel.postMessage({ termsUrl: getValues("termsUrl") || null });
+        channel.close();
+      } catch {
+        // BroadcastChannel not supported, fall back to revalidateOnFocus
+      }
     },
     onError: ({ error }) => {
       toast.error(

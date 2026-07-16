@@ -7,6 +7,22 @@ export const isValidUrl = (url: string) => {
   }
 };
 
+const SAFE_LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+export function isSafeLinkHref(
+  href: string | null | undefined,
+): href is string {
+  if (!href) {
+    return false;
+  }
+
+  try {
+    return SAFE_LINK_SCHEMES.has(new URL(href).protocol);
+  } catch {
+    return false;
+  }
+}
+
 export const getUrlFromString = (str: string) => {
   if (isValidUrl(str)) return str;
   try {
@@ -116,6 +132,14 @@ export const paramsMetadata = [
   { display: "UTM Content", key: "utm_content", examples: "logo link" },
   { display: "Referral (ref)", key: "ref", examples: "google, twitter" },
 ];
+
+export const getUTMParamsFromURL = (url: string) => {
+  return Object.fromEntries(
+    Object.entries(getParamsFromURL(url)).filter(([key]) =>
+      UTMTags.includes(key as (typeof UTMTags)[number]),
+    ),
+  );
+};
 
 export const getUrlWithoutUTMParams = (url: string) => {
   try {

@@ -1,8 +1,6 @@
 import { constructRewardAmount } from "@/lib/api/sales/construct-reward-amount";
-import { RewardProps } from "@/lib/types";
 import { programEmbedSchema } from "@/lib/zod/schemas/program-embed";
 import { BlockMarkdown } from "@/ui/partners/lander/blocks/block-markdown";
-import { Program } from "@dub/prisma/client";
 import {
   Accordion,
   AccordionContent,
@@ -11,14 +9,12 @@ import {
   TAB_ITEM_ANIMATION_SETTINGS,
 } from "@dub/ui";
 import { motion } from "motion/react";
+import { useReferralsEmbedData } from "./page-client";
 
-export function ReferralsEmbedFAQ({
-  program,
-  reward,
-}: {
-  program: Program;
-  reward: RewardProps | null;
-}) {
+export function ReferralsEmbedFAQ() {
+  const { program, rewards } = useReferralsEmbedData();
+  const reward = rewards[0];
+
   const rewardDescription = reward
     ? `For each new customer you refer, you'll earn a ${constructRewardAmount(reward)} commission on their subscription${
         reward.maxDuration === null
@@ -33,8 +29,8 @@ export function ReferralsEmbedFAQ({
 
   const items = programEmbedData?.faq || [
     {
-      title: `What is the ${program.name} Affiliate Program?`,
-      content: `The ${program.name} Affiliate Program is a way for you to earn money by referring new customers to ${program.name}. ${rewardDescription}`,
+      title: `What is the ${program.name} Referral Program?`,
+      content: `The ${program.name} Referral Program is a way for you to earn money by referring new customers to ${program.name}. ${rewardDescription}`,
     },
 
     {
@@ -66,7 +62,7 @@ export function ReferralsEmbedFAQ({
               <h3 className="text-left text-sm sm:text-base">{item.title}</h3>
             </AccordionTrigger>
             <AccordionContent>
-              <BlockMarkdown className="text-content-subtle py-2 text-left text-sm sm:text-base">
+              <BlockMarkdown className="text-content-subtle dark:prose-invert dark:prose-a:text-neutral-400 dark:hover:prose-a:text-neutral-300 dark:marker:prose-ul:text-neutral-400 py-2 text-left text-sm sm:text-base">
                 {item.content}
               </BlockMarkdown>
             </AccordionContent>

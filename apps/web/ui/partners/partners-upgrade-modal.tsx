@@ -9,7 +9,7 @@ import {
   Tooltip,
   useRouterStuff,
 } from "@dub/ui";
-import { cn, INFINITY_NUMBER, nFormatter, PLANS } from "@dub/utils";
+import { capitalize, cn, INFINITY_NUMBER, nFormatter, PLANS } from "@dub/utils";
 import NumberFlow from "@number-flow/react";
 import Link from "next/link";
 import { Dispatch, ReactNode, SetStateAction, useMemo, useState } from "react";
@@ -78,38 +78,34 @@ export function PartnersUpgradeModal({
             },
           },
           {
-            id: "messages",
-            text: "Messaging center",
+            id: "email",
+            text: "Email campaigns + Messaging center",
             tooltip: {
               title:
-                "Easily communicate with your partners using our messaging center.",
-              cta: "Learn more.",
-              href: "https://dub.co/help/article/messaging-partners",
+                "Send [marketing/transactional emails](https://dub.co/help/article/email-campaigns) and communicate with your partners using our [messaging center](https://dub.co/help/article/messaging-partners).",
             },
           },
           {
-            id: "email",
-            text: "Email campaigns",
+            id: "sso",
+            text: "Risk monitoring",
             tooltip: {
               title:
-                "Send marketing and transactional emails to your partners to increase engagement and drive conversions.",
+                "Safeguard your partner program by automatically flagging, reviewing, and resolving suspicious activity.",
               cta: "Learn more.",
-              href: "https://dub.co/help/article/email-campaigns",
+              href: "https://dub.co/help/article/risk-monitoring",
             },
           },
           {
             id: "partnergroups",
-            text: `${plan.limits.groups} partner groups`,
+            text: "Unlimited partner groups & tags",
             tooltip: {
               title:
-                "Learn how you can create partner groups to segment partners by rewards, discounts, performance, location, and more.",
-              cta: "Learn more.",
-              href: "https://dub.co/help/article/partner-groups",
+                "Create unlimited [partner groups](https://dub.co/help/article/partner-groups) and [tags](https://dub.co/help/article/partner-tags) to segment partners by rewards, discounts, performance, location, and more.",
             },
           },
           {
-            id: "slack",
-            text: "Priority Slack support",
+            id: "success",
+            text: "Priority email support",
           },
         ],
         Enterprise: [
@@ -136,8 +132,8 @@ export function PartnersUpgradeModal({
             text: "Custom SLA",
           },
           {
-            id: "success",
-            text: "Dedicated success manager",
+            id: "slack",
+            text: "Dedicated Slack support",
           },
         ],
       }[plan.name] ?? []),
@@ -149,7 +145,7 @@ export function PartnersUpgradeModal({
     <Modal
       showModal={showPartnersUpgradeModal}
       setShowModal={setShowPartnersUpgradeModal}
-      onClose={() => queryParams({ del: "plan" })}
+      onClose={() => queryParams({ del: "showPartnersUpgradeModal" })}
     >
       <div className="scrollbar-hide relative max-h-[calc(100dvh-50px)] overflow-y-auto p-4 sm:p-8">
         <div className="pointer-events-none absolute inset-y-0 left-1/2 hidden w-[640px] -translate-x-1/2 [mask-image:linear-gradient(black,transparent_280px)] sm:block">
@@ -253,7 +249,7 @@ export function PartnersUpgradeModal({
             <UpgradePlanButton
               plan={plan.name.toLowerCase()}
               period={period}
-              text={`Continue with ${plan.name}`}
+              text={`Continue with ${plan.name} ${capitalize(period)}`}
               variant="primary"
             />
           ) : (
@@ -273,7 +269,7 @@ export function PartnersUpgradeModal({
             variant="secondary"
             onClick={() => {
               setShowPartnersUpgradeModal(false);
-              queryParams({ del: "plan" });
+              queryParams({ del: "showPartnersUpgradeModal" });
             }}
           />
         </div>
@@ -283,7 +279,7 @@ export function PartnersUpgradeModal({
 }
 
 export function usePartnersUpgradeModal(
-  props: Omit<
+  props?: Omit<
     PartnersUpgradeModalProps,
     "showPartnersUpgradeModal" | "setShowPartnersUpgradeModal"
   >,

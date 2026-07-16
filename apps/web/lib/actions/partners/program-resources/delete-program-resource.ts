@@ -1,35 +1,32 @@
 "use server";
 
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import {
-  PROGRAM_RESOURCE_TYPES,
+  deleteProgramResourceSchema,
   programResourcesSchema,
 } from "@/lib/zod/schemas/program-resources";
-import { prisma } from "@dub/prisma";
 import { R2_URL } from "@dub/utils";
-import { z } from "zod";
 import { authActionClient } from "../../safe-action";
-
-// Schema for deleting a program resource
-const deleteProgramResourceSchema = z.object({
-  workspaceId: z.string(),
-  resourceType: z.enum(PROGRAM_RESOURCE_TYPES),
-  resourceId: z.string(),
-});
+import { throwIfNoPermission } from "../../throw-if-no-permission";
 
 export const deleteProgramResourceAction = authActionClient
-  .schema(deleteProgramResourceSchema)
+  .inputSchema(deleteProgramResourceSchema)
   .action(async ({ ctx, parsedInput }) => {
     const { workspace } = ctx;
     const { resourceType, resourceId } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
+
     const programId = getDefaultProgramIdOrThrow(workspace);
 
-    // Verify the program exists and belongs to the workspace
-    const program = await prisma.program.findUnique({
+    const program = await prisma.program.findUniqueOrThrow({
       where: {
         id: programId,
-        workspaceId: workspace.id,
       },
       select: {
         id: true,
@@ -37,8 +34,9 @@ export const deleteProgramResourceAction = authActionClient
       },
     });
 
-    if (!program) throw new Error("Program not found");
-    if (!program.resources) throw new Error("Program resources not found");
+    if (!program.resources) {
+      throw new Error("Program resources not found");
+    }
 
     // Create a copy of the current resources to update
     const updatedResources = { ...(program.resources as any) };

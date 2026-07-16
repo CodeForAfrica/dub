@@ -1,5 +1,5 @@
+import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
-import { prisma } from "@dub/prisma";
 import { currencyFormatter, DUB_WORDMARK, formatDate } from "@dub/utils";
 import { Invoice, Project } from "@prisma/client";
 import {
@@ -73,15 +73,15 @@ export async function DomainRenewalInvoice({
   const invoiceSummaryDetails = [
     {
       label: "Invoice amount",
-      value: currencyFormatter(invoice.amount / 100),
+      value: currencyFormatter(invoice.amount),
     },
     {
       label: `Platform fees (${Math.round((invoice.fee / invoice.amount) * 100)}%)`,
-      value: `${currencyFormatter(invoice.fee / 100)}`,
+      value: `${currencyFormatter(invoice.fee)}`,
     },
     {
       label: "Invoice total",
-      value: currencyFormatter(invoice.total / 100),
+      value: currencyFormatter(invoice.total),
     },
   ];
 
@@ -97,7 +97,6 @@ export async function DomainRenewalInvoice({
         city: "San Francisco",
         state: "CA",
         postalCode: "94114",
-        email: "support@dub.co",
       },
     },
     {
@@ -121,12 +120,6 @@ export async function DomainRenewalInvoice({
       <Page size="A4" style={tw("p-20 bg-white")}>
         <View style={tw("flex-row justify-between items-center mb-10")}>
           <Image src={DUB_WORDMARK} style={tw("w-20 h-10")} />
-          <View style={tw("text-right w-1/2")}>
-            <Text style={tw("text-sm font-medium text-neutral-800")}>
-              Dub Technologies Inc.
-            </Text>
-            <Text style={tw("text-sm text-neutral-500 ")}>support@dub.co</Text>
-          </View>
         </View>
 
         <View style={tw("flex-col gap-2 text-sm font-medium mb-10")}>
@@ -203,7 +196,7 @@ export async function DomainRenewalInvoice({
               Total
             </Text>
             <Text style={tw("text-neutral-800 font-medium text-[16px]")}>
-              {currencyFormatter(invoice.total / 100)}
+              {currencyFormatter(invoice.total)}
             </Text>
           </View>
         </View>
@@ -232,7 +225,7 @@ export async function DomainRenewalInvoice({
               >
                 <Text style={tw("w-[70%] p-2.5")}>{domain.slug}</Text>
                 <Text style={tw("w-[30%] p-2.5")}>
-                  {currencyFormatter(domain.renewalFee / 100)}
+                  {currencyFormatter(domain.renewalFee)}
                 </Text>
               </View>
             ))}
@@ -257,14 +250,15 @@ export async function DomainRenewalInvoice({
         </View>
 
         <Text style={tw("text-sm text-neutral-600 mt-6")}>
-          If you have any questions, visit our support site at{" "}
+          If you have any questions,{" "}
           <Link href="https://dub.co/help" style={tw("text-neutral-900")}>
-            https://dub.co/help
+            visit our help center
           </Link>{" "}
-          or contact us at{" "}
-          <Link href="mailto:support@dub.co" style={tw("text-neutral-900")}>
-            support@dub.co
+          or{" "}
+          <Link href="https://dub.co/support" style={tw("text-neutral-900")}>
+            reach out to our support team
           </Link>
+          .
         </Text>
       </Page>
     </Document>,

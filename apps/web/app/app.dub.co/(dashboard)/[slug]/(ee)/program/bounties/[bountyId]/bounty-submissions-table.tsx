@@ -1,7 +1,11 @@
 "use client";
 
-import { PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES } from "@/lib/api/bounties/performance-bounty-scope-attributes";
 import { isCurrencyAttribute } from "@/lib/api/workflows/utils";
+import { PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES } from "@/lib/bounty/api/performance-bounty-scope-attributes";
+import { BountySubmissionStatusBadges } from "@/lib/bounty/bounty-submission-status-badges";
+import { resolveBountyDetails } from "@/lib/bounty/utils";
+import { mutatePrefix } from "@/lib/swr/mutate";
+import { useApiMutation } from "@/lib/swr/use-api-mutation";
 import useBounty from "@/lib/swr/use-bounty";
 import {
   SubmissionsCountByStatus,
@@ -16,6 +20,7 @@ import { AnimatedEmptyState } from "@/ui/shared/animated-empty-state";
 import { UserRowItem } from "@/ui/users/user-row-item";
 import {
   AnimatedSizeContainer,
+  Button,
   Filter,
   ProgressCircle,
   StatusBadge,
@@ -32,20 +37,22 @@ import {
   fetcher,
   formatDate,
   nFormatter,
+  timeAgo,
 } from "@dub/utils";
 import { Row } from "@tanstack/react-table";
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import useSWR from "swr";
 import { BountySubmissionDetailsSheet } from "./bounty-submission-details-sheet";
 import { BountySubmissionRowMenu } from "./bounty-submission-row-menu";
-import { BOUNTY_SUBMISSION_STATUS_BADGES } from "./bounty-submission-status-badges";
 import { useBountySubmissionFilters } from "./use-bounty-submission-filters";
 
 export function BountySubmissionsTable() {
   const { bounty, loading: isBountyLoading } = useBounty();
   const { groups } = useGroups();
-  const { id: workspaceId } = useWorkspace();
+  const { id: workspaceId, slug } = useWorkspace();
   const { bountyId } = useParams<{ bountyId: string }>();
   const { pagination, setPagination } = usePagination();
   const { queryParams, searchParams, getQueryString } = useRouterStuff();
@@ -62,24 +69,42 @@ export function BountySubmissionsTable() {
       columns.push("performanceMetrics");
     }
 
+    if (
+      bounty.type === "submission" &&
+      bounty.submissionRequirements?.socialMetrics
+    ) {
+      columns.push("socialMetrics");
+    }
+
     return columns;
   }, [bounty]);
 
-  // Performance based bounty columns
+  const bountyInfo = resolveBountyDetails(bounty);
   const performanceCondition = bounty?.performanceCondition;
 
   const metricColumnLabel = performanceCondition?.attribute
     ? PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES[performanceCondition.attribute]
     : "Progress";
 
-  const sortBy = searchParams.get("sortBy") || "completedAt";
-  const sortOrder = searchParams.get("sortOrder") === "desc" ? "desc" : "asc";
+  const sortBy = useMemo(() => {
+    if (searchParams.get("sortBy")) return searchParams.get("sortBy") as string;
+
+    if (bounty?.type === "performance") return "performanceCount";
+
+    if (
+      bounty?.type === "submission" &&
+      bounty?.submissionRequirements?.socialMetrics
+    ) {
+      return "socialMetricCount";
+    }
+
+    return "completedAt";
+  }, [searchParams, bounty]);
+
+  const sortOrder = searchParams.get("sortOrder") === "asc" ? "asc" : "desc";
 
   const { submissionsCount } =
     useBountySubmissionsCount<SubmissionsCountByStatus[]>();
-
-  const { filters, activeFilters, onSelect, onRemove, onRemoveAll } =
-    useBountySubmissionFilters({ bounty });
 
   const {
     error,
@@ -108,6 +133,24 @@ export function BountySubmissionsTable() {
     | { open: true; submission: BountySubmissionProps }
   >({ open: false, submission: null });
 
+  const { isSubmitting: isRefreshingStats, makeRequest } = useApiMutation();
+
+  const refreshStats = useCallback(() => {
+    if (!bountyId) return;
+
+    makeRequest(`/api/bounties/${bountyId}/sync-social-metrics`, {
+      method: "POST",
+      body: {},
+      onSuccess: async () => {
+        toast.success("Stats sync in progress. Updates will appear shortly.");
+        await mutatePrefix(`/api/bounties/${bountyId}`);
+      },
+      onError: (error) => {
+        toast.error(error);
+      },
+    });
+  }, [bountyId, makeRequest]);
+
   // Open the details sheet if submissionId is set in params
   useEffect(() => {
     const submissionId = searchParams.get("submissionId");
@@ -133,7 +176,7 @@ export function BountySubmissionsTable() {
 
     // if the current submission is not found, return the current details sheet submission id
     // and the first submission id as the previous and next submission ids
-    if (currentIndex === -1) return [null, submissions[0].id];
+    if (currentIndex === -1) return [null, submissions[0]?.id ?? null];
 
     return [
       currentIndex > 0 ? submissions[currentIndex - 1].id : null,
@@ -175,7 +218,16 @@ export function BountySubmissionsTable() {
           return (
             <div className="flex items-center gap-2">
               <GroupColorCircle group={group} />
-              <span className="truncate text-sm font-medium">{group.name}</span>
+              <Link
+                href={`/${slug}/program/groups/${group.slug}`}
+                target="_blank"
+                onClick={(e) => e.stopPropagation()}
+                onAuxClick={(e) => e.stopPropagation()}
+                className="min-w-0 cursor-alias truncate text-sm font-medium decoration-dotted hover:underline"
+                title={group.name}
+              >
+                {group.name}
+              </Link>
             </div>
           );
         },
@@ -188,7 +240,7 @@ export function BountySubmissionsTable() {
               header: "Status",
               cell: ({ row }) => {
                 const badge = row.original
-                  ? BOUNTY_SUBMISSION_STATUS_BADGES[row.original.status]
+                  ? BountySubmissionStatusBadges[row.original.status]
                   : null;
 
                 return badge ? (
@@ -243,13 +295,13 @@ export function BountySubmissionsTable() {
                 const target = performanceCondition.value;
 
                 const formattedValue = isCurrencyAttribute(attribute)
-                  ? currencyFormatter(value / 100, {
+                  ? currencyFormatter(value, {
                       trailingZeroDisplay: "stripIfInteger",
                     })
                   : nFormatter(value, { full: true });
 
                 const formattedTarget = isCurrencyAttribute(attribute)
-                  ? currencyFormatter(target / 100, {
+                  ? currencyFormatter(target, {
                       trailingZeroDisplay: "stripIfInteger",
                     })
                   : nFormatter(target, { full: true });
@@ -259,6 +311,32 @@ export function BountySubmissionsTable() {
                     <ProgressCircle progress={value / target} />
                     <span className="min-w-0 text-sm font-medium leading-5 text-neutral-600">
                       {formattedValue} / {formattedTarget}
+                    </span>
+                  </div>
+                );
+              },
+            },
+          ]
+        : []),
+
+      ...(showColumns.includes("socialMetrics") &&
+      bountyInfo?.socialPlatform &&
+      bountyInfo?.socialMetrics
+        ? [
+            {
+              id: "socialMetricCount",
+              header: `${bountyInfo.socialPlatform.label} ${capitalize(bountyInfo.socialMetrics.metric)}`,
+              cell: ({ row }: { row: Row<BountySubmissionProps> }) => {
+                const value = row.original.socialMetricCount ?? 0;
+                const minCount = bountyInfo.socialMetrics?.minCount ?? 0;
+                const target = Math.max(minCount, 1);
+                const progress = Math.min(1, value / target);
+
+                return (
+                  <div className="flex items-center gap-2">
+                    <ProgressCircle progress={progress} />
+                    <span className="min-w-0 text-sm font-medium leading-5 text-neutral-600">
+                      {nFormatter(value, { full: true })}
                     </span>
                   </div>
                 );
@@ -295,9 +373,6 @@ export function BountySubmissionsTable() {
       {
         id: "menu",
         enableHiding: false,
-        minSize: 43,
-        size: 43,
-        maxSize: 43,
         cell: ({ row }) => <BountySubmissionRowMenu row={row} />,
       },
     ],
@@ -307,7 +382,9 @@ export function BountySubmissionsTable() {
       showColumns,
       metricColumnLabel,
       performanceCondition,
+      bountyInfo,
       workspaceId,
+      slug,
     ],
   );
 
@@ -324,12 +401,12 @@ export function BountySubmissionsTable() {
         set: {
           submissionId: row.original.id,
         },
-        scroll: false,
       });
     },
     sortableColumns: [
       "completedAt",
       ...(bounty?.type === "performance" ? ["performanceCount"] : []),
+      ...(showColumns.includes("socialMetrics") ? ["socialMetricCount"] : []),
     ],
     sortBy,
     sortOrder,
@@ -340,20 +417,19 @@ export function BountySubmissionsTable() {
           ...(sortOrder && { sortOrder }),
         },
         del: "page",
-        scroll: false,
       }),
     pagination,
     onPaginationChange: setPagination,
     thClassName: "border-l-0",
     tdClassName: "border-l-0",
     resourceName: (p) => `submission${p ? "s" : ""}`,
-    // if status is not set, we count submitted and approved submissions
+    // if status is not set, we count draft, submitted and approved submissions
     // else, we count the submissions for the status
     rowCount: searchParams.get("status")
       ? submissionsCount?.find((s) => s.status === searchParams.get("status"))
           ?.count || 0
       : submissionsCount
-          ?.filter((s) => s.status === "submitted" || s.status === "approved")
+          ?.filter((s) => ["draft", "submitted", "approved"].includes(s.status))
           .reduce((acc, curr) => acc + curr.count, 0) || 0,
     loading: isLoading || isBountyLoading,
     error: error ? "Failed to load bounty submissions" : undefined,
@@ -375,36 +451,13 @@ export function BountySubmissionsTable() {
 
       <div className="flex flex-col gap-6">
         <div>
-          <Filter.Select
-            className="w-full md:w-fit"
-            filters={filters}
-            activeFilters={activeFilters}
-            onSelect={onSelect}
-            onRemove={onRemove}
+          <BountySubmissionFilters
+            bounty={bounty}
+            bountyInfo={bountyInfo}
+            submissionsLength={submissions?.length ?? 0}
+            isRefreshingStats={isRefreshingStats}
+            refreshStats={refreshStats}
           />
-          <AnimatedSizeContainer height>
-            <div>
-              {activeFilters.length > 0 && (
-                <div className="pt-3">
-                  <Filter.List
-                    filters={[
-                      ...filters,
-                      {
-                        key: "payoutId",
-                        icon: MoneyBill2,
-                        label: "Payout",
-                        options: [],
-                      },
-                    ]}
-                    activeFilters={activeFilters}
-                    onSelect={onSelect}
-                    onRemove={onRemove}
-                    onRemoveAll={onRemoveAll}
-                  />
-                </div>
-              )}
-            </div>
-          </AnimatedSizeContainer>
         </div>
         {submissions?.length !== 0 || isLoading ? (
           <Table {...tableProps} table={table} />
@@ -421,6 +474,88 @@ export function BountySubmissionsTable() {
           />
         )}
       </div>
+    </>
+  );
+}
+
+function BountySubmissionFilters({
+  bounty,
+  bountyInfo,
+  submissionsLength,
+  isRefreshingStats,
+  refreshStats,
+}: {
+  bounty: ReturnType<typeof useBounty>["bounty"];
+  bountyInfo: ReturnType<typeof resolveBountyDetails>;
+  submissionsLength: number;
+  isRefreshingStats: boolean;
+  refreshStats: () => void;
+}) {
+  const {
+    filters,
+    activeFilters,
+    onSelect,
+    onRemove,
+    onRemoveAll,
+    setSearch,
+    setSelectedFilter,
+  } = useBountySubmissionFilters({ bounty: bounty ?? undefined });
+
+  return (
+    <>
+      <div className="flex w-full items-center justify-between gap-4">
+        <Filter.Select
+          className="w-full md:w-fit"
+          filters={filters}
+          activeFilters={activeFilters}
+          onSelect={onSelect}
+          onRemove={onRemove}
+          onSearchChange={setSearch}
+          onSelectedFilterChange={setSelectedFilter}
+        />
+        {bountyInfo?.hasSocialMetrics && submissionsLength > 0 && (
+          <div className="flex shrink-0 items-center gap-3">
+            {bounty?.socialMetricsLastSyncedAt ? (
+              <span className="whitespace-nowrap text-xs font-medium text-neutral-500">
+                Last sync{" "}
+                {timeAgo(bounty.socialMetricsLastSyncedAt, {
+                  withAgo: true,
+                })}
+              </span>
+            ) : null}
+            <Button
+              variant="secondary"
+              text="Refresh stats"
+              loading={isRefreshingStats}
+              onClick={refreshStats}
+              className="h-8 rounded-lg px-3"
+            />
+          </div>
+        )}
+      </div>
+      <AnimatedSizeContainer height>
+        <div>
+          {activeFilters.length > 0 && (
+            <div className="pt-3">
+              <Filter.List
+                filters={[
+                  ...filters,
+                  {
+                    key: "payoutId",
+                    icon: MoneyBill2,
+                    label: "Payout",
+                    options: [],
+                  },
+                ]}
+                activeFilters={activeFilters}
+                onSelect={onSelect}
+                onRemove={onRemove}
+                onRemoveAll={onRemoveAll}
+              />
+            </div>
+          )}
+        </div>
+      </AnimatedSizeContainer>
     </>
   );
 }

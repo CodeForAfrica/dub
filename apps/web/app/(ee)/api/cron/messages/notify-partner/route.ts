@@ -1,13 +1,14 @@
 import { createId } from "@/lib/api/create-id";
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { messageAttachmentsOrderBy } from "@/lib/messages/utils";
+import { prisma } from "@/lib/prisma";
 import { sendBatchEmail } from "@dub/email";
 import NewMessageFromProgram from "@dub/email/templates/new-message-from-program";
-import { prisma } from "@dub/prisma";
-import { NotificationEmailType } from "@dub/prisma/client";
 import { log } from "@dub/utils";
+import { NotificationEmailType } from "@prisma/client";
 import { subDays } from "date-fns";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 
 export const dynamic = "force-dynamic";
@@ -33,53 +34,58 @@ export async function POST(req: Request) {
       JSON.parse(rawBody),
     );
 
-    const programEnrollment = await prisma.programEnrollment.findUniqueOrThrow({
-      where: {
-        partnerId_programId: {
-          partnerId,
-          programId,
+    const [partner, program] = await Promise.all([
+      prisma.partner.findUniqueOrThrow({
+        where: {
+          id: partnerId,
         },
-        status: "approved",
-      },
-      include: {
-        program: true,
-        partner: {
-          include: {
-            messages: {
-              where: {
-                programId,
-                createdAt: {
-                  gt: subDays(new Date(), 3), // sent in the last 3 days
-                },
-                type: "direct", // only notify for direct messages
-                senderPartnerId: null, // not sent by the partner
-                readInApp: null, // unread messages only
-                readInEmail: null, // unread messages only
+        include: {
+          messages: {
+            where: {
+              programId,
+              createdAt: {
+                gt: subDays(new Date(), 3), // sent in the last 3 days
               },
-              orderBy: {
-                createdAt: "desc",
-              },
-              include: {
-                senderUser: true,
-              },
+              senderPartnerId: null, // not sent by the partner
+              readInApp: null, // unread messages only
+              readInEmail: null, // unread messages only
             },
-            users: {
-              include: {
-                user: true,
-              },
-              where: {
-                notificationPreferences: {
-                  newMessageFromProgram: true,
+            orderBy: {
+              createdAt: "desc",
+            },
+            include: {
+              senderUser: true,
+              attachments: {
+                orderBy: messageAttachmentsOrderBy,
+                select: {
+                  name: true,
+                  size: true,
+                  type: true,
                 },
               },
             },
           },
+          users: {
+            include: {
+              user: true,
+            },
+            where: {
+              notificationPreferences: {
+                newMessageFromProgram: true,
+              },
+            },
+          },
         },
-      },
-    });
+      }),
+      prisma.program.findUniqueOrThrow({
+        where: {
+          id: programId,
+        },
+      }),
+    ]);
 
     // unread messages are already sorted by latest message first
-    const unreadMessages = programEnrollment.partner.messages;
+    const unreadMessages = partner.messages;
 
     if (unreadMessages.length === 0)
       return logAndRespond(
@@ -92,7 +98,7 @@ export async function POST(req: Request) {
         `There is a more recent unread message than ${lastMessageId}. Skipping...`,
       );
 
-    const partnerUsersToNotify = programEnrollment.partner.users
+    const partnerUsersToNotify = partner.users
       .map(({ user }) => user)
       .filter(Boolean) as { email: string; id: string }[];
 
@@ -100,8 +106,6 @@ export async function POST(req: Request) {
       return logAndRespond(
         `No partner emails to notify for partner ${partnerId}. Skipping...`,
       );
-
-    const program = programEnrollment.program;
 
     const { data, error } = await sendBatchEmail(
       partnerUsersToNotify.map(({ email }) => ({
@@ -119,6 +123,7 @@ export async function POST(req: Request) {
           messages: [...unreadMessages].reverse().map((message) => ({
             text: message.text,
             createdAt: message.createdAt,
+            attachments: message.attachments,
             user: message.senderUser.name
               ? {
                   name: message.senderUser.name,

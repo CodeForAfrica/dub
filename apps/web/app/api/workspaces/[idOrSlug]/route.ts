@@ -7,17 +7,21 @@ import { prefixWorkspaceId } from "@/lib/api/workspaces/workspace-id";
 import { withWorkspace } from "@/lib/auth";
 import { getFeatureFlags } from "@/lib/edge-config";
 import { jackson } from "@/lib/jackson";
+import { prisma } from "@/lib/prisma";
+import { mergeSiteVisitTrackingSettings } from "@/lib/sitemaps/site-visit-tracking";
 import { storage } from "@/lib/storage";
+import { redis } from "@/lib/upstash";
 import {
   createWorkspaceSchema,
+  siteVisitTrackingSettingsPatchSchema,
   WorkspaceSchema,
   WorkspaceSchemaExtended,
 } from "@/lib/zod/schemas/workspaces";
-import { prisma } from "@dub/prisma";
 import { nanoid, R2_URL } from "@dub/utils";
+import { Prisma } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const updateWorkspaceSchema = createWorkspaceSchema
   .extend({
@@ -34,6 +38,9 @@ const updateWorkspaceSchema = createWorkspaceSchema
       ])
       .optional(),
     enforceSAML: z.boolean().nullish(),
+    siteVisitTrackingSettings: siteVisitTrackingSettingsPatchSchema
+      .nullable()
+      .optional(),
   })
   .partial();
 
@@ -77,7 +84,7 @@ export const GET = withWorkspace(
 
 // PATCH /api/workspaces/[idOrSlug] – update a specific workspace by id or slug
 export const PATCH = withWorkspace(
-  async ({ req, workspace, session }) => {
+  async ({ req, workspace }) => {
     const {
       name,
       slug,
@@ -86,6 +93,7 @@ export const PATCH = withWorkspace(
       allowedHostnames,
       publishableKey,
       enforceSAML,
+      siteVisitTrackingSettings,
     } = await updateWorkspaceSchema.parseAsync(await parseRequestBody(req));
 
     if (["free", "pro"].includes(workspace.plan) && conversionEnabled) {
@@ -129,8 +137,50 @@ export const PATCH = withWorkspace(
       }
     }
 
+    const flags = await getFeatureFlags({
+      workspaceId: workspace.id,
+    });
+
+    const mergedSiteVisitTrackingSettings =
+      siteVisitTrackingSettings !== undefined
+        ? mergeSiteVisitTrackingSettings(
+            workspace.siteVisitTrackingSettings,
+            siteVisitTrackingSettings,
+          )
+        : undefined;
+
+    if (
+      mergedSiteVisitTrackingSettings !== undefined &&
+      mergedSiteVisitTrackingSettings !== null &&
+      mergedSiteVisitTrackingSettings.siteDomainSlug
+    ) {
+      if (!flags.analyticsSettingsSiteVisitTracking) {
+        throw new DubApiError({
+          code: "forbidden",
+          message:
+            "Site visit tracking is not enabled for this workspace. Please contact support to enable it.",
+        });
+      }
+
+      const domain = await prisma.domain.findFirst({
+        where: {
+          projectId: workspace.id,
+          slug: mergedSiteVisitTrackingSettings.siteDomainSlug,
+          archived: false,
+        },
+      });
+
+      if (!domain) {
+        throw new DubApiError({
+          code: "bad_request",
+          message:
+            "The selected site links domain was not found for this workspace.",
+        });
+      }
+    }
+
     try {
-      const response = await prisma.project.update({
+      const updatedWorkspace = await prisma.project.update({
         where: {
           slug: workspace.slug,
         },
@@ -146,6 +196,12 @@ export const PATCH = withWorkspace(
           ...(enforceSAML !== undefined && {
             ssoEnforcedAt: enforceSAML ? new Date() : null,
           }),
+          ...(mergedSiteVisitTrackingSettings !== undefined && {
+            siteVisitTrackingSettings:
+              mergedSiteVisitTrackingSettings === null
+                ? Prisma.JsonNull
+                : (mergedSiteVisitTrackingSettings as Prisma.InputJsonValue),
+          }),
         },
         include: {
           domains: {
@@ -160,15 +216,22 @@ export const PATCH = withWorkspace(
         },
       });
 
-      if (slug !== workspace.slug) {
-        await prisma.user.updateMany({
-          where: {
-            defaultWorkspace: workspace.slug,
-          },
-          data: {
-            defaultWorkspace: slug,
-          },
-        });
+      if (updatedWorkspace.slug !== workspace.slug) {
+        await Promise.allSettled([
+          prisma.user.updateMany({
+            where: {
+              defaultWorkspace: workspace.slug,
+            },
+            data: {
+              defaultWorkspace: updatedWorkspace.slug,
+            },
+          }),
+          // refresh the workspace product cache for both workspaces
+          redis.del(
+            `workspace:product:${updatedWorkspace.slug}`,
+            `workspace:product:${workspace.slug}`,
+          ),
+        ]);
       }
 
       waitUntil(
@@ -181,13 +244,13 @@ export const PATCH = withWorkspace(
 
           // Sync the allowedHostnames cache for workspace domains
           const current = JSON.stringify(workspace.allowedHostnames);
-          const next = JSON.stringify(response.allowedHostnames);
-          const domains = response.domains.map(({ slug }) => slug);
+          const next = JSON.stringify(updatedWorkspace.allowedHostnames);
+          const domains = updatedWorkspace.domains.map(({ slug }) => slug);
 
           if (current !== next) {
             if (
-              Array.isArray(response.allowedHostnames) &&
-              response.allowedHostnames.length > 0
+              Array.isArray(updatedWorkspace.allowedHostnames) &&
+              updatedWorkspace.allowedHostnames.length > 0
             ) {
               allowedHostnamesCache.mset({
                 allowedHostnames: next,
@@ -204,11 +267,8 @@ export const PATCH = withWorkspace(
 
       return NextResponse.json(
         WorkspaceSchema.parse({
-          ...response,
-          id: prefixWorkspaceId(response.id),
-          flags: await getFeatureFlags({
-            workspaceId: response.id,
-          }),
+          ...updatedWorkspace,
+          id: prefixWorkspaceId(updatedWorkspace.id),
         }),
       );
     } catch (error) {
@@ -235,6 +295,14 @@ export const PUT = PATCH;
 // DELETE /api/workspaces/[idOrSlug] – delete a specific project
 export const DELETE = withWorkspace(
   async ({ workspace }) => {
+    if (workspace.defaultProgramId) {
+      throw new DubApiError({
+        code: "bad_request",
+        message:
+          "You cannot delete a workspace with an active partner program.",
+      });
+    }
+
     await deleteWorkspace(workspace);
 
     return NextResponse.json(workspace);

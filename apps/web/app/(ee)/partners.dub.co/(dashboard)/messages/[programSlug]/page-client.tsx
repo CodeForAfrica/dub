@@ -1,28 +1,32 @@
 "use client";
 
-import { markProgramMessagesReadAction } from "@/lib/actions/partners/mark-program-messages-read";
-import { messageProgramAction } from "@/lib/actions/partners/message-program";
+import { parseActionError } from "@/lib/actions/parse-action-errors";
+import { PARTNER_ALLOWED_ATTACHMENT_TYPES } from "@/lib/messages/constants";
+import { useProgramMessages } from "@/lib/messages/hooks/use-program-messages";
+import { markProgramMessagesReadAction } from "@/lib/messages/mark-program-messages-read";
+import { messageProgramAction } from "@/lib/messages/message-program";
+import { uploadPartnerMessageAttachmentAction } from "@/lib/messages/upload-partner-message-attachment";
 import { constructPartnerLink } from "@/lib/partners/construct-partner-link";
 import { mutatePrefix } from "@/lib/swr/mutate";
 import usePartnerAnalytics from "@/lib/swr/use-partner-analytics";
 import usePartnerProfile from "@/lib/swr/use-partner-profile";
 import useProgramEnrollment from "@/lib/swr/use-program-enrollment";
-import { useProgramMessages } from "@/lib/swr/use-program-messages";
 import useUser from "@/lib/swr/use-user";
 import { ProgramEnrollmentProps } from "@/lib/types";
+import { INACTIVE_ENROLLMENT_STATUSES } from "@/lib/zod/schemas/partners";
 import { useMessagesContext } from "@/ui/messages/messages-context";
 import { MessagesPanel } from "@/ui/messages/messages-panel";
 import { ToggleSidePanelButton } from "@/ui/messages/toggle-side-panel-button";
 import { ProgramHelpLinks } from "@/ui/partners/program-help-links";
 import { ProgramRewardsPanel } from "@/ui/partners/program-rewards-panel";
 import { X } from "@/ui/shared/icons";
-import { Button, Grid, useCopyToClipboard, useMediaQuery } from "@dub/ui";
+import { PendingAttachment } from "@/ui/shared/message-input";
+import { Button, Grid, useCopyToClipboard } from "@dub/ui";
 import {
   Check,
   ChevronLeft,
   Copy,
   EnvelopeArrowRight,
-  LoadingSpinner,
   MsgsDotted,
 } from "@dub/ui/icons";
 import {
@@ -37,19 +41,25 @@ import {
 import { useAction } from "next-safe-action/hooks";
 import Link from "next/link";
 import { redirect, useParams } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { v4 as uuid } from "uuid";
 
 export function PartnerMessagesProgramPageClient() {
   const { programSlug } = useParams() as { programSlug: string };
-  const { isMobile } = useMediaQuery();
 
   const { user } = useUser();
   const { partner } = usePartnerProfile();
-  const { programEnrollment, error: errorProgramEnrollment } =
-    useProgramEnrollment();
-  const program = programEnrollment?.program;
+  const {
+    programEnrollment,
+    error: programEnrollmentError,
+    loading: programEnrollmentLoading,
+  } = useProgramEnrollment({
+    swrOpts: {
+      shouldRetryOnError: (err) => err.status !== 404,
+    },
+  });
+  const enrolledProgram = programEnrollment?.program;
 
   const {
     executeAsync: markProgramMessagesRead,
@@ -62,7 +72,6 @@ export function PartnerMessagesProgramPageClient() {
     mutate: mutateProgramMessages,
   } = useProgramMessages({
     query: { programSlug, sortOrder: "asc" },
-    enabled: Boolean(programEnrollment?.program?.messagingEnabledAt),
     swrOpts: {
       onSuccess: async (data) => {
         // Mark unread messages from the program as read
@@ -80,14 +89,144 @@ export function PartnerMessagesProgramPageClient() {
       },
     },
   });
+
+  const program = programMessages?.[0]?.program;
   const messages = programMessages?.[0]?.messages;
 
-  const { executeAsync: sendMessage } = useAction(messageProgramAction);
+  const isBannedOrRejected = ["banned", "rejected"].includes(
+    programEnrollment?.status ?? "",
+  );
+  const shouldShowExternalSupportEmptyState =
+    program?.messagingEnabledAt === null || isBannedOrRejected;
+
+  const ExternalSupportEmptyState = () => {
+    return (
+      <div className="flex size-full flex-col items-center justify-center px-4">
+        <MsgsDotted className="size-10 text-neutral-700" />
+        <div className="mt-6 max-w-md text-center">
+          <span className="text-content-emphasis text-base font-semibold">
+            {isBannedOrRejected
+              ? `This program has ${programEnrollment?.status} you`
+              : "This program uses external support"}
+          </span>
+          <p className="text-content-subtle text-sm font-medium">
+            {isBannedOrRejected
+              ? "For more information, please contact the program via email."
+              : "You can contact them directly via email."}
+          </p>
+        </div>
+        <a
+          href={
+            enrolledProgram?.supportEmail
+              ? `mailto:${enrolledProgram.supportEmail}`
+              : "#"
+          }
+          target="_blank"
+        >
+          <Button
+            className="mt-4 h-9 rounded-lg px-3"
+            variant="secondary"
+            text={isBannedOrRejected ? "Contact program" : "Email support"}
+            icon={<EnvelopeArrowRight className="size-4" />}
+          />
+        </a>
+      </div>
+    );
+  };
+
+  const { executeAsync: sendMessage } = useAction(messageProgramAction, {
+    onError({ error }) {
+      toast.error(parseActionError(error, "Failed to send message"));
+    },
+  });
+
+  const { executeAsync: uploadAttachment } = useAction(
+    uploadPartnerMessageAttachmentAction,
+    {
+      onError({ error }) {
+        toast.error(parseActionError(error, "Failed to upload file"));
+      },
+    },
+  );
+
+  const [pendingAttachments, setPendingAttachments] = useState<
+    PendingAttachment[]
+  >([]);
+
+  const handleAddFiles = useCallback(
+    async (files: File[]) => {
+      for (const file of files) {
+        const id = uuid();
+        const pending: PendingAttachment = {
+          id,
+          file,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          uploading: true,
+        };
+
+        setPendingAttachments((prev) => [...prev, pending]);
+
+        try {
+          const result = await uploadAttachment({
+            programSlug,
+            fileName: file.name,
+            contentType:
+              file.type as (typeof PARTNER_ALLOWED_ATTACHMENT_TYPES)[number],
+            contentLength: file.size,
+          });
+
+          if (!result?.data) {
+            setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+            continue;
+          }
+
+          const { signedUrl, storageKey } = result.data;
+
+          const uploadResponse = await fetch(signedUrl, {
+            method: "PUT",
+            body: file,
+            headers: {
+              "Content-Type": file.type,
+            },
+          });
+
+          if (!uploadResponse.ok) {
+            toast.error("Failed to upload file");
+            setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+            continue;
+          }
+
+          setPendingAttachments((prev) =>
+            prev.map((a) =>
+              a.id === id ? { ...a, uploading: false, storageKey } : a,
+            ),
+          );
+        } catch (error) {
+          toast.error(
+            error instanceof Error ? error.message : "Failed to upload file",
+          );
+          setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+        }
+      }
+    },
+    [programSlug, uploadAttachment],
+  );
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
 
   const { setCurrentPanel } = useMessagesContext();
-  const [isRightPanelOpen, setIsRightPanelOpen] = useState(!isMobile);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
 
-  if (errorProgramEnrollment) redirect(`/messages`);
+  // Redirect if no messages and not enrolled, or messages error
+  if (
+    (programEnrollmentError && programMessages?.length === 0) ||
+    errorMessages
+  )
+    redirect(`/messages`);
 
   return (
     <div
@@ -110,19 +249,20 @@ export function PartnerMessagesProgramPageClient() {
               <button
                 type="button"
                 onClick={() => setIsRightPanelOpen((o) => !o)}
-                className="-mx-2 -my-1 flex items-center gap-3 rounded-lg px-2 py-1 transition-colors duration-100 hover:bg-black/5 active:bg-black/10"
+                disabled={!programEnrollment}
+                className="-mx-2 -my-1 flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors duration-100 enabled:hover:bg-black/5 enabled:active:bg-black/10"
               >
                 {!program ? (
                   <>
-                    <div className="size-8 animate-pulse rounded-full bg-neutral-200" />
-                    <div className="h-8 w-36 animate-pulse rounded-md bg-neutral-200" />
+                    <div className="size-7 animate-pulse rounded-full bg-neutral-200" />
+                    <div className="h-7 w-36 animate-pulse rounded-md bg-neutral-200" />
                   </>
                 ) : (
                   <>
                     <img
                       src={program?.logo || "https://assets.dub.co/logo.png"}
                       alt={`${program?.name} logo`}
-                      className="size-8 shrink-0 rounded-full"
+                      className="size-7 shrink-0 rounded-full"
                     />
                     <h2 className="text-content-emphasis text-lg font-semibold leading-7">
                       {program?.name ?? "Program"}
@@ -132,34 +272,17 @@ export function PartnerMessagesProgramPageClient() {
               </button>
             </div>
           </div>
-          <ToggleSidePanelButton
-            isOpen={isRightPanelOpen}
-            onClick={() => setIsRightPanelOpen((o) => !o)}
-          />
+          {programEnrollment ? (
+            <ToggleSidePanelButton
+              isOpen={isRightPanelOpen}
+              onClick={() => setIsRightPanelOpen((o) => !o)}
+            />
+          ) : programEnrollmentError ? (
+            <ViewProgramButton programSlug={programSlug} />
+          ) : null}
         </div>
-        {["banned", "rejected"].includes(programEnrollment?.status ?? "") ||
-        programEnrollment?.program?.messagingEnabledAt === null ? (
-          <div className="flex size-full flex-col items-center justify-center px-4">
-            <MsgsDotted className="size-10 text-neutral-700" />
-            <div className="mt-6 max-w-md text-center">
-              <span className="text-content-emphasis text-base font-semibold">
-                This program uses external support
-              </span>
-              <p className="text-content-subtle text-sm font-medium">
-                You can contact them directly via email.
-              </p>
-            </div>
-            {program?.supportEmail && (
-              <Link href={`mailto:${program.supportEmail}`} target="_blank">
-                <Button
-                  className="mt-4 h-9 rounded-lg px-3"
-                  variant="secondary"
-                  text="Email support"
-                  icon={<EnvelopeArrowRight className="size-4" />}
-                />
-              </Link>
-            )}
-          </div>
+        {shouldShowExternalSupportEmptyState && messages?.length === 0 ? (
+          <ExternalSupportEmptyState />
         ) : (
           <div className="min-h-0 grow">
             <MessagesPanel
@@ -168,7 +291,20 @@ export function PartnerMessagesProgramPageClient() {
               currentUserType="partner"
               currentUserId={partner?.id || ""}
               program={program}
-              onSendMessage={async (message) => {
+              pendingAttachments={pendingAttachments}
+              onAddFiles={handleAddFiles}
+              onRemoveAttachment={handleRemoveAttachment}
+              allowedFileTypes={PARTNER_ALLOWED_ATTACHMENT_TYPES}
+              {...(shouldShowExternalSupportEmptyState && messages?.length
+                ? {
+                    footerSlot: (
+                      <div className="py-12">
+                        <ExternalSupportEmptyState />
+                      </div>
+                    ),
+                  }
+                : {})}
+              onSendMessage={async (message, attachments) => {
                 const createdAt = new Date();
 
                 try {
@@ -177,25 +313,22 @@ export function PartnerMessagesProgramPageClient() {
                       const result = await sendMessage({
                         programSlug,
                         text: message,
-                        createdAt,
+                        attachments,
                       });
 
-                      if (!result?.data?.message)
-                        throw new Error(
-                          result?.serverError || "Failed to send message",
-                        );
-
-                      return data
-                        ? [
-                            {
-                              ...data[0],
-                              messages: [
-                                ...data[0].messages,
-                                result.data.message,
-                              ],
-                            },
-                          ]
-                        : [];
+                      if (result?.data?.message) {
+                        return data
+                          ? [
+                              {
+                                ...data[0],
+                                messages: [
+                                  ...data[0].messages,
+                                  result.data.message,
+                                ],
+                              },
+                            ]
+                          : [];
+                      }
                     },
                     {
                       optimisticData: (data) =>
@@ -229,6 +362,12 @@ export function PartnerMessagesProgramPageClient() {
                                       name: partner!.name,
                                       image: partner!.image || null,
                                     },
+                                    attachments: attachments.map((a, i) => ({
+                                      id: `tmp_att_${i}`,
+                                      messageId: "",
+                                      ...a,
+                                      createdAt,
+                                    })),
                                   },
                                 ],
                               },
@@ -238,10 +377,11 @@ export function PartnerMessagesProgramPageClient() {
                     },
                   );
 
+                  setPendingAttachments([]);
                   mutatePrefix("/api/partner-profile/messages");
                 } catch (e) {
-                  console.log("Failed to send message", e);
-                  toast.error("Failed to send message");
+                  console.log(`Failed to send message: ${e}`);
+                  toast.error(`Failed to send message: ${e}`);
                 }
               }}
             />
@@ -263,13 +403,7 @@ export function PartnerMessagesProgramPageClient() {
               Program
             </h2>
             <div className="flex items-center gap-2">
-              <Link href={`/programs/${programSlug}`} target="_blank">
-                <Button
-                  variant="secondary"
-                  text="View program"
-                  className="h-8 rounded-lg px-3"
-                />
-              </Link>
+              <ViewProgramButton programSlug={programSlug} />
               <button
                 type="button"
                 onClick={() => setIsRightPanelOpen(false)}
@@ -280,13 +414,11 @@ export function PartnerMessagesProgramPageClient() {
             </div>
           </div>
           <div className="bg-bg-muted scrollbar-hide flex grow flex-col overflow-y-scroll">
-            {programEnrollment && program ? (
+            {programEnrollmentLoading ? (
+              <ProgramInfoPanelSkeleton />
+            ) : programEnrollment ? (
               <ProgramInfoPanel programEnrollment={programEnrollment} />
-            ) : (
-              <div className="flex size-full items-center justify-center">
-                <LoadingSpinner />
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -330,67 +462,71 @@ function ProgramInfoPanel({
               {program.name}
             </span>
             <span className="text-content-subtle text-sm font-medium">
-              Partner since {formatDate(programEnrollment.createdAt)}
+              {INACTIVE_ENROLLMENT_STATUSES.includes(programEnrollment.status)
+                ? `You are ${programEnrollment.status} from this program`
+                : `Partner since ${formatDate(programEnrollment.createdAt)}`}
             </span>
           </div>
         </div>
       </div>
 
       {/* Referral link */}
-      {programEnrollment.links && programEnrollment.links.length > 0 && (
-        <div className="pl-6 pr-6 pt-7">
-          <div className="flex items-end justify-between">
-            <h3 className="text-content-emphasis text-sm font-semibold">
-              Referral link
-            </h3>
-            <Link
-              href={`/programs/${program.slug}/links`}
-              target="_blank"
-              className="text-sm font-medium text-neutral-500 hover:text-neutral-700"
-            >
-              View all
-            </Link>
-          </div>
+      {programEnrollment.links &&
+        programEnrollment.links.length > 0 &&
+        !INACTIVE_ENROLLMENT_STATUSES.includes(programEnrollment.status) && (
+          <div className="pl-6 pr-6 pt-7">
+            <div className="flex items-end justify-between">
+              <h3 className="text-content-emphasis text-sm font-semibold">
+                Referral link
+              </h3>
+              <Link
+                href={`/programs/${program.slug}/links`}
+                target="_blank"
+                className="text-sm font-medium text-neutral-500 hover:text-neutral-700"
+              >
+                View all
+              </Link>
+            </div>
 
-          <div className="relative mt-2">
-            <input
-              type="text"
-              readOnly
-              value={getPrettyUrl(partnerLink)}
-              className="text-content-default focus:border-border-emphasis bg-bg-default block h-11 w-full rounded-xl border border-neutral-200 pl-3 pr-12 text-sm focus:outline-none focus:ring-neutral-500"
-            />
-            {/* Gradient fade overlay */}
-            <div className="pointer-events-none absolute right-12 top-1 h-8 w-10 bg-gradient-to-r from-transparent to-white" />
-            <button
-              type="button"
-              onClick={() => {
-                copyToClipboard(partnerLink);
-                toast.success("Link copied");
-              }}
-              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-white transition-colors hover:bg-gray-800"
-            >
-              <div className="relative size-3">
-                <div
-                  className={cn(
-                    "absolute inset-0 transition-[transform,opacity]",
-                    copied && "translate-y-1 opacity-0",
-                  )}
-                >
-                  <Copy className="size-3" />
+            <div className="relative mt-2">
+              <input
+                type="text"
+                readOnly
+                value={getPrettyUrl(partnerLink)}
+                className="text-content-default focus:border-border-emphasis bg-bg-default block h-11 w-full rounded-xl border border-neutral-200 pl-3 pr-12 text-sm focus:outline-none focus:ring-neutral-500"
+              />
+              {/* Gradient fade overlay */}
+              <div className="pointer-events-none absolute right-12 top-1 h-8 w-10 bg-gradient-to-r from-transparent to-white" />
+              <button
+                type="button"
+                onClick={() => {
+                  copyToClipboard(partnerLink);
+                  toast.success("Link copied");
+                }}
+                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-white transition-colors hover:bg-gray-800"
+              >
+                <div className="relative size-3">
+                  <div
+                    className={cn(
+                      "absolute inset-0 transition-[transform,opacity]",
+                      copied && "translate-y-1 opacity-0",
+                    )}
+                  >
+                    <Copy className="size-3" />
+                  </div>
+                  <div
+                    className={cn(
+                      "absolute inset-0 transition-[transform,opacity]",
+                      !copied && "translate-y-1 opacity-0",
+                    )}
+                  >
+                    <Check className="size-3" />
+                  </div>
                 </div>
-                <div
-                  className={cn(
-                    "absolute inset-0 transition-[transform,opacity]",
-                    !copied && "translate-y-1 opacity-0",
-                  )}
-                >
-                  <Check className="size-3" />
-                </div>
-              </div>
-            </button>
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Stats */}
       <div className="pl-6 pr-6 pt-7">
@@ -425,7 +561,7 @@ function ProgramInfoPanel({
                 </span>
                 {value !== undefined ? (
                   <span className="text-content-emphasis text-sm font-medium">
-                    {currencyFormatter(value / 100)}
+                    {currencyFormatter(value)}
                   </span>
                 ) : (
                   <div className="h-5 w-12 animate-pulse rounded-md bg-neutral-200" />
@@ -437,25 +573,111 @@ function ProgramInfoPanel({
       </div>
 
       {/* Rewards */}
-      <div className="pl-6 pr-6 pt-7">
-        <h3 className="text-content-emphasis text-sm font-semibold">Rewards</h3>
-        <div className="mt-1">
-          <ProgramRewardsPanel
-            rewards={programEnrollment.rewards ?? []}
-            discount={programEnrollment.discount}
-          />
+      {!INACTIVE_ENROLLMENT_STATUSES.includes(programEnrollment.status) && (
+        <div className="pl-6 pr-6 pt-7">
+          <h3 className="text-content-emphasis text-sm font-semibold">
+            Rewards
+          </h3>
+          <div className="mt-1">
+            <ProgramRewardsPanel
+              rewards={programEnrollment.rewards ?? []}
+              discount={programEnrollment.discount}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Help & support */}
       <div className="border-border-subtle pl-6 pr-6 pt-7">
         <h3 className="text-content-emphasis text-sm font-semibold">
           Help and support
         </h3>
-        <div className="mt-1">
+        <div className="-ml-2 mt-1">
           <ProgramHelpLinks />
         </div>
       </div>
     </>
+  );
+}
+
+function ProgramInfoPanelSkeleton() {
+  return (
+    <>
+      {/* Program info skeleton */}
+      <div className="border-border-subtle relative shrink-0 overflow-hidden border-b">
+        <div className="absolute inset-y-0 right-0 w-96 [mask-image:radial-gradient(100%_100%_at_100%_0%,black_30%,transparent)]">
+          <Grid cellSize={20} className="text-neutral-200" />
+        </div>
+        <div className="relative flex flex-col gap-4 p-6">
+          <div className="size-10 animate-pulse rounded-full bg-neutral-200" />
+          <div className="flex flex-col gap-2">
+            <div className="h-6 w-32 animate-pulse rounded-md bg-neutral-200" />
+            <div className="h-4 w-40 animate-pulse rounded-md bg-neutral-200" />
+          </div>
+        </div>
+      </div>
+
+      {/* Referral link skeleton */}
+      <div className="pl-6 pr-6 pt-7">
+        <div className="flex items-end justify-between">
+          <div className="h-5 w-24 animate-pulse rounded-md bg-neutral-200" />
+          <div className="h-4 w-16 animate-pulse rounded-md bg-neutral-200" />
+        </div>
+        <div className="relative mt-2">
+          <div className="h-11 w-full animate-pulse rounded-xl bg-neutral-200" />
+        </div>
+      </div>
+
+      {/* Stats skeleton */}
+      <div className="pl-6 pr-6 pt-7">
+        <div className="h-5 w-24 animate-pulse rounded-md bg-neutral-200" />
+        <div className="divide-border-subtle border-border-subtle mt-2 divide-y rounded-xl border">
+          <div className="divide-border-subtle grid grid-cols-3 divide-x">
+            {[...Array(3)].map((_, idx) => (
+              <div key={idx} className="flex flex-col px-3 py-2.5">
+                <div className="h-3 w-12 animate-pulse rounded-md bg-neutral-200" />
+                <div className="mt-1 h-5 w-16 animate-pulse rounded-md bg-neutral-200" />
+              </div>
+            ))}
+          </div>
+          <div className="divide-border-subtle grid grid-cols-2 divide-x">
+            {[...Array(2)].map((_, idx) => (
+              <div key={idx} className="flex flex-col px-3 py-2.5">
+                <div className="h-3 w-16 animate-pulse rounded-md bg-neutral-200" />
+                <div className="mt-1 h-5 w-20 animate-pulse rounded-md bg-neutral-200" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Rewards skeleton */}
+      <div className="pl-6 pr-6 pt-7">
+        <div className="h-5 w-16 animate-pulse rounded-md bg-neutral-200" />
+        <div className="mt-1">
+          <div className="h-20 w-full animate-pulse rounded-lg bg-neutral-200" />
+        </div>
+      </div>
+
+      {/* Help & support skeleton */}
+      <div className="border-border-subtle pl-6 pr-6 pt-7">
+        <div className="h-5 w-32 animate-pulse rounded-md bg-neutral-200" />
+        <div className="mt-1">
+          <div className="h-16 w-full animate-pulse rounded-lg bg-neutral-200" />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ViewProgramButton({ programSlug }: { programSlug: string }) {
+  return (
+    <Link href={`/programs/${programSlug}`} target="_blank">
+      <Button
+        variant="secondary"
+        text="View program"
+        className="h-8 rounded-lg px-3"
+      />
+    </Link>
   );
 }

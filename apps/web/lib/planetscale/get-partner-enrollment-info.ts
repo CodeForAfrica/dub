@@ -11,6 +11,31 @@ interface QueryResult {
   couponId: string | null;
   couponTestId: string | null;
   groupId: string | null;
+  tenantId: string | null;
+  /** JSON array from JSON_ARRAYAGG; driver may return a string or parsed array */
+  partnerTagIds: string | string[] | null;
+}
+
+function parsePartnerTagIds(value: QueryResult["partnerTagIds"]): string[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    return value.filter(
+      (id): id is string => typeof id === "string" && id.length > 0,
+    );
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return Array.isArray(parsed)
+        ? parsed.filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          )
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 // Get enrollment info for a partner in a program
@@ -24,28 +49,49 @@ export const getPartnerEnrollmentInfo = async ({
   if (!partnerId || !programId) {
     return {
       partner: null,
-      group: null,
       discount: null,
     };
   }
 
   const { rows } = await conn.execute<QueryResult>(
-    `SELECT 
+    `SELECT
       Partner.id,
       Partner.name,
       Partner.image,
-      Discount.id as discountId,
+      Discount.id AS discountId,
       Discount.amount,
       Discount.type,
       Discount.maxDuration,
       Discount.couponId,
       Discount.couponTestId,
-      ProgramEnrollment.groupId
-    FROM ProgramEnrollment
-    LEFT JOIN Partner ON Partner.id = ProgramEnrollment.partnerId
-    LEFT JOIN Discount ON Discount.id = ProgramEnrollment.discountId
-    WHERE ProgramEnrollment.partnerId = ? AND ProgramEnrollment.programId = ? LIMIT 1`,
-    [partnerId, programId],
+      ProgramEnrollment.groupId,
+      ProgramEnrollment.tenantId,
+      tagAgg.partnerTagIds
+    FROM
+      ProgramEnrollment
+      LEFT JOIN Partner ON Partner.id = ProgramEnrollment.partnerId
+      LEFT JOIN Discount ON Discount.id = ProgramEnrollment.discountId
+      LEFT JOIN (
+        SELECT
+          programId,
+          partnerId,
+          JSON_ARRAYAGG(partnerTagId) AS partnerTagIds
+        FROM (
+          SELECT DISTINCT
+            programId,
+            partnerId,
+            partnerTagId
+          FROM ProgramPartnerTag
+          WHERE programId = ? AND partnerId = ?
+        ) AS distinct_program_partner_tags
+        GROUP BY programId, partnerId
+      ) AS tagAgg
+        ON tagAgg.programId = ProgramEnrollment.programId
+        AND tagAgg.partnerId = ProgramEnrollment.partnerId
+    WHERE
+      ProgramEnrollment.partnerId = ?
+      AND ProgramEnrollment.programId = ?`,
+    [programId, partnerId, partnerId, programId],
   );
 
   const result =
@@ -54,7 +100,6 @@ export const getPartnerEnrollmentInfo = async ({
   if (!result) {
     return {
       partner: null,
-      group: null,
       discount: null,
     };
   }
@@ -64,9 +109,9 @@ export const getPartnerEnrollmentInfo = async ({
       id: result.id,
       name: result.name,
       image: result.image,
-    },
-    group: {
-      id: result.groupId,
+      groupId: result.groupId,
+      tenantId: result.tenantId,
+      partnerTagIds: parsePartnerTagIds(result.partnerTagIds),
     },
     discount: result.discountId
       ? {

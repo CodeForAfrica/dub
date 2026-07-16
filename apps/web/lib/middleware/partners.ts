@@ -1,8 +1,13 @@
-import { isValidInternalRedirect, parse } from "@/lib/middleware/utils";
 import { NextRequest, NextResponse } from "next/server";
 import { getDefaultPartnerId } from "./utils/get-default-partner";
 import { getUserViaToken } from "./utils/get-user-via-token";
-import { partnersRedirect } from "./utils/partners-redirect";
+import { isValidInternalRedirect } from "./utils/is-valid-internal-redirect";
+import { parse } from "./utils/parse";
+import {
+  partnersMarketplaceRedirects,
+  partnersProgramRedirects,
+  partnersRedirect,
+} from "./utils/partners-redirect";
 
 const AUTHENTICATED_PATHS = [
   "/programs",
@@ -14,6 +19,7 @@ const AUTHENTICATED_PATHS = [
   "/payouts",
   "/account",
   "/invite",
+  "/rewind",
 ];
 
 export async function PartnersMiddleware(req: NextRequest) {
@@ -29,6 +35,30 @@ export async function PartnersMiddleware(req: NextRequest) {
   const isLoginPath = ["/login", "/register"].some(
     (p) => path.startsWith(p) || path.endsWith(p),
   );
+
+  if (partnersMarketplaceRedirects(path, searchParamsObj)) {
+    return NextResponse.redirect(
+      new URL(
+        `${partnersMarketplaceRedirects(path, searchParamsObj)}${searchParamsString}`,
+        req.url,
+      ),
+      {
+        status: 301,
+      },
+    );
+  }
+
+  if (partnersProgramRedirects(path)) {
+    return NextResponse.redirect(
+      new URL(
+        `${partnersProgramRedirects(path)}${searchParamsString}`,
+        req.url,
+      ),
+      {
+        status: 301,
+      },
+    );
+  }
 
   if (!user && isAuthenticatedPath) {
     if (path.startsWith("/programs/")) {
@@ -50,13 +80,23 @@ export async function PartnersMiddleware(req: NextRequest) {
       !isPartnerInvite &&
       !["/onboarding", "/account"].some((p) => path.startsWith(p))
     ) {
-      return NextResponse.redirect(new URL("/onboarding", req.url));
+      return NextResponse.redirect(
+        new URL(
+          `/onboarding${path === "/" ? "" : `?next=${encodeURIComponent(fullPath)}`}`,
+          req.url,
+        ),
+      );
     }
 
     // Handle ?next= query param with proper validation to prevent open redirects
+    // (omit /onboarding from the check to make sure onboarding is completed)
     if (
       searchParamsObj.next &&
-      isValidInternalRedirect(searchParamsObj.next, req.url)
+      isValidInternalRedirect({
+        redirectPath: searchParamsObj.next,
+        currentUrl: req.url,
+      }) &&
+      !path.startsWith("/onboarding")
     ) {
       return NextResponse.redirect(new URL(searchParamsObj.next, req.url));
     }

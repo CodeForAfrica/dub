@@ -1,7 +1,7 @@
 import { trackSale } from "@/lib/api/conversions/track-sale";
 import { WorkspaceProps } from "@/lib/types";
 import { trackSaleRequestSchema } from "@/lib/zod/schemas/sales";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // TODO:
 // See if we can use {CONVERTED_REVENUE}
@@ -61,6 +61,5 @@ export const trackSingularSaleEvent = async ({
     leadEventName,
     metadata: null,
     workspace,
-    rawBody: queryParams,
   });
 };

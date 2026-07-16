@@ -19,8 +19,7 @@ import { NextResponse } from "next/server";
 export const GET = withWorkspace(async ({ workspace, searchParams }) => {
   const programId = getDefaultProgramIdOrThrow(workspace);
 
-  const { cutoffPeriod, selectedPayoutId } =
-    eligiblePayoutsQuerySchema.parse(searchParams);
+  const query = eligiblePayoutsQuerySchema.parse(searchParams);
 
   const program = await getProgramOrThrow({
     workspaceId: workspace.id,
@@ -28,9 +27,8 @@ export const GET = withWorkspace(async ({ workspace, searchParams }) => {
   });
 
   const eligiblePayouts = await getEligiblePayouts({
+    ...query,
     program,
-    cutoffPeriod,
-    selectedPayoutId,
   });
 
   return NextResponse.json(eligiblePayouts);

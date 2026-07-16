@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 import { stripe } from ".";
 import { onboardPartnerSchema } from "../zod/schemas/partners";
 
@@ -6,10 +6,9 @@ export const createConnectedAccount = async ({
   country,
   profileType,
   companyName,
-}: Pick<
-  z.infer<typeof onboardPartnerSchema>,
-  "country" | "profileType" | "companyName"
->) => {
+}: Pick<z.infer<typeof onboardPartnerSchema>, "profileType" | "companyName"> & {
+  country: string;
+}) => {
   try {
     return await stripe.accounts.create({
       type: "express",

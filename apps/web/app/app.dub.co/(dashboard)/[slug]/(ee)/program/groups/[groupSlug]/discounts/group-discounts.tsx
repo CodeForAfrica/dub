@@ -3,26 +3,55 @@
 import useGroup from "@/lib/swr/use-group";
 import type { DiscountProps, GroupProps } from "@/lib/types";
 import { DEFAULT_PARTNER_GROUP } from "@/lib/zod/schemas/groups";
-import { useDiscountSheet } from "@/ui/partners/discounts/add-edit-discount-sheet";
-import { ProgramRewardDescription } from "@/ui/partners/program-reward-description";
-import { X } from "@/ui/shared/icons";
 import {
-  Button,
-  buttonVariants,
-  Discount,
-  Grid,
-  useLocalStorage,
-} from "@dub/ui";
+  DiscountSheet,
+  useDiscountSheet,
+} from "@/ui/partners/discounts/add-edit-discount-sheet";
+import { ProgramRewardDescription } from "@/ui/partners/program-reward-description";
+import { Button, useRouterStuff } from "@dub/ui";
 import { cn, isClickOnInteractiveChild } from "@dub/utils";
 import { BadgePercent } from "lucide-react";
-import { motion } from "motion/react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export const GroupDiscounts = () => {
   const { group, loading } = useGroup();
+  const { searchParams } = useRouterStuff();
+
+  const [discountSheetState, setDiscountSheetState] = useState<
+    | { open: false; discountId: string | null }
+    | { open: true; discountId: string }
+  >({ open: false, discountId: null });
+
+  useEffect(() => {
+    const discountId = searchParams.get("discountId");
+
+    if (discountId) {
+      setDiscountSheetState({ open: true, discountId });
+    } else {
+      setDiscountSheetState({ open: false, discountId: null });
+    }
+  }, [searchParams]);
+
+  const currentDiscount =
+    discountSheetState.discountId &&
+    group?.discount?.id === discountSheetState.discountId
+      ? group.discount
+      : undefined;
+  const isNewDiscount = discountSheetState.discountId === "new";
 
   return (
     <div>
-      <Banner />
+      {discountSheetState.discountId && (currentDiscount || isNewDiscount) && (
+        <DiscountSheet
+          isOpen={discountSheetState.open}
+          setIsOpen={(open) =>
+            setDiscountSheetState((s) => ({ ...s, open }) as typeof s)
+          }
+          {...(currentDiscount && { discount: currentDiscount })}
+        />
+      )}
 
       {loading || !group ? (
         <DiscountSkeleton />
@@ -40,57 +69,69 @@ const DiscountItem = ({
   discount?: DiscountProps | null;
   group: GroupProps;
 }) => {
-  const { DiscountSheet, setIsOpen } = useDiscountSheet({
-    ...(discount && { discount }),
-  });
+  const { slug } = useParams();
+  const { queryParams } = useRouterStuff();
+  const As = discount ? Link : "div";
 
   return (
-    <>
-      {DiscountSheet}
-      <div
-        className={cn(
-          "flex cursor-pointer flex-col gap-4 rounded-lg p-6 transition-all md:flex-row md:items-center",
-          discount && "border border-neutral-200 hover:border-neutral-300",
-          !discount && "bg-neutral-50 hover:bg-neutral-100",
-        )}
-        onClick={(e) => {
-          if (isClickOnInteractiveChild(e)) return;
-          setIsOpen(true);
-        }}
-      >
-        <div className="flex size-10 items-center justify-center rounded-full border border-neutral-200 bg-white">
-          <BadgePercent className="size-4 text-neutral-600" />
-        </div>
-        <div className="flex flex-1 flex-col justify-between gap-y-4 md:flex-row md:items-center">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-normal">
-              {discount ? (
-                <ProgramRewardDescription discount={discount} />
-              ) : (
-                <span className="text-sm font-normal text-neutral-600">
-                  No referral discount created
-                </span>
-              )}
-            </span>
-          </div>
-
-          <div className="flex flex-col-reverse items-center gap-2 md:flex-row">
-            {!discount && group.slug !== DEFAULT_PARTNER_GROUP.slug && (
-              <CopyDefaultDiscountButton />
+    <As
+      href={
+        discount
+          ? `/${slug}/program/groups/${group.slug}/discounts?discountId=${discount.id}`
+          : ""
+      }
+      scroll={false}
+      className={cn(
+        "flex cursor-pointer flex-col gap-4 rounded-lg p-6 transition-all md:flex-row md:items-center",
+        discount && "border border-neutral-200 hover:border-neutral-300",
+        !discount && "bg-neutral-50 hover:bg-neutral-100",
+      )}
+      onClick={(e) => {
+        if (isClickOnInteractiveChild(e)) return;
+        queryParams({
+          set: {
+            discountId: discount?.id ?? "new",
+          },
+        });
+      }}
+    >
+      <div className="flex size-10 items-center justify-center rounded-full border border-neutral-200 bg-white">
+        <BadgePercent className="size-4 text-neutral-600" />
+      </div>
+      <div className="flex flex-1 flex-col justify-between gap-y-4 md:flex-row md:items-center">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-normal">
+            {discount ? (
+              <ProgramRewardDescription discount={discount} />
+            ) : (
+              <span className="text-sm font-normal text-neutral-600">
+                No referral discount created
+              </span>
             )}
-            <Button
-              text={discount ? "Edit" : "Create"}
-              variant={discount ? "secondary" : "primary"}
-              className="h-9 w-full rounded-lg md:w-fit"
-              onClick={(e) => {
-                e.preventDefault();
-                setIsOpen(true);
-              }}
-            />
-          </div>
+          </span>
+        </div>
+
+        <div className="flex flex-col-reverse items-center gap-2 md:flex-row">
+          {!discount && group.slug !== DEFAULT_PARTNER_GROUP.slug && (
+            <CopyDefaultDiscountButton />
+          )}
+          <Button
+            text={discount ? "Edit" : "Create"}
+            variant={discount ? "secondary" : "primary"}
+            className="h-9 w-full rounded-lg md:w-fit"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              queryParams({
+                set: {
+                  discountId: discount?.id ?? "new",
+                },
+              });
+            }}
+          />
         </div>
       </div>
-    </>
+    </As>
   );
 };
 
@@ -129,80 +170,5 @@ const DiscountSkeleton = () => {
         <div className="h-6 w-24 animate-pulse rounded-full bg-neutral-100" />
       </div>
     </div>
-  );
-};
-
-const Banner = () => {
-  const [dismissedBanner, setDismissedBanner] = useLocalStorage<boolean>(
-    "program-discount-banner-dismissed",
-    false,
-  );
-
-  return (
-    <motion.div
-      animate={
-        dismissedBanner
-          ? { opacity: 0, height: 0 }
-          : { opacity: 1, height: "auto" }
-      }
-      initial={false}
-      className="overflow-hidden"
-      inert={dismissedBanner}
-    >
-      <div className="pb-6">
-        <div className="relative isolate overflow-hidden rounded-xl bg-neutral-100">
-          <div
-            className="pointer-events-none absolute inset-0 [mask-image:linear-gradient(90deg,transparent,black)]"
-            aria-hidden
-          >
-            <div className="absolute right-0 top-0 h-full w-[600px]">
-              <Grid
-                cellSize={60}
-                patternOffset={[1, -30]}
-                className="text-neutral-200"
-              />
-            </div>
-            <div className="absolute -inset-16 opacity-15 blur-[50px] [transform:translateZ(0)]">
-              <div
-                className="absolute right-0 top-0 h-full w-[350px] -scale-y-100 rounded-l-full saturate-150"
-                style={{
-                  backgroundImage: `conic-gradient(from -66deg, #855AFC -32deg, #FF0000 63deg, #EAB308 158deg, #5CFF80 240deg, #855AFC 328deg, #FF0000 423deg)`,
-                }}
-              />
-            </div>
-          </div>
-          <div className="relative flex flex-col gap-4 p-5">
-            <Discount className="size-6" />
-            <div>
-              <h2 className="text-content-emphasis text-base font-semibold">
-                Referral discounts
-              </h2>
-              <p className="text-content-subtle text-base font-normal leading-6">
-                Discounts offered to customers when referred by partners in this
-                group
-              </p>
-            </div>
-            <a
-              href="https://dub.co/help/article/dual-sided-incentives"
-              target="_blank"
-              className={cn(
-                buttonVariants({ variant: "secondary" }),
-                "flex h-8 w-fit items-center rounded-lg border bg-white px-3 text-sm",
-              )}
-            >
-              Learn more
-            </a>
-          </div>
-
-          <button
-            type="button"
-            className="text-content-emphasis absolute right-4 top-4 flex size-7 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-black/5 active:bg-black/10"
-            onClick={() => setDismissedBanner(true)}
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      </div>
-    </motion.div>
   );
 };

@@ -2,6 +2,7 @@ import { programResourcesSchema } from "@/lib/zod/schemas/program-resources";
 import { ResourceCard } from "@/ui/partners/resources/resource-card";
 import { ResourceSection } from "@/ui/partners/resources/resource-section";
 import { FileContent, TAB_ITEM_ANIMATION_SETTINGS } from "@dub/ui";
+import { Envelope } from "@dub/ui/icons";
 import {
   formatFileSize,
   getApexDomain,
@@ -9,7 +10,7 @@ import {
   GOOGLE_FAVICON_URL,
 } from "@dub/utils";
 import { motion } from "motion/react";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 export function ReferralsEmbedResources({
   resources,
@@ -51,12 +52,16 @@ export function ReferralsEmbedResources({
               key={link.id}
               resourceType="link"
               icon={
-                <div className="flex size-full items-center justify-center bg-neutral-50">
-                  <img
-                    src={`${GOOGLE_FAVICON_URL}${getApexDomain(link.url)}`}
-                    alt={link.name}
-                    className="size-6 rounded-full object-contain"
-                  />
+                <div className="bg-bg-subtle flex size-full items-center justify-center">
+                  {link.url.startsWith("mailto:") ? (
+                    <Envelope className="text-content-emphasis size-4" />
+                  ) : (
+                    <img
+                      src={`${GOOGLE_FAVICON_URL}${getApexDomain(link.url)}`}
+                      alt={link.name}
+                      className="size-6 rounded-full object-contain"
+                    />
+                  )}
                 </div>
               }
               title={link.name}
@@ -94,8 +99,8 @@ export function ReferralsEmbedResources({
               key={file.id}
               resourceType="file"
               icon={
-                <div className="flex size-full items-center justify-center bg-neutral-50">
-                  <FileContent className="size-4 text-neutral-800" />
+                <div className="bg-bg-subtle flex size-full items-center justify-center">
+                  <FileContent className="text-content-emphasis size-4" />
                 </div>
               }
               title={file.name || "File"}

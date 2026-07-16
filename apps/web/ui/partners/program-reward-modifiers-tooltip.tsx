@@ -2,42 +2,52 @@
 
 import { constructRewardAmount } from "@/lib/api/sales/construct-reward-amount";
 import { getRewardAmount } from "@/lib/partners/get-reward-amount";
-import { RewardProps } from "@/lib/types";
+import { RewardCondition, RewardConditions, RewardProps } from "@/lib/types";
 import {
-  ATTRIBUTE_LABELS,
   CONDITION_OPERATOR_LABELS,
-  ENTITY_ATTRIBUTE_TYPES,
-  rewardConditionsArraySchema,
-  rewardConditionsSchema,
+  REWARD_CONDITIONS,
 } from "@/lib/zod/schemas/rewards";
 import { InfoTooltip, useScrollProgress } from "@dub/ui";
 import {
   COUNTRIES,
   capitalize,
+  cn,
   currencyFormatter,
+  formatDateTime,
   pluralize,
 } from "@dub/utils";
+import { formatDuration } from "date-fns";
 import { useRef } from "react";
-import { z } from "zod";
 
-const REWARD_MODIFIER_LABELS = {
-  ...ATTRIBUTE_LABELS,
-  productId: "Product",
-};
+interface ProgramRewardModifiersTooltipProps {
+  reward?: Omit<RewardProps, "id" | "updatedAt"> | null;
+}
 
-type ProgramRewardModifiersTooltipProps = {
-  reward?: Omit<RewardProps, "id"> | null;
-};
+interface ProgramRewardModifiersTooltipContentProps {
+  reward?: Omit<RewardProps, "id" | "updatedAt"> | null;
+  showBottomGradient?: boolean;
+  showBaseReward?: boolean;
+  className?: string;
+}
 
 export function ProgramRewardModifiersTooltip({
   reward,
 }: ProgramRewardModifiersTooltipProps) {
-  if (!reward?.modifiers?.length) return null;
+  if (!reward?.modifiers?.length && !reward?.tooltipDescription) return null;
 
   return (
     <div className="inline-block align-text-top">
       <InfoTooltip
-        content={<ProgramRewardModifiersTooltipContent reward={reward} />}
+        content={
+          reward.tooltipDescription || (
+            <ProgramRewardModifiersTooltipContent
+              reward={reward}
+              showBottomGradient={true}
+              showBaseReward={true}
+            />
+          )
+        }
+        contentClassName={reward.tooltipDescription ? "text-left" : undefined}
       />
     </div>
   );
@@ -45,68 +55,80 @@ export function ProgramRewardModifiersTooltip({
 
 export function ProgramRewardModifiersTooltipContent({
   reward,
-}: ProgramRewardModifiersTooltipProps) {
+  showBottomGradient = true,
+  showBaseReward = true,
+  className,
+}: ProgramRewardModifiersTooltipContentProps & {
+  showBottomGradient?: boolean;
+  showBaseReward?: boolean;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { scrollProgress, updateScrollProgress } = useScrollProgress(scrollRef);
 
   if (!reward?.modifiers?.length) return null;
 
-  const showBaseReward = getRewardAmount(reward) !== 0;
+  const nonZeroBaseAmount = getRewardAmount(reward) !== 0;
+  const displayBaseReward = showBaseReward && nonZeroBaseAmount;
 
   return (
     <div className="relative">
       <div
         ref={scrollRef}
         onScroll={updateScrollProgress}
-        className="scrollbar-hide max-h-[calc(var(--radix-popper-available-height,100dvh)-12px)] max-w-sm space-y-2 overflow-y-auto p-3"
-      >
-        {showBaseReward && <RewardItem reward={reward} />}
-        {(reward.modifiers as z.infer<typeof rewardConditionsArraySchema>).map(
-          (modifier, idx) => (
-            <div key={idx} className="space-y-2">
-              {(showBaseReward || idx > 0) && (
-                <span className="flex w-full items-center justify-center rounded bg-neutral-100 px-2 py-1 text-xs font-semibold text-neutral-600">
-                  OR
-                </span>
-              )}
-
-              <RewardItem
-                reward={{
-                  event: reward.event,
-                  type:
-                    modifier.type === undefined ? reward.type : modifier.type, // fallback to primary
-                  amountInCents: modifier.amountInCents,
-                  amountInPercentage: modifier.amountInPercentage,
-                  maxDuration:
-                    modifier.maxDuration === undefined
-                      ? reward.maxDuration
-                      : modifier.maxDuration, // fallback to primary
-                }}
-                conditions={modifier.conditions}
-                operator={modifier.operator}
-              />
-            </div>
-          ),
+        className={cn(
+          "scrollbar-hide max-h-[calc(var(--radix-popper-available-height,100dvh)-12px)] max-w-sm space-y-2 overflow-y-auto p-3",
+          className,
         )}
+      >
+        {displayBaseReward && <RewardItem reward={reward} />}
+        {(reward.modifiers as RewardConditions[]).map((modifier, idx) => (
+          <div key={idx} className="space-y-2">
+            {(displayBaseReward || idx > 0) && (
+              <span className="flex w-full items-center justify-center rounded bg-neutral-100 px-2 py-1 text-xs font-semibold text-neutral-600">
+                OR
+              </span>
+            )}
+
+            <RewardItem
+              reward={{
+                event: reward.event,
+                type: modifier.type === undefined ? reward.type : modifier.type, // fallback to primary
+                amountInCents: modifier.amountInCents,
+                amountInPercentage: modifier.amountInPercentage,
+                maxDuration:
+                  modifier.maxDuration === undefined
+                    ? reward.maxDuration
+                    : modifier.maxDuration, // fallback to primary
+                spendLimitAmount: reward.spendLimitAmount,
+                spendLimitInterval: reward.spendLimitInterval,
+              }}
+              conditions={modifier.conditions}
+              operator={modifier.operator}
+            />
+          </div>
+        ))}
       </div>
-      <div
-        className="pointer-events-none absolute bottom-0 left-0 hidden h-16 w-full rounded-b-lg bg-gradient-to-t from-white sm:block"
-        style={{ opacity: 1 - Math.pow(scrollProgress, 2) }}
-      />
+
+      {showBottomGradient && (
+        <div
+          className="pointer-events-none absolute bottom-0 left-0 hidden h-16 w-full rounded-b-lg bg-gradient-to-t from-white sm:block"
+          style={{ opacity: 1 - Math.pow(scrollProgress, 2) }}
+        />
+      )}
     </div>
   );
 }
 
+// TODO:
+// This became a bit of a mess, let's clean it up a bit.
 const RewardItem = ({
   reward,
   conditions,
   operator = "AND",
 }: {
-  reward: Omit<RewardProps, "id">;
-  conditions?: z.infer<
-    typeof rewardConditionsArraySchema
-  >[number]["conditions"];
-  operator?: z.infer<typeof rewardConditionsSchema>["operator"];
+  reward: Omit<RewardProps, "id" | "updatedAt">;
+  conditions?: RewardCondition[];
+  operator?: RewardConditions["operator"];
 }) => {
   const rewardAmount = constructRewardAmount({
     ...reward,
@@ -137,14 +159,28 @@ const RewardItem = ({
       {conditions && conditions.length > 0 && (
         <ul className="ml-1 text-xs font-medium text-neutral-600">
           {conditions.map((condition, idx) => {
+            const entity = REWARD_CONDITIONS[reward.event].entities.find(
+              (e) => e.id === condition.entity,
+            );
+            const attribute = entity?.attributes?.find(
+              (a) => a.id === condition.attribute,
+            );
+
             return (
               <li key={idx} className="flex items-start gap-1">
                 <span className="shrink-0 text-lg leading-none">&bull;</span>
                 <span className="min-w-0">
-                  {idx === 0 ? "If" : capitalize(operator.toLowerCase())}{" "}
-                  {condition.entity}{" "}
-                  {REWARD_MODIFIER_LABELS[condition.attribute].toLowerCase()}{" "}
-                  {CONDITION_OPERATOR_LABELS[condition.operator]}{" "}
+                  {idx === 0 ? "If" : capitalize(operator)}{" "}
+                  {capitalize(condition.entity)}{" "}
+                  {(condition.entity === "lead" ||
+                    condition.entity === "sale") &&
+                  condition.attribute === "metadata" &&
+                  condition.metadataField?.trim()
+                    ? `"${condition.metadataField.trim()}"`
+                    : capitalize(attribute?.label)}{" "}
+                  {condition.label
+                    ? "is" // if custom label is set, use "is" instead of the actual operator to sound more natural
+                    : CONDITION_OPERATOR_LABELS[condition.operator]}{" "}
                   {condition.value &&
                     (condition.attribute === "country"
                       ? // Country names
@@ -154,20 +190,36 @@ const RewardItem = ({
                             .join(", ")
                         : COUNTRIES[condition.value?.toString()] ??
                           condition.value
-                      : // Non-country value(s)
-                        Array.isArray(condition.value)
-                        ? // Basic array
-                          condition.value.join(", ")
-                        : condition.attribute === "productId" && condition.label
-                          ? // Product label
-                            condition.label
-                          : ENTITY_ATTRIBUTE_TYPES[condition.entity]?.[
-                                condition.attribute
-                              ] === "currency"
-                            ? // Currency value
-                              currencyFormatter(Number(condition.value) / 100)
-                            : // Everything else
-                              condition.value.toString())}
+                      : condition.attribute === "subscriptionDurationMonths"
+                        ? formatSubscriptionDuration(Number(condition.value))
+                        : condition.attribute === "productId" &&
+                            condition.label?.trim()
+                          ? condition.label.trim()
+                          : // Non-country value(s)
+                            Array.isArray(condition.value)
+                            ? // Basic array
+                              (attribute?.options
+                                ? (condition.value as string[] | number[]).map(
+                                    (v) =>
+                                      attribute.options?.find((o) => o.id === v)
+                                        ?.label ?? v,
+                                  )
+                                : condition.value
+                              ).join(", ")
+                            : attribute?.type === "currency"
+                              ? // Currency value
+                                currencyFormatter(Number(condition.value))
+                              : attribute?.type === "date"
+                                ? // Date+time value
+                                  formatDateTime(
+                                    new Date(Number(condition.value)),
+                                  )
+                                : // Everything else
+                                  attribute?.options
+                                  ? attribute.options.find(
+                                      (o) => o.id === condition.value,
+                                    )?.label ?? condition.value.toString()
+                                  : condition.value.toString())}
                 </span>
               </li>
             );
@@ -177,3 +229,9 @@ const RewardItem = ({
     </div>
   );
 };
+
+function formatSubscriptionDuration(v: number): string {
+  return formatDuration(
+    v >= 12 ? { years: Math.floor(v / 12), months: v % 12 } : { months: v },
+  );
+}

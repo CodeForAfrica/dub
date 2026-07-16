@@ -3,9 +3,9 @@ import { queueFolderDeletion } from "@/lib/api/folders/queue-folder-deletion";
 import { includeProgramEnrollment } from "@/lib/api/links/include-program-enrollment";
 import { includeTags } from "@/lib/api/links/include-tags";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { prisma } from "@/lib/prisma";
 import { recordLink } from "@/lib/tinybird";
-import { prisma } from "@dub/prisma";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +39,15 @@ export async function POST(req: Request) {
     });
 
     if (linksToUpdate.length === 0) {
+      await prisma.projectUsers.updateMany({
+        where: {
+          defaultFolderId: folderId,
+        },
+        data: {
+          defaultFolderId: null,
+        },
+      });
+
       await prisma.folder.delete({
         where: {
           id: folderId,

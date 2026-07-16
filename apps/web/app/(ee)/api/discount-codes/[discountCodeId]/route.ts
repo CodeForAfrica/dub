@@ -1,9 +1,9 @@
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
-import { queueDiscountCodeDeletion } from "@/lib/api/discounts/queue-discount-code-deletion";
 import { DubApiError } from "@/lib/api/errors";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { withWorkspace } from "@/lib/auth";
-import { prisma } from "@dub/prisma";
+import { deleteDiscountCodes } from "@/lib/discounts/delete-discount-code";
+import { prisma } from "@/lib/prisma";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
@@ -17,9 +17,16 @@ export const DELETE = withWorkspace(
       where: {
         id: discountCodeId,
       },
+      include: {
+        discount: {
+          select: {
+            provider: true,
+          },
+        },
+      },
     });
 
-    if (!discountCode || !discountCode.discountId) {
+    if (!discountCode || !discountCode.discount) {
       throw new DubApiError({
         message: `Discount code (${discountCodeId}) not found.`,
         code: "bad_request",
@@ -59,20 +66,14 @@ export const DELETE = withWorkspace(
           ],
         }),
 
-        queueDiscountCodeDeletion(discountCode.id),
+        deleteDiscountCodes([discountCode]),
       ]),
     );
 
     return NextResponse.json({ id: discountCode.id });
   },
   {
-    requiredPlan: [
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );

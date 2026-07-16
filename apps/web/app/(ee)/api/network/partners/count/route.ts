@@ -1,9 +1,12 @@
 import { DubApiError } from "@/lib/api/errors";
+import {
+  partnerNetworkListingParts,
+  partnerWhereFromListingParts,
+} from "@/lib/api/network/partner-network-listing-where";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { withWorkspace } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { getNetworkPartnersCountQuerySchema } from "@/lib/zod/schemas/partner-network";
-import { prisma } from "@dub/prisma";
-import { Prisma } from "@dub/prisma/client";
 import { NextResponse } from "next/server";
 
 // GET /api/network/partners/count - get the number of available partners in the network
@@ -27,18 +30,16 @@ export const GET = withWorkspace(
       });
     }
 
-    const { partnerIds, status, groupBy, country, starred } =
+    const { partnerIds, status, groupBy, country, starred, platform } =
       getNetworkPartnersCountQuerySchema.parse(searchParams);
 
-    const commonWhere: Prisma.PartnerWhereInput = {
-      discoverableAt: { not: null },
-      ...(partnerIds && {
-        id: { in: partnerIds },
-      }),
-      ...(country && {
-        country,
-      }),
-    };
+    const listingParts = partnerNetworkListingParts({
+      partnerIds,
+      country,
+      platform,
+    });
+
+    const commonWhere = partnerWhereFromListingParts(listingParts);
 
     const statusWheres = {
       discover: {
@@ -83,10 +84,21 @@ export const GET = withWorkspace(
           some: { programId, invitedAt: { not: null } },
         },
       },
+      ignored: {
+        programs: { none: { programId } },
+        discoveredByPrograms: {
+          some: { programId, ignoredAt: { not: null } },
+        },
+      },
     } as const;
 
+    const statusWhereForFacet =
+      status && status in statusWheres
+        ? statusWheres[status as keyof typeof statusWheres]
+        : statusWheres.discover;
+
     if (groupBy === "status") {
-      const [discover, invited, recruited] = await Promise.all([
+      const [discover, invited, recruited, ignored] = await Promise.all([
         !status || status === "discover"
           ? prisma.partner.count({
               where: {
@@ -111,18 +123,27 @@ export const GET = withWorkspace(
               },
             })
           : undefined,
+        !status || status === "ignored"
+          ? prisma.partner.count({
+              where: {
+                ...commonWhere,
+                ...statusWheres.ignored,
+              },
+            })
+          : undefined,
       ]);
 
       return NextResponse.json({
         discover,
         invited,
         recruited,
+        ignored,
       });
     } else if (groupBy === "country") {
       const countries = await prisma.partner.groupBy({
         by: ["country"],
         _count: true,
-        where: { ...commonWhere, ...statusWheres[status || "discover"] },
+        where: { ...commonWhere, ...statusWhereForFacet },
         orderBy: {
           _count: {
             country: "desc",

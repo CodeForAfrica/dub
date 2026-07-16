@@ -4,10 +4,13 @@ import { validatePartnerLinkUrl } from "@/lib/api/links/validate-partner-link-ur
 import { parseRequestBody } from "@/lib/api/utils";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { withReferralsEmbedToken } from "@/lib/embed/referrals/auth";
+import { prisma } from "@/lib/prisma";
+import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
+import { linkEventSchema } from "@/lib/zod/schemas/links";
 import { createPartnerLinkSchema } from "@/lib/zod/schemas/partners";
 import { ReferralsEmbedLinkSchema } from "@/lib/zod/schemas/referrals-embed";
-import { prisma } from "@dub/prisma";
-import { constructURLFromUTMParams } from "@dub/utils";
+import { getUTMParamsFromURL } from "@dub/utils";
+import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
 // GET /api/embed/referrals/links – get links for a partner
@@ -57,6 +60,14 @@ export const POST = withReferralsEmbedToken(
         orderBy: {
           createdAt: "desc",
         },
+        include: {
+          project: {
+            select: {
+              id: true,
+              webhookEnabled: true,
+            },
+          },
+        },
       }),
 
       prisma.partnerGroup.findUnique({
@@ -78,14 +89,18 @@ export const POST = withReferralsEmbedToken(
       });
     }
 
+    const linkUrl = url || partnerGroup.partnerGroupDefaultLinks[0].url;
+
     const { link, error, code } = await processLink({
       payload: {
         key: key || undefined,
-        url: constructURLFromUTMParams(
-          url || partnerGroup.partnerGroupDefaultLinks[0].url,
-          extractUtmParams(partnerGroup.utmTemplate),
-        ),
-        ...extractUtmParams(partnerGroup.utmTemplate, { excludeRef: true }),
+        url: linkUrl,
+        ...(partnerGroup.utmTemplate
+          ? {
+              ...extractUtmParams(partnerGroup.utmTemplate),
+              ...getUTMParamsFromURL(linkUrl),
+            }
+          : {}),
         domain: program.domain,
         programId: program.id,
         folderId: program.defaultFolderId,
@@ -96,6 +111,7 @@ export const POST = withReferralsEmbedToken(
       workspace: {
         id: program.workspaceId,
         plan: "business",
+        users: [{ role: "owner" }],
       },
       userId: workspaceOwner?.userId,
       skipFolderChecks: true, // can't be changed by the partner
@@ -111,6 +127,18 @@ export const POST = withReferralsEmbedToken(
     }
 
     const partnerLink = await createLink(link);
+
+    // this should always be present but just in case
+    const workspace = workspaceOwner?.project;
+    if (workspace) {
+      waitUntil(
+        sendWorkspaceWebhook({
+          trigger: "link.created",
+          workspace,
+          data: linkEventSchema.parse(partnerLink),
+        }),
+      );
+    }
 
     return NextResponse.json(ReferralsEmbedLinkSchema.parse(partnerLink), {
       status: 201,

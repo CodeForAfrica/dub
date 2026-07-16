@@ -38,7 +38,7 @@ import {
 } from "react";
 import { useForm, useFormContext } from "react-hook-form";
 import { toast } from "sonner";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { TrafficSplitSlider } from "./traffic-split-slider";
 
 const parseTests = (testVariants: LinkFormData["testVariants"]) =>
@@ -332,7 +332,7 @@ function ABTestingEdit({
                         placeholder={
                           domains?.find(({ slug }) => slug === domain)
                             ?.placeholder ||
-                          "https://dub.co/help/article/what-is-dub"
+                          "https://dub.co/help/article/dub-links"
                         }
                         className="block h-9 grow border-none px-2 text-neutral-900 placeholder-neutral-400 focus:ring-0 sm:text-sm"
                         {...register(`testVariants.${index}.url`, {

@@ -1,7 +1,7 @@
 import { withPartnerProfile } from "@/lib/auth/partner";
+import { prisma } from "@/lib/prisma";
 import { payoutsCountQuerySchema } from "@/lib/zod/schemas/payouts";
-import { prisma } from "@dub/prisma";
-import { PayoutStatus, Prisma } from "@dub/prisma/client";
+import { PayoutStatus, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 // GET /api/partner-profile/payouts/count – get payouts count for a partner
@@ -43,12 +43,22 @@ export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
     return NextResponse.json(counts);
   }
 
-  const count = await prisma.payout.count({
+  const count = await prisma.payout.aggregate({
     where: {
       ...where,
       status,
     },
+    _count: true,
+    _sum: {
+      amount: true,
+    },
   });
 
-  return NextResponse.json(count);
+  return NextResponse.json([
+    {
+      count: count._count ?? 0,
+      amount: count._sum?.amount ?? 0,
+      status: status ?? "all",
+    },
+  ]);
 });

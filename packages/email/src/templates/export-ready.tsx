@@ -24,7 +24,13 @@ export default function ExportReady({
 }: {
   email: string;
   downloadUrl: string;
-  exportType: "partners" | "commissions" | "links";
+  exportType:
+    | "partners"
+    | "commissions"
+    | "links"
+    | "events"
+    | "customers"
+    | "payouts";
   expiresInDays?: number;
   program?: {
     name: string;
@@ -48,8 +54,9 @@ export default function ExportReady({
               Your {exportType} export is ready
             </Heading>
             <Text className="text-sm leading-6 text-black">
-              Your export of {exportType} from <strong>{contextName}</strong>{" "}
-              has been completed and is ready to download.
+              Your {exportType} export from your <strong>{contextName}</strong>{" "}
+              {program ? "program" : "workspace"} has been completed and is
+              ready to download.
             </Text>
             <Section className="my-8">
               <Link

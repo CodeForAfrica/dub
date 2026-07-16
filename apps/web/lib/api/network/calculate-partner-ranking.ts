@@ -1,29 +1,24 @@
-import { prisma } from "@dub/prisma";
-import { Prisma } from "@dub/prisma/client";
+import { prisma } from "@/lib/prisma";
+import { getNetworkPartnersQuerySchema } from "@/lib/zod/schemas/partner-network";
 import { ACME_PROGRAM_ID } from "@dub/utils";
+import { PlatformType, Prisma } from "@prisma/client";
+import * as z from "zod/v4";
 
-export interface PartnerRankingFilters {
-  partnerIds?: string[];
-  status?: "discover" | "invited" | "recruited";
-  country?: string;
-  starred?: boolean;
-}
+type PartnerRankingFilters = z.infer<typeof getNetworkPartnersQuerySchema>;
 
 export interface PartnerRankingParams extends PartnerRankingFilters {
   programId: string;
-  page: number;
-  pageSize: number;
   similarPrograms?: Array<{ programId: string; similarityScore: number }>;
 }
 
 /**
- * Partner Ranking Algorithm for Discovery
+ * Partner Ranking Algorithm (only used for the "discover" tab)
  * Ranks partners based on performance in similar programs only.
  *
  * Scoring Breakdown (0-65+ points):
  *
  * 1. Trusted Partner Bonus (200 points): Top priority boost
- *    - Partners with trustedAt IS NOT NULL get 200 bonus points
+ *    - Partners with networkStatus = "trusted" get 200 bonus points
  *    - This ensures trusted partners appear at the very top
  *
  * 2. Similarity Score (0-50 points): Performance in similar programs
@@ -39,26 +34,51 @@ export interface PartnerRankingParams extends PartnerRankingFilters {
  * Final Score = Trusted Bonus + Similarity + Match (0-265+ points)
  *
  * Displayed Metrics:
- * - conversionRate: Average conversion rate across ALL programs the partner is enrolled in
+ * - clickToConversionRate: Average click-to-conversion rate across ALL programs the partner is enrolled in
  * - lastConversionAt: Most recent conversion date across ALL programs the partner is enrolled in
- *
- * Note: Ranking is primarily used for the "discover" tab. For "invited" and "recruited"
- * tabs, partners are sorted by date (most recent first).
  */
+function buildOrderByClause({
+  starred,
+  sortBy,
+  platform,
+}: {
+  starred?: boolean | null;
+  sortBy?: "relevance" | "subscribers";
+  platform?: PlatformType;
+}) {
+  if (starred === true) {
+    return Prisma.sql`dp.starredAt DESC`;
+  }
+
+  if (sortBy === "subscribers" && platform) {
+    return Prisma.sql`(
+      SELECT COALESCE(MAX(pp_sort.subscribers), 0)
+      FROM PartnerPlatform pp_sort
+      WHERE pp_sort.partnerId = p.id
+        AND pp_sort.type = ${platform}
+        AND pp_sort.verifiedAt IS NOT NULL
+    ) DESC, p.id ASC`;
+  }
+
+  return Prisma.sql`finalScore DESC, p.id ASC`;
+}
+
 export async function calculatePartnerRanking({
   programId,
   partnerIds,
   country,
   starred,
-  page,
+  sortBy = "relevance",
+  platform,
+  page = 1,
   pageSize,
-  status = "discover",
   similarPrograms = [],
 }: PartnerRankingParams) {
   const conditions: Prisma.Sql[] = [
-    Prisma.sql`p.discoverableAt IS NOT NULL`,
+    Prisma.sql`p.networkStatus IN ("approved", "trusted")`,
+    Prisma.sql`COALESCE(pe.clickToConversionRate, 0) < 1`,
     Prisma.sql`(dp.ignoredAt IS NULL OR dp.id IS NULL)`,
-    Prisma.sql`COALESCE(pe.conversionRate, 0) < 1`,
+    Prisma.sql`enrolled.id IS NULL`,
   ];
 
   if (partnerIds && partnerIds.length > 0) {
@@ -69,15 +89,22 @@ export async function calculatePartnerRanking({
     conditions.push(Prisma.sql`p.country = ${country}`);
   }
 
-  if (status === "discover") {
-    conditions.push(Prisma.sql`enrolled.id IS NULL`);
-  } else if (status === "invited") {
+  // Filter by platform type (must have verified platform)
+  // Combine both filters into a single EXISTS clause so they apply to the same platform
+  if (platform) {
+    const platformConditions: Prisma.Sql[] = [
+      Prisma.sql`pp_filter.partnerId = p.id`,
+      Prisma.sql`pp_filter.verifiedAt IS NOT NULL`,
+    ];
+
+    platformConditions.push(Prisma.sql`pp_filter.type = ${platform}`);
+
     conditions.push(
-      Prisma.sql`enrolled.status = 'invited' AND dp.invitedAt IS NOT NULL`,
-    );
-  } else if (status === "recruited") {
-    conditions.push(
-      Prisma.sql`enrolled.status = 'approved' AND dp.invitedAt IS NOT NULL`,
+      Prisma.sql`EXISTS (
+        SELECT 1 
+        FROM PartnerPlatform pp_filter 
+        WHERE ${Prisma.join(platformConditions, " AND ")}
+      )`,
     );
   }
 
@@ -89,31 +116,22 @@ export async function calculatePartnerRanking({
 
   const whereClause = Prisma.join(conditions, " AND ");
 
-  // Rank partners with no online presence lower
-  const hasProfileCheck = Prisma.sql`(
-    p.website IS NOT NULL OR
-    p.youtube IS NOT NULL OR
-    p.twitter IS NOT NULL OR
-    p.linkedin IS NOT NULL OR
-    p.instagram IS NOT NULL OR
-    p.tiktok IS NOT NULL
+  // Rank partners with no platforms lower
+  const hasProfileCheck = Prisma.sql`EXISTS (
+    SELECT 1 
+    FROM PartnerPlatform pp 
+    WHERE pp.partnerId = p.id
   )`;
 
-  const orderByClause =
-    status === "discover"
-      ? starred === true
-        ? Prisma.sql`dp.starredAt ASC`
-        : Prisma.sql`finalScore DESC, p.id ASC`
-      : status === "invited"
-        ? Prisma.sql`dp.invitedAt ASC`
-        : Prisma.sql`enrolled.createdAt DESC, p.id ASC`;
+  const orderByClause = buildOrderByClause({ starred, sortBy, platform });
 
   const offset = (page - 1) * pageSize;
 
-  // Helper function to build discoverable partners filter with any alias
+  // Helper function to build discoverable partners filter with any alias to reuse in subqueries
+  // This dramatically reduces the dataset from 1.5M to 5,000 before expensive joins
   const buildDiscoverablePartnersFilter = (alias: string) => {
     const conditions: Prisma.Sql[] = [
-      Prisma.sql`${Prisma.raw(alias)}.discoverableAt IS NOT NULL`,
+      Prisma.sql`${Prisma.raw(alias)}.networkStatus IN ("approved", "trusted")`,
     ];
 
     if (partnerIds && partnerIds.length > 0) {
@@ -129,27 +147,18 @@ export async function calculatePartnerRanking({
     return Prisma.join(conditions, " AND ");
   };
 
-  // OPTIMIZATION: Build filter for discoverable partners to reuse in subqueries
-  // This dramatically reduces the dataset from 1.5M to 5,000 before expensive joins
-  const discoverablePartnersFilter =
-    buildDiscoverablePartnersFilter("p_filter");
-
-  // Build filter for all-program metrics join (uses different alias)
-  const discoverablePartnersAllProgramsFilter =
-    buildDiscoverablePartnersFilter("p_filter_all");
-
   // Metrics across ALL programs (for display purposes)
   const allProgramMetricsJoin = Prisma.sql`LEFT JOIN (
     SELECT 
       pe_all.partnerId,
       MAX(pe_all.lastConversionAt) as lastConversionAt,
-      AVG(COALESCE(pe_all.conversionRate, 0)) as avgConversionRate
-    FROM ProgramEnrollment pe_all
+      AVG(COALESCE(pe_all.clickToConversionRate, 0)) as avgConversionRate
+    FROM ProgramEnrollment pe_all FORCE INDEX (ProgramEnrollment_partnerId_programId_key)
     -- OPTIMIZATION: Only process enrollments for discoverable partners (using subquery to avoid JOIN)
     WHERE pe_all.partnerId IN (
       SELECT p_filter_all.id
       FROM Partner p_filter_all
-      WHERE ${discoverablePartnersAllProgramsFilter}
+      WHERE ${buildDiscoverablePartnersFilter("p_filter_all")}
     )
       AND pe_all.programId != ${ACME_PROGRAM_ID}
       AND pe_all.totalConversions > 0
@@ -167,9 +176,9 @@ export async function calculatePartnerRanking({
             -- Individual program performance score (0-1 range per program)
             (COALESCE(pe2.consistencyScore, 50) / 100 * 0.20) +
             (CASE 
-              WHEN COALESCE(pe2.conversionRate, 0) <= 0 THEN 0
-              WHEN COALESCE(pe2.conversionRate, 0) >= 0.1 THEN 0.10
-              ELSE (SQRT(LOG10(COALESCE(pe2.conversionRate, 0) * 1000 + 1)) * 40 / 100) * 0.10
+              WHEN COALESCE(pe2.clickToConversionRate, 0) <= 0 THEN 0
+              WHEN COALESCE(pe2.clickToConversionRate, 0) >= 0.1 THEN 0.10
+              ELSE (SQRT(LOG10(COALESCE(pe2.clickToConversionRate, 0) * 1000 + 1)) * 40 / 100) * 0.10
             END) +
             (CASE 
               WHEN COALESCE(pe2.averageLifetimeValue, 0) <= 0 THEN 0
@@ -193,12 +202,12 @@ export async function calculatePartnerRanking({
         )) as similarityScore,
         -- Program match score: Count of similar programs (0-15 points)
         LEAST(15, COUNT(DISTINCT pe2.programId) * 2) as programMatchScore
-      FROM ProgramEnrollment pe2
+      FROM ProgramEnrollment pe2 FORCE INDEX (ProgramEnrollment_partnerId_programId_key)
       -- OPTIMIZATION: Only process enrollments for discoverable partners (using subquery to avoid JOIN)
       WHERE pe2.partnerId IN (
         SELECT p_filter.id
         FROM Partner p_filter
-        WHERE ${discoverablePartnersFilter}
+        WHERE ${buildDiscoverablePartnersFilter("p_filter")}
       )
         AND pe2.programId IN (${Prisma.join(similarPrograms.map((sp) => sp.programId))})
         AND pe2.status = 'approved'
@@ -212,19 +221,11 @@ export async function calculatePartnerRanking({
             WHERE FALSE
         ) similarProgramMetrics ON similarProgramMetrics.partnerId = p.id`;
 
-  // Build discoverable partners subquery for main FROM clause
-  const discoverablePartnersSubqueryFilter =
-    buildDiscoverablePartnersFilter("p_sub");
-
-  // Build discoverable partners filter for categories subquery
-  const discoverablePartnersCategoriesFilter =
-    buildDiscoverablePartnersFilter("p_cat");
-
   const partners = await prisma.$queryRaw<Array<any>>`
     SELECT 
       p.*,
       COALESCE(pe.lastConversionAt, allProgramMetrics.lastConversionAt) as lastConversionAt,
-      COALESCE(pe.conversionRate, allProgramMetrics.avgConversionRate) as conversionRate,
+      COALESCE(pe.clickToConversionRate, allProgramMetrics.avgConversionRate) as conversionRate,
       dp.starredAt,
       dp.ignoredAt,
       dp.invitedAt,
@@ -232,18 +233,19 @@ export async function calculatePartnerRanking({
       CASE WHEN enrolled.status = 'approved' THEN enrolled.createdAt ELSE NULL END as recruitedAt,
       preferredEarningStructuresData.preferredEarningStructures as preferredEarningStructures,
       salesChannelsData.salesChannels as salesChannels,
+      partnerPlatformsData.platforms as platforms,
       
       -- Pre-compute hasProfileCheck for faster sorting
       ${hasProfileCheck} as hasProfile,
 
       -- FINAL SCORE (0-765+ points): Similarity-based ranking for discovery
-      -- Trusted partners (trustedAt IS NOT NULL) get 200 bonus points to rank at the top
+      -- Trusted partners (networkStatus = "trusted") get 200 bonus points to rank at the top
       -- Partners with profiles get 500 bonus points to ensure they rank above those without profiles
       (
-        -- Profile bonus: 500 points for partners with online presence (ensures they rank above those without)
+        -- Profile bonus: 500 points for partners with platforms (ensures they rank above those without)
         CASE WHEN ${hasProfileCheck} THEN 500 ELSE 0 END +
-        -- Trusted partner bonus: 200 points for partners with trustedAt set
-        CASE WHEN p.trustedAt IS NOT NULL THEN 200 ELSE 0 END +
+        -- Trusted partner bonus: 200 points for partners with networkStatus = "trusted"
+        CASE WHEN p.networkStatus = "trusted" THEN 200 ELSE 0 END +
         COALESCE(similarProgramMetrics.similarityScore, 0) +
         COALESCE(similarProgramMetrics.programMatchScore, 0)
       ) as finalScore
@@ -252,7 +254,7 @@ export async function calculatePartnerRanking({
       -- This dramatically reduces the dataset from 1.5M to 5,000 before expensive joins
       SELECT p_sub.*
       FROM Partner p_sub
-      WHERE ${discoverablePartnersSubqueryFilter}
+      WHERE ${buildDiscoverablePartnersFilter("p_sub")}
     ) p
    
     -- Current program enrollment (for display metrics and filtering)
@@ -273,12 +275,12 @@ export async function calculatePartnerRanking({
       SELECT 
         pe5.partnerId,
         GROUP_CONCAT(DISTINCT pc.category ORDER BY pc.category SEPARATOR ',') as categories
-      FROM ProgramEnrollment pe5
+      FROM ProgramEnrollment pe5 FORCE INDEX (ProgramEnrollment_partnerId_programId_key)
       JOIN ProgramCategory pc ON pc.programId = pe5.programId
       WHERE pe5.partnerId IN (
         SELECT p_cat.id
         FROM Partner p_cat
-        WHERE ${discoverablePartnersCategoriesFilter}
+        WHERE ${buildDiscoverablePartnersFilter("p_cat")}
       )
         AND pe5.status = 'approved'
       GROUP BY pe5.partnerId
@@ -312,10 +314,68 @@ export async function calculatePartnerRanking({
       GROUP BY psc.partnerId
     ) salesChannelsData ON salesChannelsData.partnerId = p.id
 
+    -- OPTIMIZATION: Only get platforms for discoverable partners
+    LEFT JOIN (
+      SELECT 
+        pp.partnerId,
+        JSON_ARRAYAGG(
+          JSON_OBJECT(
+            'partnerId', pp.partnerId,
+            'type', pp.type,
+            'identifier', pp.identifier,
+            'verifiedAt', pp.verifiedAt,
+            'platformId', pp.platformId,
+            'subscribers', pp.subscribers,
+            'posts', pp.posts,
+            'views', pp.views
+          )
+        ) as platforms
+      FROM PartnerPlatform pp
+      WHERE pp.partnerId IN (
+        SELECT p_filter.id
+        FROM Partner p_filter
+        WHERE ${buildDiscoverablePartnersFilter("p_filter")}
+      )
+      GROUP BY pp.partnerId
+    ) partnerPlatformsData ON partnerPlatformsData.partnerId = p.id
+
     WHERE ${whereClause}
     ORDER BY ${orderByClause}
     LIMIT ${pageSize} OFFSET ${offset}
   `;
 
-  return partners;
+  return partners.map((partner: any) => {
+    let platforms: any[] = [];
+    if (partner.platforms) {
+      try {
+        // Handle both string and already-parsed JSON
+        const parsedPlatforms =
+          typeof partner.platforms === "string"
+            ? JSON.parse(partner.platforms)
+            : partner.platforms;
+
+        // Transform platforms to match Prisma types
+        // MySQL JSON returns BigInt as numbers and DateTime as strings
+        platforms = (Array.isArray(parsedPlatforms) ? parsedPlatforms : []).map(
+          (platform: any) => ({
+            ...platform,
+            subscribers: platform.subscribers
+              ? BigInt(platform.subscribers)
+              : BigInt(0),
+            posts: platform.posts ? BigInt(platform.posts) : BigInt(0),
+            views: platform.views ? BigInt(platform.views) : BigInt(0),
+            verifiedAt: platform.verifiedAt
+              ? new Date(platform.verifiedAt)
+              : null,
+          }),
+        );
+      } catch {
+        platforms = [];
+      }
+    }
+    return {
+      ...partner,
+      platforms,
+    };
+  });
 }

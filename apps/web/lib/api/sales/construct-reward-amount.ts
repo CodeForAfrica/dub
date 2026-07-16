@@ -59,7 +59,7 @@ export const constructRewardAmount = (
           return `Up to ${
             reward.type === "percentage"
               ? `${max}%`
-              : currencyFormatter(max / 100, {
+              : currencyFormatter(max, {
                   trailingZeroDisplay: "stripIfInteger",
                 })
           }`;
@@ -72,8 +72,8 @@ export const constructRewardAmount = (
   // 1. There are no modifiers OR
   // 2. type AND timelines doesn't match the primary reward
   return reward.type === "percentage"
-    ? `${reward.amountInPercentage}%`
-    : currencyFormatter((reward.amountInCents ?? 0) / 100, {
+    ? `${reward.amountInPercentage ?? 0}%`
+    : currencyFormatter(reward.amountInCents ?? 0, {
         trailingZeroDisplay: "stripIfInteger",
       });
 };

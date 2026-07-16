@@ -6,6 +6,8 @@ import { getProgramOrThrow } from "@/lib/api/programs/get-program-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { withWorkspace } from "@/lib/auth";
+import { throwIfNoPartnerIdOrTenantId } from "@/lib/partners/throw-if-no-partnerid-tenantid";
+import { prisma } from "@/lib/prisma";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { linkEventSchema } from "@/lib/zod/schemas/links";
 import {
@@ -13,11 +15,10 @@ import {
   retrievePartnerLinksSchema,
 } from "@/lib/zod/schemas/partners";
 import { ProgramPartnerLinkSchema } from "@/lib/zod/schemas/programs";
-import { prisma } from "@dub/prisma";
-import { constructURLFromUTMParams } from "@dub/utils";
+import { getUTMParamsFromURL } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/partners/links - get the partner links
 export const GET = withWorkspace(
@@ -26,6 +27,8 @@ export const GET = withWorkspace(
 
     const { partnerId, tenantId } =
       retrievePartnerLinksSchema.parse(searchParams);
+
+    throwIfNoPartnerIdOrTenantId({ partnerId, tenantId });
 
     const programEnrollment = await prisma.programEnrollment.findUnique({
       where: partnerId
@@ -58,7 +61,8 @@ export const GET = withWorkspace(
     return NextResponse.json(z.array(ProgramPartnerLinkSchema).parse(links));
   },
   {
-    requiredPlan: ["advanced", "enterprise"],
+    requiredPlan: ["business", "advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );
 
@@ -83,12 +87,7 @@ export const POST = withWorkspace(
       });
     }
 
-    if (!partnerId && !tenantId) {
-      throw new DubApiError({
-        code: "bad_request",
-        message: "You must provide a partnerId or tenantId.",
-      });
-    }
+    throwIfNoPartnerIdOrTenantId({ partnerId, tenantId });
 
     const partner = await prisma.programEnrollment.findUnique({
       where: partnerId
@@ -123,16 +122,20 @@ export const POST = withWorkspace(
 
     validatePartnerLinkUrl({ group: partnerGroup, url });
 
+    const linkUrl = url || partnerGroup.partnerGroupDefaultLinks[0].url;
+
     const { link, error, code } = await processLink({
       payload: {
         ...linkProps,
         domain: program.domain,
         key: key || undefined,
-        url: constructURLFromUTMParams(
-          url || partnerGroup.partnerGroupDefaultLinks[0].url,
-          extractUtmParams(partnerGroup.utmTemplate),
-        ),
-        ...extractUtmParams(partnerGroup.utmTemplate, { excludeRef: true }),
+        url: linkUrl,
+        ...(partnerGroup.utmTemplate
+          ? {
+              ...extractUtmParams(partnerGroup.utmTemplate),
+              ...getUTMParamsFromURL(linkUrl),
+            }
+          : {}),
         programId: program.id,
         tenantId: partner.tenantId,
         partnerId: partner.partnerId,
@@ -164,6 +167,7 @@ export const POST = withWorkspace(
     return NextResponse.json(partnerLink, { status: 201 });
   },
   {
-    requiredPlan: ["advanced", "enterprise"],
+    requiredPlan: ["business", "advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );

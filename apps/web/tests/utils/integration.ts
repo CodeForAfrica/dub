@@ -1,24 +1,25 @@
-import { Project, User } from "@dub/prisma/client";
-import { type TaskContext } from "vitest";
-import { z } from "zod";
+import { Partner, Project, User } from "@prisma/client";
+import { type TestContext } from "vitest";
+import * as z from "zod/v4";
 import { HttpClient } from "../utils/http";
 import { env, integrationTestEnv } from "./env";
-import { E2E_USER_ID, E2E_WORKSPACE_ID } from "./resource";
+import { E2E_PARTNER, E2E_USER_ID, E2E_WORKSPACE_ID } from "./resource";
 
 interface Resources {
   user: Pick<User, "id">;
+  partner: Pick<Partner, "id">;
   workspace: Pick<Project, "id" | "slug" | "name" | "webhookEnabled">;
   apiKey: { token: string };
 }
 
 export class IntegrationHarness {
-  private readonly ctx?: TaskContext;
+  private readonly ctx?: TestContext;
   private env: z.infer<typeof integrationTestEnv>;
   public resources: Resources;
   public baseUrl: string;
   public http: HttpClient;
 
-  constructor(ctx?: TaskContext) {
+  constructor(ctx?: TestContext) {
     this.env = env;
     this.ctx = ctx;
     this.baseUrl = this.env.E2E_BASE_URL;
@@ -35,8 +36,8 @@ export class IntegrationHarness {
       id: E2E_USER_ID,
     };
 
-    const apiKey = {
-      token: this.env.E2E_TOKEN,
+    const partner = {
+      id: E2E_PARTNER.id,
     };
 
     const workspace = {
@@ -46,10 +47,15 @@ export class IntegrationHarness {
       webhookEnabled: true,
     };
 
+    const apiKey = {
+      token: this.env.E2E_TOKEN,
+    };
+
     this.resources = {
       user,
-      apiKey,
+      partner,
       workspace,
+      apiKey,
     };
 
     return {
@@ -113,6 +119,7 @@ export class IntegrationHarness {
 
     await this.http.delete({
       path: `/campaigns/${id}`,
+      query: { workspaceId: E2E_WORKSPACE_ID },
     });
   }
 }

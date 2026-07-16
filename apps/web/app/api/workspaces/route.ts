@@ -4,15 +4,14 @@ import { createWorkspaceId } from "@/lib/api/workspaces/create-workspace-id";
 import { prefixWorkspaceId } from "@/lib/api/workspaces/workspace-id";
 import { withSession } from "@/lib/auth";
 import { checkIfUserExists } from "@/lib/planetscale";
+import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import {
   createWorkspaceSchema,
   WorkspaceSchema,
 } from "@/lib/zod/schemas/workspaces";
-import { subscribe } from "@dub/email/resend/subscribe";
-import { prisma } from "@dub/prisma";
-import { Prisma } from "@dub/prisma/client";
 import { FREE_WORKSPACES_LIMIT, nanoid, R2_URL } from "@dub/utils";
+import { Prisma } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
@@ -162,11 +161,7 @@ export const POST = withSession(async ({ req, session }) => {
               defaultWorkspace: workspace.slug,
             },
           }),
-        // Subscribe the user to the Resend audience
-        subscribe({
-          email: session.user.email,
-          name: session.user.name || undefined,
-        }),
+
         // Upload logo to R2 if uploaded
         logo &&
           uploadedImageUrl &&

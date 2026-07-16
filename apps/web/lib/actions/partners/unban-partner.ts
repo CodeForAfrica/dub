@@ -1,16 +1,19 @@
 "use server";
 
-import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
+import { trackActivityLog } from "@/lib/api/activity-log/track-activity-log";
+import { trackCommissionStatusUpdate } from "@/lib/api/commissions/track-commission-update-activity-log";
 import { getGroupOrThrow } from "@/lib/api/groups/get-group-or-throw";
 import { linkCache } from "@/lib/api/links/cache";
 import { includeProgramEnrollment } from "@/lib/api/links/include-program-enrollment";
 import { includeTags } from "@/lib/api/links/include-tags";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { prisma } from "@/lib/prisma";
 import { recordLink } from "@/lib/tinybird";
 import { banPartnerSchema } from "@/lib/zod/schemas/partners";
-import { prisma } from "@dub/prisma";
+import { FraudRuleType } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 const unbanPartnerSchema = banPartnerSchema.omit({
   reason: true,
@@ -18,10 +21,15 @@ const unbanPartnerSchema = banPartnerSchema.omit({
 
 // Unban a partner
 export const unbanPartnerAction = authActionClient
-  .schema(unbanPartnerSchema)
+  .inputSchema(unbanPartnerSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
     const { partnerId } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -44,16 +52,24 @@ export const unbanPartnerAction = authActionClient
       throw new Error("This partner is not banned.");
     }
 
-    if (!programEnrollment.program.defaultGroupId) {
-      // this should never happen
-      throw new Error(
-        "Program does not have a default group ID. Please contact support.",
-      );
-    }
-
-    const defaultGroup = await getGroupOrThrow({
+    const partnerGroup = await getGroupOrThrow({
       programId,
-      groupId: programEnrollment.program.defaultGroupId,
+      groupId:
+        programEnrollment.groupId || programEnrollment.program.defaultGroupId,
+    });
+
+    // Fetch canceled commissions before the transaction for activity logging
+    const canceledCommissions = await prisma.commission.findMany({
+      where: {
+        ...where,
+        status: "canceled",
+      },
+      select: {
+        id: true,
+        amount: true,
+        earnings: true,
+        status: true,
+      },
     });
 
     await prisma.$transaction([
@@ -73,11 +89,10 @@ export const unbanPartnerAction = authActionClient
           status: "approved",
           bannedAt: null,
           bannedReason: null,
-          groupId: defaultGroup.id,
-          clickRewardId: defaultGroup.clickRewardId,
-          leadRewardId: defaultGroup.leadRewardId,
-          saleRewardId: defaultGroup.saleRewardId,
-          discountId: defaultGroup.discountId,
+          clickRewardId: partnerGroup.clickRewardId,
+          leadRewardId: partnerGroup.leadRewardId,
+          saleRewardId: partnerGroup.saleRewardId,
+          discountId: partnerGroup.discountId,
         },
       }),
 
@@ -129,19 +144,61 @@ export const unbanPartnerAction = authActionClient
           // Update Tinybird links metadata
           recordLink(links),
 
-          recordAuditLog({
+          // Track commission activity logs for the unban
+          trackCommissionStatusUpdate({
             workspaceId: workspace.id,
             programId,
+            commissions: canceledCommissions,
+            newStatus: "pending",
+          }),
+
+          trackActivityLog({
+            workspaceId: workspace.id,
+            programId,
+            resourceType: "partner",
+            resourceId: partnerId,
+            userId: user.id,
             action: "partner.unbanned",
-            description: `Partner ${partnerId} unbanned`,
-            actor: user,
-            targets: [
-              {
-                type: "partner",
-                id: partnerId,
-                metadata: programEnrollment.partner,
+            changeSet: {
+              status: {
+                old: "banned",
+                new: "approved",
               },
-            ],
+            },
+          }),
+        ]);
+
+        await prisma.$transaction([
+          // Since we're unbanning the partner, we need to
+          // clean up any pending cross-program ban alerts that originated from this program.
+          prisma.fraudEvent.deleteMany({
+            where: {
+              partnerId,
+              sourceProgramId: programId,
+              fraudEventGroup: {
+                type: FraudRuleType.partnerCrossProgramBan,
+              },
+            },
+          }),
+
+          // Delete the fraud group if it has no more fraud events
+          prisma.fraudEventGroup.deleteMany({
+            where: {
+              partnerId,
+              type: FraudRuleType.partnerCrossProgramBan,
+              fraudEvents: {
+                none: {},
+              },
+            },
+          }),
+
+          // Delete any pending fraud alerts for this partner in this program
+          prisma.fraudAlert.deleteMany({
+            where: {
+              partnerId,
+              programId,
+              status: "pending",
+            },
           }),
         ]);
 

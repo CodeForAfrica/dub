@@ -1,14 +1,27 @@
+import { evaluateWorkflowConditions } from "@/lib/api/workflows/evaluate-workflow-conditions";
+import { prisma } from "@/lib/prisma";
 import { WorkflowConditionAttribute, WorkflowContext } from "@/lib/types";
 import { WORKFLOW_ACTION_TYPES } from "@/lib/zod/schemas/workflows";
 import { sendBatchEmail, sendEmail } from "@dub/email";
 import BountyCompleted from "@dub/email/templates/bounty-completed";
 import NewBountySubmission from "@dub/email/templates/bounty-new-submission";
-import { prisma } from "@dub/prisma";
-import { Workflow, WorkspaceRole } from "@dub/prisma/client";
+import {
+  BountySubmissionStatus,
+  Workflow,
+  WorkspaceRole,
+} from "@prisma/client";
 import { createId } from "../create-id";
 import { getWorkspaceUsers } from "../get-workspace-users";
-import { evaluateWorkflowCondition } from "./execute-workflows";
 import { parseWorkflowConfig } from "./parse-workflow-config";
+
+const terminalStatusReason: Record<
+  Exclude<BountySubmissionStatus, "draft">,
+  string
+> = {
+  submitted: "finished",
+  approved: "been awarded",
+  rejected: "been rejected",
+};
 
 export const executeCompleteBountyWorkflow = async ({
   workflow,
@@ -24,10 +37,11 @@ export const executeCompleteBountyWorkflow = async ({
   }
 
   const { bountyId } = action.data;
-  const { partnerId, groupId } = context;
+  const { identity, metrics } = context;
+  const { partnerId, groupId, customerId, customerFirstSaleAt } = identity;
 
   if (!groupId) {
-    console.error(`Partner groupId not set in the context.`);
+    console.error("Partner groupId not set in the context.");
     return;
   }
 
@@ -92,13 +106,27 @@ export const executeCompleteBountyWorkflow = async ({
   if (submissions.length > 0) {
     const submission = submissions[0];
 
-    if (submission.status === "submitted" || submission.status === "approved") {
-      console.log(
-        `Partner ${partnerId} has already ${submission.status === "submitted" ? "finished" : "been awarded"} this bounty (bountyId: ${bounty.id}, submissionId: ${submissions[0].id}).`,
-      );
+    if (submission.status !== "draft") {
+      const reason = terminalStatusReason[submission.status];
 
-      return;
+      if (reason) {
+        console.log(
+          `Partner ${partnerId} has already ${reason} this bounty (bountyId: ${bounty.id}, submissionId: ${submission.id}).`,
+        );
+        return;
+      }
     }
+  }
+
+  if (
+    bounty.performanceScope === "new" &&
+    customerFirstSaleAt &&
+    customerFirstSaleAt < bounty.startsAt
+  ) {
+    console.log(
+      `Bounty ${bounty.id} is for net-new revenue only and partner ${partnerId} referred customer ${customerId} before the bounty started, skipping...`,
+    );
+    return;
   }
 
   console.log(
@@ -108,28 +136,22 @@ export const executeCompleteBountyWorkflow = async ({
   const finalContext: Partial<
     Record<WorkflowConditionAttribute, number | null>
   > = {
-    ...(condition.attribute === "totalLeads" && {
-      totalLeads: context.current?.leads ?? 0,
-    }),
-    ...(condition.attribute === "totalConversions" && {
-      totalConversions: context.current?.conversions ?? 0,
-    }),
-    ...(condition.attribute === "totalSaleAmount" && {
-      totalSaleAmount: context.current?.saleAmount ?? 0,
-    }),
-    ...(condition.attribute === "totalCommissions" && {
-      totalCommissions: context.current?.commissions ?? 0,
-    }),
+    totalLeads: metrics?.current?.leads ?? 0,
+    totalConversions: metrics?.current?.conversions ?? 0,
+    totalSaleAmount: metrics?.current?.saleAmount ?? 0,
+    totalCommissions: metrics?.current?.commissions ?? 0,
   };
 
   const performanceCount = finalContext[condition.attribute] ?? 0;
+  const periodNumber = 1; // Only one submission is allowed for performance based bounties
 
   // Create or update the submission
   const bountySubmission = await prisma.bountySubmission.upsert({
     where: {
-      bountyId_partnerId: {
+      bountyId_partnerId_periodNumber: {
         bountyId,
         partnerId,
+        periodNumber,
       },
     },
     create: {
@@ -137,6 +159,7 @@ export const executeCompleteBountyWorkflow = async ({
       programId: bounty.programId,
       partnerId,
       bountyId: bounty.id,
+      periodNumber,
       status: "draft",
       performanceCount,
     },
@@ -148,10 +171,10 @@ export const executeCompleteBountyWorkflow = async ({
   });
 
   // Check if the bounty submission meet the reward criteria
-  const shouldExecute = evaluateWorkflowCondition({
-    condition,
+  const shouldExecute = evaluateWorkflowConditions({
+    conditions: [condition],
     attributes: {
-      [condition.attribute]: bountySubmission.performanceCount,
+      [condition.attribute]: Number(bountySubmission.performanceCount ?? 0),
     },
   });
 
@@ -220,6 +243,7 @@ export const executeCompleteBountyWorkflow = async ({
               name: bounty.name,
             },
             partner: {
+              id: partner.id,
               name: partner.name,
               image: partner.image,
               email: partner.email!,

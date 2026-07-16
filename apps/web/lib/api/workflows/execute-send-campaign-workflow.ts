@@ -1,23 +1,23 @@
+import { evaluateWorkflowConditions } from "@/lib/api/workflows/evaluate-workflow-conditions";
 import { aggregatePartnerLinksStats } from "@/lib/partners/aggregate-partner-links-stats";
+import { constructPartnerLink } from "@/lib/partners/construct-partner-link";
+import { prisma } from "@/lib/prisma";
 import {
+  CampaignTriggerCondition,
   TiptapNode,
-  WorkflowCondition,
   WorkflowConditionAttribute,
   WorkflowContext,
 } from "@/lib/types";
 import { WORKFLOW_ACTION_TYPES } from "@/lib/zod/schemas/workflows";
 import { sendBatchEmail } from "@dub/email";
 import CampaignEmail from "@dub/email/templates/campaign-email";
-import { prisma } from "@dub/prisma";
-import { NotificationEmailType, Prisma, Workflow } from "@dub/prisma/client";
 import { chunk } from "@dub/utils";
+import { NotificationEmailType, Prisma, Workflow } from "@prisma/client";
 import { addHours, differenceInDays, subDays } from "date-fns";
 import { validateCampaignFromAddress } from "../campaigns/validate-campaign";
 import { createId } from "../create-id";
-import { evaluateWorkflowCondition } from "./execute-workflows";
 import { parseWorkflowConfig } from "./parse-workflow-config";
 import { renderCampaignEmailHTML } from "./render-campaign-email-html";
-import { renderCampaignEmailMarkdown } from "./render-campaign-email-markdown";
 
 export const executeSendCampaignWorkflow = async ({
   workflow,
@@ -36,7 +36,7 @@ export const executeSendCampaignWorkflow = async ({
   }
 
   const { campaignId } = action.data;
-  const { programId, partnerId } = context || {
+  const { programId, partnerId } = context?.identity || {
     programId: workflow.programId,
     partnerId: undefined,
   };
@@ -73,7 +73,7 @@ export const executeSendCampaignWorkflow = async ({
     programId,
     partnerId,
     groupIds: campaign.groups.map(({ groupId }) => groupId),
-    condition,
+    condition: condition as CampaignTriggerCondition,
   });
 
   if (programEnrollments.length === 0) {
@@ -152,29 +152,6 @@ export const executeSendCampaignWorkflow = async ({
         })),
     );
 
-    // Create messages
-    const messages = await prisma.message.createMany({
-      data: programEnrollmentChunk.map((programEnrollment) => ({
-        id: createId({ prefix: "msg_" }),
-        programId: programEnrollment.programId,
-        partnerId: programEnrollment.partnerId,
-        senderUserId: campaign.userId,
-        type: "campaign",
-        subject: campaign.subject,
-        text: renderCampaignEmailMarkdown({
-          content: campaign.bodyJson as unknown as TiptapNode,
-          variables: {
-            PartnerName: programEnrollment.partner.name,
-            PartnerEmail: programEnrollment.partner.email,
-          },
-        }),
-      })),
-    });
-
-    console.log(
-      `Workflow ${workflow.id} created ${messages.count} messages for campaign ${campaignId}.`,
-    );
-
     // Send emails
     const { data } = await sendBatchEmail(
       partnerUsers.map((partnerUser) => ({
@@ -198,6 +175,11 @@ export const executeSendCampaignWorkflow = async ({
               variables: {
                 PartnerName: partnerUser.partner.name,
                 PartnerEmail: partnerUser.partner.email,
+                PartnerLink:
+                  constructPartnerLink({
+                    group: partnerUser.enrollment.partnerGroup,
+                    link: partnerUser.enrollment.links?.[0],
+                  }) || null,
               },
             }),
           },
@@ -243,6 +225,21 @@ const includePartnerUsers = {
       },
     },
   },
+  partnerGroup: {
+    select: {
+      linkStructure: true,
+    },
+  },
+  links: {
+    select: {
+      shortLink: true,
+      key: true,
+      url: true,
+    },
+    orderBy: {
+      id: "asc" as const,
+    },
+  },
 } satisfies Prisma.ProgramEnrollmentInclude;
 
 async function getProgramEnrollments({
@@ -254,7 +251,7 @@ async function getProgramEnrollments({
   programId: string;
   partnerId?: string;
   groupIds: string[];
-  condition: WorkflowCondition;
+  condition: CampaignTriggerCondition;
 }) {
   if (partnerId) {
     const { attribute } = condition;
@@ -280,7 +277,25 @@ async function getProgramEnrollments({
       },
       include: {
         ...includePartnerUsers,
-        ...(isPartnerLinkStatsAttribute ? { links: true } : {}),
+        ...(isPartnerLinkStatsAttribute
+          ? {
+              links: {
+                select: {
+                  shortLink: true,
+                  key: true,
+                  url: true,
+                  clicks: true,
+                  leads: true,
+                  conversions: true,
+                  sales: true,
+                  saleAmount: true,
+                },
+                orderBy: {
+                  id: "asc",
+                },
+              },
+            }
+          : {}),
       },
     });
 
@@ -291,7 +306,11 @@ async function getProgramEnrollments({
     const context: Partial<Record<WorkflowConditionAttribute, number | null>> =
       {
         ...(isPartnerLinkStatsAttribute
-          ? aggregatePartnerLinksStats(programEnrollment.links)
+          ? aggregatePartnerLinksStats(
+              programEnrollment.links as unknown as NonNullable<
+                Parameters<typeof aggregatePartnerLinksStats>[0]
+              >,
+            )
           : {}),
         ...(attribute === "totalCommissions"
           ? {
@@ -319,8 +338,8 @@ async function getProgramEnrollments({
           : {}),
       };
 
-    const shouldExecute = evaluateWorkflowCondition({
-      condition,
+    const shouldExecute = evaluateWorkflowConditions({
+      conditions: [condition],
       attributes: {
         [condition.attribute]: context[condition.attribute],
       },

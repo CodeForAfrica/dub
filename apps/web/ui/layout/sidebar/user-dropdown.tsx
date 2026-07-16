@@ -1,19 +1,21 @@
 "use client";
 
 import usePartnerProfile from "@/lib/swr/use-partner-profile";
+import { UserAvatar } from "@/ui/users/user-avatar";
 import {
   ArrowsOppositeDirectionX,
-  Avatar,
   Gift,
   Icon,
   Popover,
   useCurrentSubdomain,
   User,
 } from "@dub/ui";
+import { Gear } from "@dub/ui/icons";
 import { APP_DOMAIN, cn, PARTNERS_DOMAIN } from "@dub/utils";
 import { LogOut } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ComponentPropsWithoutRef,
   ElementType,
@@ -26,6 +28,11 @@ export function UserDropdown() {
   const { partner } = usePartnerProfile();
   const [openPopover, setOpenPopover] = useState(false);
   const { subdomain } = useCurrentSubdomain();
+  const { slug: paramsSlug } = useParams() as { slug?: string | string[] };
+
+  const workspaceSlug =
+    (Array.isArray(paramsSlug) ? paramsSlug[0] : paramsSlug) ||
+    session?.user?.["defaultWorkspace"];
 
   const menuOptions = useMemo(() => {
     const options: Array<{
@@ -53,6 +60,15 @@ export function UserDropdown() {
     }
 
     if (subdomain === "app") {
+      if (workspaceSlug) {
+        options.push({
+          label: "Workspace settings",
+          icon: Gear,
+          href: `/${workspaceSlug}/settings`,
+          onClick: () => setOpenPopover(false),
+        });
+      }
+
       options.push({
         label: "Refer and earn",
         icon: Gift,
@@ -74,25 +90,26 @@ export function UserDropdown() {
       type: "button",
       label: "Log out",
       icon: LogOut,
-      onClick: () =>
+      onClick: () => {
         signOut({
           callbackUrl: "/login",
-        }),
+        });
+      },
     });
 
     return options;
-  }, [subdomain, partner, setOpenPopover]);
+  }, [subdomain, partner, workspaceSlug, setOpenPopover]);
 
   return (
     <Popover
       content={
         <div className="flex w-full flex-col space-y-px rounded-md bg-white p-2 sm:min-w-56">
           {session?.user ? (
-            <div className="p-2">
-              <p className="truncate text-sm font-medium text-neutral-900">
+            <div className="px-2 pb-4 sm:pb-2">
+              <p className="truncate text-base font-medium text-neutral-900 sm:text-sm">
                 {session.user.name || session.user.email?.split("@")[0]}
               </p>
-              <p className="truncate text-sm text-neutral-500">
+              <p className="truncate text-base text-neutral-500 sm:text-sm">
                 {session.user.email}
               </p>
             </div>
@@ -124,7 +141,7 @@ export function UserDropdown() {
         )}
       >
         {session?.user ? (
-          <Avatar
+          <UserAvatar
             user={session.user}
             className="size-7 border-none duration-75 sm:size-7"
           />
@@ -154,10 +171,10 @@ function UserOption<T extends ElementType = "button">({
 
   return (
     <Component
-      className="flex items-center gap-x-4 rounded-md px-2.5 py-1.5 text-sm transition-all duration-75 hover:bg-neutral-200/50 active:bg-neutral-200/80"
+      className="flex items-center gap-x-4 rounded-md px-2.5 py-1.5 text-base transition-all duration-75 hover:bg-neutral-200/50 active:bg-neutral-200/80 sm:text-sm"
       {...rest}
     >
-      <Icon className="size-4 text-neutral-500" />
+      <Icon className="size-5 text-neutral-500 sm:size-4" />
       <span className="block truncate text-neutral-600">{label}</span>
       {children}
     </Component>

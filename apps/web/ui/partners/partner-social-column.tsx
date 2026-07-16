@@ -1,29 +1,55 @@
-import { BadgeCheck2Fill, Tooltip } from "@dub/ui";
+import { PartnerPlatformProps } from "@/lib/types";
+import { BadgeCheck2, TimestampTooltip } from "@dub/ui";
+import { getDomainWithoutWWW } from "@dub/utils";
+import { PlatformType } from "@prisma/client";
+
+const PLATFORMS_WITH_AT: PlatformType[] = [
+  "youtube",
+  "twitter",
+  "instagram",
+  "tiktok",
+];
 
 export function PartnerSocialColumn({
-  at,
-  value,
-  verified,
+  platform,
+  platformName,
 }: {
-  at?: boolean;
-  value: string;
-  verified: boolean;
+  platform:
+    | Pick<PartnerPlatformProps, "identifier" | "verifiedAt">
+    | null
+    | undefined;
+  platformName: PlatformType;
 }) {
-  return value ? (
+  if (!platform?.identifier) {
+    return "-";
+  }
+
+  const needsAt = PLATFORMS_WITH_AT.includes(platformName);
+  const value =
+    platformName === "website"
+      ? getDomainWithoutWWW(platform.identifier) ?? "-"
+      : platform.identifier;
+  const verified = !!platform.verifiedAt;
+
+  return (
     <div className="flex items-center gap-2">
       <span className="min-w-0 truncate">
-        {at && "@"}
+        {needsAt && "@"}
         {value}
       </span>
       {verified && (
-        <Tooltip content="Verified" disableHoverableContent>
+        <TimestampTooltip
+          timestamp={platform.verifiedAt}
+          rows={["local", "utc", "unix"]}
+          side="top"
+          prefix="Verified"
+          delayDuration={150}
+        >
           <div>
-            <BadgeCheck2Fill className="size-4 text-green-600" />
+            <BadgeCheck2 variant="fill" className="size-4 text-green-600" />
           </div>
-        </Tooltip>
+        </TimestampTooltip>
       )}
     </div>
-  ) : (
-    "-"
   );
 }

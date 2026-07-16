@@ -1,7 +1,7 @@
 "use client";
 
+import { usePartnerMessages } from "@/lib/messages/hooks/use-partner-messages";
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
-import { usePartnerMessages } from "@/lib/swr/use-partner-messages";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import LayoutLoader from "@/ui/layout/layout-loader";
@@ -13,19 +13,16 @@ import { Button, InfoTooltip } from "@dub/ui";
 import { Msgs, Pen2 } from "@dub/ui/icons";
 import { useParams, useRouter } from "next/navigation";
 import { CSSProperties, ReactNode, useState } from "react";
-import { MessagesDisabled } from "./messages-disabled";
 import { MessagesUpsell } from "./messages-upsell";
 
 export default function MessagesLayout({ children }: { children: ReactNode }) {
   const { plan } = useWorkspace();
-  const { program, loading } = useProgram();
+  const { loading } = useProgram();
 
   if (loading) return <LayoutLoader />;
 
   const { canMessagePartners } = getPlanCapabilities(plan);
   if (!canMessagePartners) return <MessagesUpsell />;
-
-  if (program?.messagingEnabledAt === null) return <MessagesDisabled />;
 
   return <CapableLayout>{children}</CapableLayout>;
 }
@@ -33,6 +30,7 @@ export default function MessagesLayout({ children }: { children: ReactNode }) {
 function CapableLayout({ children }: { children: ReactNode }) {
   const { slug: workspaceSlug } = useWorkspace();
   const { partnerId } = useParams() as { partnerId?: string };
+  const { program } = useProgram();
 
   const router = useRouter();
 

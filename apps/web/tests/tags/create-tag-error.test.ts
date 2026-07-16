@@ -1,4 +1,4 @@
-import { Tag } from "@dub/prisma/client";
+import { Tag } from "@prisma/client";
 import { expect, test } from "vitest";
 import { IntegrationHarness } from "../utils/integration";
 
@@ -15,7 +15,7 @@ const cases = [
         error: {
           code: "unprocessable_entity",
           message:
-            "invalid_enum_value: color: Invalid color. Must be one of: red, yellow, green, blue, purple, brown, pink",
+            "invalid_value: color: Invalid color. Must be one of: red, yellow, green, blue, purple, brown, gray, pink", // TODO: update this to use RESOURCE_COLORS
           doc_url:
             "https://dub.co/docs/api-reference/errors#unprocessable-entity",
         },

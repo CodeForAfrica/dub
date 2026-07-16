@@ -1,4 +1,5 @@
 import { EnrolledPartnerProps } from "@/lib/types";
+import { ArrowUpRight2 } from "@dub/ui";
 import { cn, currencyFormatter, nFormatter } from "@dub/utils";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -24,52 +25,53 @@ export function PartnerInfoStats({
           value: Number.isNaN(partner.totalClicks)
             ? "-"
             : nFormatter(partner.totalClicks, { full: true }),
-          href: `/${slug}/events?event=clicks&partnerId=${partner.id}&interval=1y`,
+          href: `/${slug}/events?event=clicks&partnerId=${partner.id}&interval=all`,
         },
         {
           label: "Leads",
           value: Number.isNaN(partner.totalLeads)
             ? "-"
             : nFormatter(partner.totalLeads, { full: true }),
-          href: `/${slug}/events?event=leads&partnerId=${partner.id}&interval=1y`,
+          href: `/${slug}/events?event=leads&partnerId=${partner.id}&interval=all`,
         },
         {
           label: "Conversions",
           value: Number.isNaN(partner.totalConversions)
             ? "-"
             : nFormatter(partner.totalConversions, { full: true }),
-          href: `/${slug}/events?event=sales&partnerId=${partner.id}&interval=1y`,
+          href: `/${slug}/events?event=sales&partnerId=${partner.id}&interval=all`,
         },
         {
           label: "Revenue",
           value: Number.isNaN(partner.totalSaleAmount)
             ? "-"
-            : currencyFormatter(partner.totalSaleAmount / 100, {
+            : currencyFormatter(partner.totalSaleAmount, {
                 trailingZeroDisplay: "stripIfInteger",
               }),
-          href: `/${slug}/events?event=sales&partnerId=${partner.id}&interval=1y`,
+          href: `/${slug}/events?event=sales&partnerId=${partner.id}&interval=all`,
         },
         {
           label: "Commissions",
           value: Number.isNaN(partner.totalCommissions)
             ? "-"
-            : currencyFormatter(partner.totalCommissions / 100),
+            : currencyFormatter(partner.totalCommissions),
           href: `/${slug}/program/commissions?partnerId=${partner.id}`,
         },
         {
           label: "Net revenue",
           value: Number.isNaN(partner.netRevenue)
             ? "-"
-            : currencyFormatter(partner.netRevenue / 100),
-          href: `/${slug}/events?event=sales&partnerId=${partner.id}&interval=1y`,
+            : currencyFormatter(partner.netRevenue),
+          href: `/${slug}/events?event=sales&partnerId=${partner.id}&interval=all`,
         },
       ].map(({ label, value, href }) => (
         <Link
           key={label}
           href={href}
           target="_blank"
-          className="flex flex-col bg-neutral-50 p-3 transition-colors duration-150 hover:bg-neutral-100"
+          className="group relative flex flex-col bg-neutral-50 p-3 transition-colors duration-150 hover:bg-neutral-100"
         >
+          <ArrowUpRight2 className="text-content-subtle absolute right-3 top-3 size-3.5 opacity-50 transition-opacity duration-150 group-hover:opacity-100" />
           <span className="text-xs text-neutral-500">{label}</span>
           <span className="text-base text-neutral-900">{value}</span>
         </Link>

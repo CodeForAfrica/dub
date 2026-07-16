@@ -1,9 +1,11 @@
 "use server";
 
-import { throwIfNoPermission } from "@/lib/auth/partner-user-permissions";
+import { throwIfNoPermission } from "@/lib/auth/partner-users/throw-if-no-permission";
+import { createStablecoinPayout } from "@/lib/partners/create-stablecoin-payout";
 import { createStripeTransfer } from "@/lib/partners/create-stripe-transfer";
-import { ratelimit } from "@/lib/upstash";
-import { prisma } from "@dub/prisma";
+import { sendTremendousPayouts } from "@/lib/tremendous/send-tremendous-payouts";
+import { redis } from "@/lib/upstash";
+import { Partner } from "@prisma/client";
 import { authPartnerActionClient } from "../safe-action";
 
 // Force a withdrawal for a partner (even if the total amount is below the minimum withdrawal amount)
@@ -16,53 +18,56 @@ export const forceWithdrawalAction = authPartnerActionClient.action(
       permission: "payout_settings.update",
     });
 
-    if (!partner.payoutsEnabledAt) {
+    if (!partner.defaultPayoutMethod) {
       throw new Error(
-        "You haven't enabled payouts yet. Please enable payouts in your payout settings.",
+        "No default payout method found. Please contact support to set one.",
       );
     }
 
-    const { success } = await ratelimit(5, "24 h").limit(
-      `force-withdrawal:${partner.id}`,
-    );
-
-    if (!success) {
+    if (
+      !["connect", "stablecoin", "tremendous"].includes(
+        partner.defaultPayoutMethod,
+      )
+    ) {
       throw new Error(
-        "You've reached the maximum number of retry attempts for the past 24 hours. Please wait and try again later.",
+        "Invalid default payout method found. Please contact support to set one.",
       );
     }
 
-    const previouslyProcessedPayouts = await prisma.payout.findMany({
-      where: {
-        partnerId: partner.id,
-        status: "processed",
-        stripeTransferId: null,
-      },
-      include: {
-        program: {
-          select: {
-            name: true,
-          },
-        },
-      },
-    });
-
-    if (previouslyProcessedPayouts.length === 0) {
-      throw new Error(
-        "No previously processed payouts found. Please try again or contact support.",
-      );
-    }
-
-    try {
-      await createStripeTransfer({
-        partner,
-        previouslyProcessedPayouts,
-        forceWithdrawal: true,
-      });
-    } catch (error) {
-      throw new Error(
-        "Failed to force withdrawal. Please try again or contact support.",
-      );
-    }
+    await forceWithdrawal(partner);
   },
 );
+
+export const forceWithdrawal = async (
+  partner: Pick<Partner, "id" | "defaultPayoutMethod">,
+) => {
+  const lockKey = `force-withdrawal:lock:${partner.id}`;
+  const acquired = await redis.set(lockKey, "1", { nx: true, ex: 60 });
+
+  if (!acquired) {
+    throw new Error(
+      "A withdrawal is already in progress. Please wait for it to complete.",
+    );
+  }
+
+  try {
+    if (partner.defaultPayoutMethod === "stablecoin") {
+      await createStablecoinPayout({
+        partnerId: partner.id,
+        forceWithdrawal: true,
+      });
+    } else if (partner.defaultPayoutMethod === "connect") {
+      await createStripeTransfer({
+        partnerId: partner.id,
+        forceWithdrawal: true,
+      });
+    } else if (partner.defaultPayoutMethod === "tremendous") {
+      await sendTremendousPayouts({
+        partnerId: partner.id,
+        forceWithdrawal: true,
+      });
+    }
+  } finally {
+    await redis.del(lockKey);
+  }
+};

@@ -1,5 +1,5 @@
 import { updatePartnerProfileAction } from "@/lib/actions/partners/update-partner-profile";
-import { hasPermission } from "@/lib/auth/partner-user-permissions";
+import { hasPermission } from "@/lib/auth/partner-users/partner-user-permissions";
 import {
   industryInterests,
   monthlyTrafficAmounts,
@@ -8,9 +8,9 @@ import { mutatePrefix } from "@/lib/swr/mutate";
 import { PartnerProps } from "@/lib/types";
 import { MAX_PARTNER_DESCRIPTION_LENGTH } from "@/lib/zod/schemas/partners";
 import { MaxCharactersCounter } from "@/ui/shared/max-characters-counter";
-import { IndustryInterest, MonthlyTraffic } from "@dub/prisma/client";
 import { Button, RadioGroup, RadioGroupItem, useEnterSubmit } from "@dub/ui";
 import { cn } from "@dub/utils";
+import { IndustryInterest, MonthlyTraffic } from "@prisma/client";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";

@@ -1,9 +1,16 @@
-import z from "@/lib/zod";
+import { workspaceSiteVisitTrackingSettingsFieldSchema } from "@/lib/sitemaps/site-visit-tracking";
 import { DEFAULT_REDIRECTS, RESERVED_SLUGS, validSlugRegex } from "@dub/utils";
-import { WorkspaceRole } from "@prisma/client";
+import { PlanPeriod, WorkspaceRole } from "@prisma/client";
 import slugify from "@sindresorhus/slugify";
+import * as z from "zod/v4";
 import { DomainSchema } from "./domains";
-import { planSchema, roleSchema, uploadedImageSchema } from "./misc";
+import { googleUserContentUrlSchema, uploadedImageSchema } from "./images";
+import { planSchema, roleSchema } from "./misc";
+export {
+  MAX_TRACKED_SITEMAPS_PER_WORKSPACE,
+  siteVisitTrackingSettingsPatchSchema,
+  trackedSitemapSchema,
+} from "./site-visit-tracking";
 
 export const workspaceIdSchema = z.object({
   workspaceId: z
@@ -26,13 +33,36 @@ export const WorkspaceSchema = z
       .string()
       .nullable()
       .describe("The invite code of the workspace."),
-
     plan: planSchema,
     planTier: z
       .number()
-      .nullable()
-      .describe("The tier of the workspace's plan."),
+      .describe("The tier of the workspace's plan.")
+      .default(1),
+    planPeriod: z
+      .enum(PlanPeriod)
+      .nullish()
+      .describe(
+        "Billing cadence for the Stripe subscription (monthly, yearly, quarterly, biweekly), when applicable.",
+      ),
     stripeId: z.string().nullable().describe("The Stripe ID of the workspace."),
+    trialEndsAt: z
+      .date()
+      .nullish()
+      .describe(
+        "When the current Stripe subscription billing trial ends, if applicable.",
+      ),
+    subscriptionCanceledAt: z
+      .date()
+      .nullish()
+      .describe(
+        "When the workspace's subscription was canceled (or set to cancel).",
+      ),
+    billingCycleEndsAt: z
+      .date()
+      .nullish()
+      .describe(
+        "When the current Stripe subscription period ends (derived from Stripe current_period_end).",
+      ),
     billingCycleStart: z
       .number()
       .describe(
@@ -68,10 +98,25 @@ export const WorkspaceSchema = z
       .describe(
         "The processing fee (in decimals) for partner payouts. For card payments, an additional 0.03 is added to the fee. Learn more: https://d.to/payouts",
       ),
+    payoutFeeWaiverLimit: z
+      .number()
+      .describe(
+        "The amount in cents for which the payout fee will be waived. Applicable only to custom enterprise plans.",
+      ),
+    payoutFeeWaiverUsage: z
+      .number()
+      .describe(
+        "How much of `payoutFeeWaiverLimit` has been used. Applicable only to custom enterprise plans.",
+      ),
     domainsLimit: z.number().describe("The domains limit of the workspace."),
     tagsLimit: z.number().describe("The tags limit of the workspace."),
+    partnerTagsLimit: z
+      .number()
+      .describe("The partner tags limit of the workspace."),
     foldersUsage: z.number().describe("The folders usage of the workspace."),
     foldersLimit: z.number().describe("The folders limit of the workspace."),
+    partnersUsage: z.number().describe("The partners usage of the workspace."),
+    partnersLimit: z.number().describe("The partners limit of the workspace."),
     groupsLimit: z.number().describe("The groups limit of the workspace."),
     networkInvitesLimit: z
       .number()
@@ -79,7 +124,6 @@ export const WorkspaceSchema = z
     usersLimit: z.number().describe("The users limit of the workspace."),
     aiUsage: z.number().describe("The AI usage of the workspace."),
     aiLimit: z.number().describe("The AI limit of the workspace."),
-
     conversionEnabled: z
       .boolean()
       .describe(
@@ -87,9 +131,7 @@ export const WorkspaceSchema = z
       ),
     dotLinkClaimed: z
       .boolean()
-      .describe(
-        "Whether the workspace has claimed a free .link domain. (dub.link/free)",
-      ),
+      .describe("Whether the workspace has claimed a free .link domain."),
     createdAt: z
       .date()
       .describe("The date and time when the workspace was created."),
@@ -116,24 +158,30 @@ export const WorkspaceSchema = z
       )
       .describe("The domains of the workspace."),
     flags: z
-      .record(z.boolean())
+      .record(z.string(), z.boolean())
       .optional()
       .describe(
         "The feature flags of the workspace, indicating which features are enabled.",
       ),
     store: z
-      .record(z.any())
+      .record(z.string(), z.any())
       .nullable()
       .describe("The miscellaneous key-value store of the workspace."),
+    siteVisitTrackingSettings: workspaceSiteVisitTrackingSettingsFieldSchema
+      .nullable()
+      .optional()
+      .describe(
+        "Site visit tracking: sitemaps, short-link domain slug, and Site Links folder id.",
+      ),
     allowedHostnames: z
       .array(z.string())
       .nullable()
       .describe("Specifies hostnames permitted for client-side click tracking.")
-      .openapi({ example: ["dub.sh"] }),
+      .meta({ example: ["dub.sh"] }),
     ssoEmailDomain: z.string().nullable(),
     ssoEnforcedAt: z.date().nullable(),
   })
-  .openapi({
+  .meta({
     title: "Workspace",
   });
 
@@ -145,13 +193,13 @@ export const createWorkspaceSchema = z.object({
     .max(48, "Slug must be less than 48 characters")
     .transform((v) => slugify(v))
     .refine((v) => validSlugRegex.test(v), { message: "Invalid slug format" })
-    .refine(
-      async (v) => !(RESERVED_SLUGS.includes(v) || DEFAULT_REDIRECTS[v]),
-      {
-        message: "Cannot use reserved slugs",
-      },
-    ),
-  logo: uploadedImageSchema.nullish(),
+    .refine((v) => !(RESERVED_SLUGS.includes(v) || DEFAULT_REDIRECTS[v]), {
+      message: "Cannot use reserved slugs",
+    }),
+  logo: z
+    .union([uploadedImageSchema, googleUserContentUrlSchema])
+    .transform((v) => v || null)
+    .nullish(),
   conversionEnabled: z.boolean().optional(),
 });
 
@@ -160,8 +208,10 @@ export const notificationTypes = z.enum([
   "domainConfigurationUpdates",
   "newPartnerSale",
   "newPartnerApplication",
+  "pendingApplicationsSummary",
   "newBountySubmitted",
   "newMessageFromPartner",
+  "fraudEventsSummary",
 ]);
 
 export const WorkspaceSchemaExtended = WorkspaceSchema.extend({
@@ -173,11 +223,12 @@ export const WorkspaceSchemaExtended = WorkspaceSchema.extend({
   defaultProgramId: z.string().nullable(),
   users: z.array(
     WorkspaceSchema.shape.users.element.extend({
-      workspacePreferences: z.record(z.any()).nullish(),
+      workspacePreferences: z.record(z.string(), z.any()).nullish(),
     }),
   ),
   publishableKey: z.string().nullable(),
   fastDirectDebitPayouts: z.boolean().default(false),
+  shopifyStoreId: z.string().nullable(),
 });
 
 export const OnboardingUsageSchema = z.object({
@@ -203,7 +254,7 @@ export const workspaceStoreKeys = z.enum([
 
 export const getWorkspaceUsersQuerySchema = z.object({
   search: z.string().optional(),
-  role: z.nativeEnum(WorkspaceRole).optional(),
+  role: z.enum(WorkspaceRole).optional(),
 });
 
 export const workspaceUserSchema = z.object({
@@ -211,7 +262,7 @@ export const workspaceUserSchema = z.object({
   name: z.string(),
   email: z.string().nullish(),
   image: z.string().nullish(),
-  role: z.nativeEnum(WorkspaceRole),
+  role: z.enum(WorkspaceRole),
   isMachine: z.boolean().default(false),
   createdAt: z.date(),
 });

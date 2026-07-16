@@ -1,6 +1,6 @@
+import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@dub/email";
 import ProgramImported from "@dub/email/templates/program-imported";
-import { prisma } from "@dub/prisma";
 import { nanoid } from "@dub/utils";
 import { CommissionStatus, Customer, Link, Program } from "@prisma/client";
 import { convertCurrencyWithFxRates } from "../analytics/convert-currency";
@@ -396,6 +396,7 @@ async function createCommission({
           saleAmount: {
             increment: saleAmount,
           },
+          firstSaleAt: customerFound.firstSaleAt ? undefined : new Date(),
         },
       }),
   ]);

@@ -10,10 +10,10 @@ import {
   Button,
   ChartLine,
   DateRangePicker,
-  ExpandingArrow,
   Filter,
   SquareLayoutGrid6,
   TooltipContent,
+  useCurrentProduct,
   useMediaQuery,
   useRouterStuff,
   useScroll,
@@ -31,18 +31,20 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useContext } from "react";
+import { FolderIcon } from "../folders/folder-icon";
 import { AnalyticsOptions } from "./analytics-options";
 import { AnalyticsContext } from "./analytics-provider";
 import { ShareButton } from "./share-button";
 import { useAnalyticsFilters } from "./use-analytics-filters";
 
-export default function Toggle({
+export function AnalyticsToggle({
   page = "analytics",
 }: {
   page?: "analytics" | "events";
 }) {
   const { slug, programSlug } = useParams();
   const { plan, createdAt } = useWorkspace();
+  const { product } = useCurrentProduct();
 
   const { queryParams, getQueryString } = useRouterStuff();
 
@@ -67,11 +69,14 @@ export default function Toggle({
     activeFilters,
     onSelect,
     onRemove,
+    onRemoveFilter,
     onRemoveAll,
     onOpenFilter,
-    streaming,
+    onToggleOperator,
     activeFiltersWithStreaming,
   } = useAnalyticsFilters({ partnerPage, dashboardProps });
+
+  const hasActiveFilters = activeFiltersWithStreaming.length > 0;
 
   const filterSelect = (
     <Filter.Select
@@ -81,14 +86,15 @@ export default function Toggle({
       onSelect={onSelect}
       onRemove={onRemove}
       onOpenFilter={onOpenFilter}
+      isAdvancedFilter
       askAI
     />
   );
 
   const dateRangePicker = (
     <DateRangePicker
-      className="w-full sm:min-w-[160px] md:w-fit lg:min-w-[200px]"
-      align={dashboardProps ? "end" : "center"}
+      className="w-full md:w-fit"
+      align="start"
       value={
         start && end
           ? {
@@ -107,7 +113,6 @@ export default function Toggle({
             set: {
               interval: preset.id,
             },
-            scroll: false,
           });
 
           return;
@@ -122,7 +127,6 @@ export default function Toggle({
             start: range.from.toISOString(),
             end: range.to.toISOString(),
           },
-          scroll: false,
         });
       }}
       presets={INTERVAL_DISPLAYS.map(({ display, value, shortcut }) => {
@@ -136,7 +140,7 @@ export default function Toggle({
                 interval: value,
                 start,
                 end,
-              });
+              }).valid;
 
         const { startDate, endDate } = getStartEndDates({
           interval: value,
@@ -170,6 +174,7 @@ export default function Toggle({
           "sticky top-14 z-10 bg-neutral-50": dashboardProps,
           "sticky top-16 z-10 bg-neutral-50": adminPage,
           "shadow-md": scrolled && dashboardProps,
+          "pb-4 md:pb-4": !hasActiveFilters,
         })}
       >
         <div
@@ -190,54 +195,56 @@ export default function Toggle({
               },
             )}
           >
-            {dashboardProps && (
-              <a
-                className="group flex items-center text-lg font-semibold text-neutral-800"
-                href={linkConstructor({ domain, key })}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <BlurImage
-                  alt={url || "Dub"}
-                  src={
-                    url
-                      ? `${GOOGLE_FAVICON_URL}${getApexDomain(url)}`
-                      : DUB_LOGO
-                  }
-                  className="mr-2 h-6 w-6 flex-shrink-0 overflow-hidden rounded-full"
-                  width={48}
-                  height={48}
-                />
-                <p className="max-w-[192px] truncate sm:max-w-[400px]">
-                  {linkConstructor({
-                    domain,
-                    key,
-                    pretty: true,
-                  })}
-                </p>
-                <ExpandingArrow className="h-5 w-5" />
-              </a>
-            )}
+            {dashboardProps &&
+              (dashboardProps.folderId ? (
+                <div className="flex items-center gap-2 text-lg font-semibold text-neutral-800">
+                  <FolderIcon shape="square" iconClassName="size-3" />
+                  <p className="max-w-[192px] truncate sm:max-w-[400px]">
+                    {dashboardProps.folderName}
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center text-lg font-semibold text-neutral-800">
+                  <BlurImage
+                    alt={url || "Dub"}
+                    src={
+                      url
+                        ? `${GOOGLE_FAVICON_URL}${getApexDomain(url)}`
+                        : DUB_LOGO
+                    }
+                    className="mr-2 h-6 w-6 flex-shrink-0 overflow-hidden rounded-full"
+                    width={48}
+                    height={48}
+                  />
+                  <p className="max-w-[192px] truncate sm:max-w-[400px]">
+                    {linkConstructor({
+                      domain,
+                      key,
+                      pretty: true,
+                    })}
+                  </p>
+                </div>
+              ))}
             <div
               className={cn(
-                "flex w-full flex-col-reverse items-center gap-2 min-[550px]:flex-row",
+                "flex w-full flex-col items-center gap-2 min-[550px]:flex-row",
                 dashboardProps && "md:w-auto",
               )}
             >
-              {isMobile ? dateRangePicker : filterSelect}
+              {filterSelect}
               <div
                 className={cn("flex w-full grow items-center gap-2 md:w-auto", {
                   "grow-0": dashboardProps,
                 })}
               >
-                {isMobile ? filterSelect : dateRangePicker}
+                {dateRangePicker}
                 {!dashboardProps && (
                   <div className="flex grow justify-end gap-2">
                     {page === "analytics" && (
                       <>
                         <ShareButton />
                         <Link
-                          href={`/${partnerPage ? `programs/${programSlug}/` : adminPage ? "" : `${slug}/`}events${getQueryString()}`}
+                          href={`/${partnerPage ? `programs/${programSlug}/` : adminPage ? "" : `${slug}/${product ? `${product}/` : ""}`}events${getQueryString()}`}
                         >
                           <Button
                             variant="secondary"
@@ -253,7 +260,7 @@ export default function Toggle({
                     {page === "events" && (
                       <>
                         <Link
-                          href={`/${partnerPage ? `programs/${programSlug}/` : adminPage ? "" : `${slug}/`}analytics${getQueryString()}`}
+                          href={`/${partnerPage ? `programs/${programSlug}/` : adminPage ? "" : `${slug}/${product ? `${product}/` : ""}`}analytics${getQueryString()}`}
                         >
                           <Button
                             variant="secondary"
@@ -266,7 +273,7 @@ export default function Toggle({
                         </Link>
                       </>
                     )}
-                    {!partnerPage && <AnalyticsOptions page={page} />}
+                    <AnalyticsOptions page={page} />
                   </div>
                 )}
               </div>
@@ -275,26 +282,26 @@ export default function Toggle({
         </div>
       </div>
 
-      <div
-        className={cn(
-          "mx-auto w-full max-w-screen-xl px-3 lg:px-10",
-          isAppPage && "lg:px-6",
-        )}
-      >
-        <Filter.List
-          filters={filters}
-          activeFilters={activeFiltersWithStreaming}
-          onSelect={onSelect}
-          onRemove={onRemove}
-          onRemoveAll={onRemoveAll}
-        />
+      {hasActiveFilters && (
         <div
           className={cn(
-            "transition-[height] duration-[300ms]",
-            streaming || activeFilters.length ? "h-3" : "h-0",
+            "mx-auto w-full max-w-screen-xl px-3 lg:px-10",
+            isAppPage && "lg:px-6",
           )}
-        />
-      </div>
+        >
+          <Filter.List
+            filters={filters}
+            activeFilters={activeFiltersWithStreaming}
+            onSelect={onSelect}
+            onRemove={onRemove}
+            onRemoveFilter={onRemoveFilter}
+            onRemoveAll={onRemoveAll}
+            onToggleOperator={onToggleOperator}
+            isAdvancedFilter
+          />
+          <div className="h-4 transition-[height] duration-[300ms]" />
+        </div>
+      )}
     </>
   );
 }

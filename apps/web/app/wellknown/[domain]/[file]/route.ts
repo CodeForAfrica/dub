@@ -1,12 +1,10 @@
+import { prisma } from "@/lib/prisma";
 import {
   SupportedWellKnownFiles,
   supportedWellKnownFiles,
   WellKnownConfig,
 } from "@/lib/well-known";
-import { prismaEdge } from "@dub/prisma/edge";
 import { NextRequest, NextResponse } from "next/server";
-
-export const runtime = "edge";
 
 export async function GET(
   _req: NextRequest,
@@ -20,7 +18,7 @@ export async function GET(
   }
 
   const { appleAppSiteAssociation, assetLinks } =
-    (await prismaEdge.domain.findUnique({
+    (await prisma.domain.findUnique({
       where: {
         slug: domain,
       },
@@ -49,5 +47,10 @@ export async function GET(
       break;
   }
 
-  return NextResponse.json(response);
+  return NextResponse.json(response, {
+    headers: {
+      "Vercel-CDN-Cache-Control": "public, s-maxage=86400",
+      "Vercel-Cache-Tag": `wellknown:${domain.toLowerCase()}`,
+    },
+  });
 }

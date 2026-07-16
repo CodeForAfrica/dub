@@ -1,12 +1,18 @@
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { createSafeActionClient } from "next-safe-action";
+import { after } from "next/server";
 import { normalizeWorkspaceId } from "../api/workspaces/workspace-id";
 import { getSession } from "../auth";
+import { logger } from "../axiom/server";
 import { PlanProps } from "../types";
 
 export const actionClient = createSafeActionClient({
-  handleServerError: (e) => {
+  handleServerError: async (e) => {
     console.error("Server action error:", e);
+
+    // Send error to Axiom
+    logger.error(e.message, e);
+    after(logger.flush());
 
     if (e instanceof Error) {
       return e.message;
@@ -30,6 +36,7 @@ export const authUserActionClient = actionClient.use(async ({ next }) => {
   });
 });
 
+// Workspace users
 export const authActionClient = actionClient.use(
   async ({ next, clientInput }) => {
     const session = await getSession();
@@ -81,6 +88,7 @@ export const authActionClient = actionClient.use(
   },
 );
 
+// Partner users
 export const authPartnerActionClient = actionClient.use(async ({ next }) => {
   const session = await getSession();
 

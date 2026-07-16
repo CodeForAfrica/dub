@@ -4,15 +4,18 @@ import { generatePartnerLink } from "@/lib/api/partners/generate-partner-link";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { qstash } from "@/lib/cron";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { loadAppsFlyerParameters } from "@/lib/integrations/appsflyer/apply-parameters";
+import { AppsFlyerSettings } from "@/lib/integrations/appsflyer/schema";
+import { isAppsFlyerTrackingUrl } from "@/lib/middleware/utils/is-appsflyer-tracking-url";
+import { prisma } from "@/lib/prisma";
 import { WorkspaceProps } from "@/lib/types";
-import { prisma } from "@dub/prisma";
 import {
   APP_DOMAIN_WITH_NGROK,
   constructURLFromUTMParams,
   isFulfilled,
   log,
 } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 export const dynamic = "force-dynamic";
 
@@ -90,6 +93,13 @@ export async function POST(req: Request) {
       },
     });
 
+    // Load AppsFlyer parameters if the default link is an AppsFlyer URL
+    let appsFlyerParameters: AppsFlyerSettings["parameters"] = [];
+
+    if (isAppsFlyerTrackingUrl(defaultLink.url)) {
+      appsFlyerParameters = await loadAppsFlyerParameters(workspace.id);
+    }
+
     let hasMore = true;
     let currentCursor = cursor;
     let processedBatches = 0;
@@ -150,6 +160,7 @@ export async function POST(req: Request) {
                 partnerGroupDefaultLinkId: defaultLink.id,
               },
               userId,
+              appsFlyerParameters,
             }),
           ),
         )
@@ -188,8 +199,6 @@ export async function POST(req: Request) {
       message: `Error creating default links for the partners: ${error.message}.`,
       type: "errors",
     });
-
-    console.error(error);
 
     return handleAndReturnErrorResponse(error);
   }

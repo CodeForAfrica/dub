@@ -3,11 +3,11 @@ import { mutatePrefix } from "@/lib/swr/mutate";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { NetworkPartnerProps } from "@/lib/types";
 import { Button } from "@dub/ui";
-import { Star, StarFill } from "@dub/ui/icons";
+import { Star } from "@dub/ui/icons";
+import { cn } from "@dub/utils";
 import { useAction } from "next-safe-action/hooks";
 import { toast } from "sonner";
 import { mutate } from "swr";
-import { cn } from "@dub/utils";
 
 type PartnerStarButtonProps = {
   partner: NetworkPartnerProps;
@@ -95,13 +95,15 @@ export function PartnerStarButton({
       onClick={() => handleToggleStarred(!partner.starredAt)}
       icon={
         partner.starredAt ? (
-          <StarFill className={cn("text-amber-500", iconSize)} />
+          <Star variant="fill" className={cn("text-amber-500", iconSize)} />
         ) : (
           <Star className={cn("text-content-subtle", iconSize)} />
         )
       }
-      className={cn("rounded-lg p-0", className)}
+      className={cn(
+        "border-border-subtle shrink-0 rounded-lg border p-0",
+        className,
+      )}
     />
   );
 }
-

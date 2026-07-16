@@ -1,6 +1,6 @@
 import { DubApiError } from "@/lib/api/errors";
 import { withSession } from "@/lib/auth";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { DomainRenewalInvoice } from "./domain-renewal-invoice";
 import { PartnerPayoutInvoice } from "./partner-payout-invoice";
 
@@ -24,6 +24,14 @@ export const GET = withSession(async ({ session, params }) => {
       },
     },
   });
+
+  if (invoice.status === "failed") {
+    throw new DubApiError({
+      code: "bad_request",
+      message:
+        "This invoice is not available for download since the payment failed.",
+    });
+  }
 
   const userInWorkspace = await prisma.projectUsers.findUnique({
     where: {

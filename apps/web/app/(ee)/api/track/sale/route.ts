@@ -4,7 +4,7 @@ import { parseRequestBody } from "@/lib/api/utils";
 import { withWorkspace } from "@/lib/auth";
 import { trackSaleRequestSchema } from "@/lib/zod/schemas/sales";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // POST /api/track/sale – Track a sale conversion event
 export const POST = withWorkspace(
@@ -58,19 +58,12 @@ export const POST = withWorkspace(
       leadEventName,
       metadata,
       workspace,
-      rawBody: body,
     });
 
     return NextResponse.json(response);
   },
   {
-    requiredPlan: [
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );

@@ -1,10 +1,13 @@
+import { captureRequestLog } from "@/lib/api-logs/capture-request-log";
 import { DubApiError, handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { withAxiom } from "@/lib/axiom/server";
+import { prisma } from "@/lib/prisma";
 import { ratelimit } from "@/lib/upstash";
-import { prisma } from "@dub/prisma";
 import { getSearchParams } from "@dub/utils";
 import { Project } from "@prisma/client";
-import { AxiomRequest, withAxiom } from "next-axiom";
+import { waitUntil } from "@vercel/functions";
 import { headers } from "next/headers";
+import { COMMON_CORS_HEADERS } from "../api/cors";
 
 interface WithPublishableKeyHandler {
   ({
@@ -22,32 +25,26 @@ interface WithPublishableKeyHandler {
 
 export const withPublishableKey = (
   handler: WithPublishableKeyHandler,
-  {
-    requiredPlan = [
-      "free",
-      "pro",
-      "business",
-      "business plus",
-      "business max",
-      "business extra",
-      "advanced",
-      "enterprise",
-    ],
-  },
+  { requiredPlan = ["free", "pro", "business", "advanced", "enterprise"] },
 ) =>
   withAxiom(
     async (
-      req: AxiomRequest,
+      req,
       { params: initialParams }: { params: Promise<Record<string, string>> },
     ) => {
+      const startTime = Date.now();
       const params = (await initialParams) || {};
+      const url = new URL(req.url);
+      const reqForLog = req.clone();
+
       let requestHeaders = await headers();
-      let responseHeaders = new Headers();
+      let responseHeaders = COMMON_CORS_HEADERS;
+      let workspace: Project | null = null;
 
       try {
         const authorizationHeader = requestHeaders.get("Authorization");
         if (authorizationHeader) {
-          if (!authorizationHeader.includes("Bearer ")) {
+          if (!authorizationHeader.startsWith("Bearer ")) {
             throw new DubApiError({
               code: "bad_request",
               message: "Invalid or missing publishable key.",
@@ -79,7 +76,7 @@ export const withPublishableKey = (
             });
           }
 
-          const workspace = await prisma.project.findUnique({
+          workspace = await prisma.project.findUnique({
             where: {
               publishableKey,
             },
@@ -92,7 +89,15 @@ export const withPublishableKey = (
             });
           }
 
-          if (!requiredPlan.includes(workspace.plan)) {
+          const normalizedWorkspacePlan = [
+            "business plus",
+            "business max",
+            "business extra",
+          ].includes(workspace.plan)
+            ? "business"
+            : workspace.plan;
+
+          if (!requiredPlan.includes(normalizedWorkspacePlan)) {
             throw new DubApiError({
               code: "forbidden",
               message: "Unauthorized: Need higher plan.",
@@ -100,7 +105,27 @@ export const withPublishableKey = (
           }
 
           const searchParams = getSearchParams(req.url);
-          return await handler({ req, params, searchParams, workspace });
+          const response = await handler({
+            req,
+            params,
+            searchParams,
+            workspace,
+          });
+
+          waitUntil(
+            captureRequestLog({
+              req: reqForLog,
+              response,
+              workspace,
+              session: undefined,
+              token: null,
+              url,
+              requestHeaders,
+              startTime,
+            }),
+          );
+
+          return response;
         } else {
           throw new DubApiError({
             code: "unauthorized",
@@ -108,8 +133,27 @@ export const withPublishableKey = (
           });
         }
       } catch (error) {
-        req.log.error(error);
-        return handleAndReturnErrorResponse(error, responseHeaders);
+        const errorResponse = handleAndReturnErrorResponse(
+          error,
+          responseHeaders,
+        );
+
+        if (workspace) {
+          waitUntil(
+            captureRequestLog({
+              req: reqForLog,
+              response: errorResponse,
+              workspace,
+              session: undefined,
+              token: null,
+              url,
+              requestHeaders,
+              startTime,
+            }),
+          );
+        }
+
+        return errorResponse;
       }
     },
   );

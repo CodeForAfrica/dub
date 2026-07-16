@@ -1,10 +1,9 @@
 "use client";
 
-import usePayoutsCount from "@/lib/swr/use-payouts-count";
+import { clientAccessCheck } from "@/lib/client-access-check";
+import { usePayoutsCount } from "@/lib/swr/use-payouts-count";
 import useWorkspace from "@/lib/swr/use-workspace";
-import { PayoutsCount } from "@/lib/types";
 import { ConfirmPayoutsSheet } from "@/ui/partners/confirm-payouts-sheet";
-import { PayoutStatus } from "@dub/prisma/client";
 import {
   Button,
   buttonVariants,
@@ -13,20 +12,26 @@ import {
   useRouterStuff,
 } from "@dub/ui";
 import { cn, currencyFormatter } from "@dub/utils";
+import { PayoutStatus } from "@prisma/client";
 import Link from "next/link";
 
 export function PayoutStats() {
-  const { slug } = useWorkspace();
+  const { slug, role } = useWorkspace();
+
+  const permissionsError = clientAccessCheck({
+    action: "payouts.write",
+    role,
+  }).error;
   const { queryParams } = useRouterStuff();
 
-  const { payoutsCount, loading } = usePayoutsCount<PayoutsCount[]>({
+  const { payoutsCount, loading } = usePayoutsCount({
     groupBy: "status",
   });
 
   const {
     payoutsCount: eligiblePayoutsCount,
     loading: eligiblePayoutsLoading,
-  } = usePayoutsCount<PayoutsCount[]>({
+  } = usePayoutsCount({
     groupBy: "status",
     eligibility: "eligible",
   });
@@ -58,12 +63,13 @@ export function PayoutStats() {
   const totalPaid = completedPayoutsAmount + processingPayoutsAmount;
 
   useKeyboardShortcut("c", () => {
-    queryParams({
-      set: {
-        confirmPayouts: "true",
-      },
-      scroll: false,
-    });
+    if (!permissionsError) {
+      queryParams({
+        set: {
+          confirmPayouts: "true",
+        },
+      });
+    }
   });
 
   return (
@@ -76,7 +82,7 @@ export function PayoutStats() {
               <div className="text-sm text-neutral-500">Pending payouts</div>
             </div>
             <Button
-              text="Confirm payouts"
+              text="Confirm all payouts"
               shortcut="C"
               shortcutClassName="px-1 py-px"
               className="h-7 w-fit px-2"
@@ -85,14 +91,13 @@ export function PayoutStats() {
                   set: {
                     confirmPayouts: "true",
                   },
-                  scroll: false,
                 });
               }}
               disabled={eligiblePayoutsLoading || confirmButtonDisabled}
               disabledTooltip={
                 confirmButtonDisabled
                   ? "You have no pending payouts that match the minimum payout requirement for partners that have payouts enabled."
-                  : undefined
+                  : permissionsError || undefined
               }
             />
           </div>
@@ -128,7 +133,7 @@ export function PayoutStats() {
                             {display}
                           </div>
                           <div className="text-sm text-neutral-500">
-                            {currencyFormatter(amount / 100, {})}
+                            {currencyFormatter(amount, {})}
                           </div>
                         </div>
                       ))}
@@ -137,12 +142,8 @@ export function PayoutStats() {
                 }
               >
                 <span className="underline decoration-dotted underline-offset-2">
-                  {currencyFormatter(
-                    eligiblePendingPayouts?.amount
-                      ? eligiblePendingPayouts.amount / 100
-                      : 0,
-                    {},
-                  ) + " USD"}
+                  {currencyFormatter(eligiblePendingPayouts?.amount ?? 0, {}) +
+                    " USD"}
                 </span>
               </Tooltip>
             )}
@@ -190,7 +191,7 @@ export function PayoutStats() {
                             {display}
                           </div>
                           <div className="text-sm text-neutral-500">
-                            {currencyFormatter(amount / 100, {})}
+                            {currencyFormatter(amount, {})}
                           </div>
                         </div>
                       ))}
@@ -199,7 +200,7 @@ export function PayoutStats() {
                 }
               >
                 <span className="underline decoration-dotted underline-offset-2">
-                  {currencyFormatter(totalPaid / 100, {}) + " USD"}
+                  {currencyFormatter(totalPaid, {}) + " USD"}
                 </span>
               </Tooltip>
             )}

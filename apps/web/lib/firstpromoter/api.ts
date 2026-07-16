@@ -1,5 +1,5 @@
-import { z } from "zod";
-import { PAGE_LIMIT } from "./importer";
+import * as z from "zod/v4";
+import { FIRSTPROMOTER_PAGE_LIMIT } from "./importer";
 import {
   firstPromoterCampaignSchema,
   firstPromoterCommissionSchema,
@@ -46,7 +46,7 @@ export class FirstPromoterApi {
 
   async listCampaigns({ page }: { page?: number }) {
     const searchParams = new URLSearchParams({
-      per_page: PAGE_LIMIT.toString(),
+      per_page: FIRSTPROMOTER_PAGE_LIMIT.toString(),
       ...(page ? { page: page.toString() } : {}),
     });
 
@@ -58,17 +58,11 @@ export class FirstPromoterApi {
   }
 
   async listPartners({ page }: { page?: number }) {
-    const searchParams = new URLSearchParams({
-      filters: JSON.stringify({
-        archived: false,
-        state: "accepted",
-        referrals_count: {
-          from: 1,
-        },
-      }),
-      per_page: PAGE_LIMIT.toString(),
-      ...(page ? { page: page.toString() } : {}),
-    });
+    const searchParams = new URLSearchParams();
+    searchParams.set("filters[state]", "accepted");
+    searchParams.set("filters[referrals_count][from]", "1");
+    searchParams.set("per_page", FIRSTPROMOTER_PAGE_LIMIT.toString());
+    if (page) searchParams.set("page", page.toString());
 
     const response = await this.fetch(`/promoters?${searchParams.toString()}`);
 
@@ -83,18 +77,25 @@ export class FirstPromoterApi {
 
   async listCustomers({ page }: { page?: number }) {
     const searchParams = new URLSearchParams({
-      per_page: PAGE_LIMIT.toString(),
+      per_page: FIRSTPROMOTER_PAGE_LIMIT.toString(),
       ...(page ? { page: page.toString() } : {}),
     });
 
-    const customers = await this.fetch(`/referrals?${searchParams.toString()}`);
+    const customers = (await this.fetch(
+      `/referrals?${searchParams.toString()}`,
+    )) as any[];
 
-    return firstPromoterCustomerSchema.array().parse(customers);
+    // filter out the customers without an associated promoter
+    const filteredCustomers = customers.filter(
+      ({ promoter_campaign }) => promoter_campaign?.promoter,
+    );
+
+    return firstPromoterCustomerSchema.array().parse(filteredCustomers);
   }
 
   async listCommissions({ page }: { page?: number }) {
     const searchParams = new URLSearchParams({
-      per_page: PAGE_LIMIT.toString(),
+      per_page: FIRSTPROMOTER_PAGE_LIMIT.toString(),
       ...(page ? { page: page.toString() } : {}),
     });
 

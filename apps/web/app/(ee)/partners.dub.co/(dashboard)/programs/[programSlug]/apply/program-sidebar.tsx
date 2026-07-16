@@ -1,17 +1,36 @@
 "use client";
 
-import { acceptProgramInviteAction } from "@/lib/actions/partners/accept-program-invite";
-import { mutatePrefix } from "@/lib/swr/mutate";
+import { submitNetworkProfileAction } from "@/lib/actions/partners/submit-network-profile";
+import { getNetworkProfileChecklistProgress } from "@/lib/network/get-network-profile-checklist-progress";
+import { evaluateApplicationRequirements } from "@/lib/partners/evaluate-application-requirements";
+import usePartnerProfile from "@/lib/swr/use-partner-profile";
 import useProgramEnrollment from "@/lib/swr/use-program-enrollment";
-import { DiscountProps, ProgramProps, RewardProps } from "@/lib/types";
+import {
+  DiscountProps,
+  GroupBountySummaryProps,
+  ProgramProps,
+  RewardProps,
+} from "@/lib/types";
+import { applicationRequirementsSchema } from "@/lib/zod/schemas/programs";
+import { useConfirmModal } from "@/ui/modals/confirm-modal";
+import { LanderRewards } from "@/ui/partners/lander/lander-rewards";
+import { NetworkStatusBadges } from "@/ui/partners/partner-network/network-status-badges";
 import { PartnerStatusBadges } from "@/ui/partners/partner-status-badges";
 import { useProgramApplicationSheet } from "@/ui/partners/program-application-sheet";
-import { ProgramRewardList } from "@/ui/partners/program-reward-list";
-import { BlurImage, Button, CircleCheck, Link4, StatusBadge } from "@dub/ui";
+import { ProgramEligibilityCard } from "@/ui/partners/program-eligibility-card";
+import {
+  BlurImage,
+  Button,
+  CircleCheck,
+  Link4,
+  ProgressCircle,
+  StatusBadge,
+} from "@dub/ui";
 import { capitalize, cn, OG_AVATAR_URL } from "@dub/utils";
 import { useAction } from "next-safe-action/hooks";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 export function ProgramSidebar({
@@ -19,19 +38,139 @@ export function ProgramSidebar({
   applicationRewards,
   applicationDiscount,
 }: {
-  program: ProgramProps;
+  program: ProgramProps & {
+    group?: {
+      id: string;
+      bounties?: GroupBountySummaryProps[];
+    } | null;
+  };
   applicationRewards: RewardProps[];
   applicationDiscount: DiscountProps | null;
 }) {
-  const router = useRouter();
+  const { partner, mutate } = usePartnerProfile();
 
+  const { completedCount, totalCount, isComplete } =
+    getNetworkProfileChecklistProgress({
+      partner,
+    });
+
+  const { executeAsync: submitNetworkProfile } = useAction(
+    submitNetworkProfileAction,
+    {
+      onSuccess: () => {
+        toast.success("Application submitted successfully");
+      },
+      onError: ({ error }) => {
+        toast.error(error.serverError);
+      },
+    },
+  );
+
+  const { setShowConfirmModal, confirmModal } = useConfirmModal({
+    title: "Submit application",
+    description:
+      "Are you sure you want to submit your Dub Network application for review? You won't be able to make changes to your application after submitting it.",
+    confirmText: "Confirm submission",
+    onConfirm: async () => {
+      await submitNetworkProfile();
+      await mutate();
+    },
+  });
   const { programEnrollment } = useProgramEnrollment({
+    programSlug: program.slug,
     swrOpts: {
       keepPreviousData: true,
       shouldRetryOnError: (err) => err.status !== 404,
       revalidateOnFocus: false,
     },
   });
+
+  const applicationRequirements = program.applicationRequirements
+    ? applicationRequirementsSchema.parse(program.applicationRequirements)
+    : null;
+
+  const { reason } = evaluateApplicationRequirements({
+    applicationRequirements,
+    context: {
+      country: partner?.country,
+      email: partner?.email,
+    },
+  });
+
+  const requirementsNotMet =
+    reason === "requirementsNotMet"
+      ? "You do not meet the eligibility requirements for this program"
+      : undefined;
+
+  const [justApplied, setJustApplied] = useState(false);
+
+  const applyDisabledTooltip: ReactNode =
+    justApplied ? undefined : programEnrollment?.status === "pending" ? (
+      "Your application is under review"
+    ) : programEnrollment?.status &&
+      ["banned", "rejected", "deactivated"].includes(
+        programEnrollment.status,
+      ) ? (
+      `You were ${programEnrollment.status} from this program`
+    ) : programEnrollment ? undefined : !isComplete ? (
+      <div className="max-w-xs p-3 text-center">
+        <div className="text-content-default text-pretty text-sm leading-5">
+          Complete your profile to join the Dub Partner Network. Once approved,
+          you can then apply to this program.
+        </div>
+        <Link
+          href="/profile"
+          className="bg-bg-subtle mt-3 flex items-center justify-center gap-2 rounded-lg px-2.5 py-1.5"
+        >
+          <ProgressCircle
+            progress={completedCount / totalCount}
+            className="text-green-500"
+          />
+          <span className="text-content-default text-sm font-medium">
+            {completedCount} of {totalCount} tasks completed
+          </span>
+        </Link>
+      </div>
+    ) : partner && !["approved", "trusted"].includes(partner.networkStatus) ? (
+      (() => {
+        const networkStatusBadge = NetworkStatusBadges[partner.networkStatus];
+        if (!("partnerTooltip" in networkStatusBadge)) {
+          return null;
+        }
+        const { partnerTooltip, icon: Icon, className } = networkStatusBadge;
+        const { content, cta } = partnerTooltip;
+
+        return (
+          <div className="max-w-xs space-y-2 p-4 text-center">
+            <div className="text-content-default text-pretty text-sm leading-5">
+              {content}
+            </div>
+            {partner.networkStatus === "draft" ? (
+              <Button
+                className="p-2"
+                text={cta}
+                onClick={() => setShowConfirmModal(true)}
+              />
+            ) : (
+              <Link
+                href="/profile"
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-lg p-2",
+                  "ctaClassName" in partnerTooltip
+                    ? partnerTooltip.ctaClassName
+                    : className,
+                )}
+              >
+                <Icon className="size-4 shrink-0" />
+                <span className="text-sm font-medium">{cta}</span>
+              </Link>
+            )}
+          </div>
+        );
+      })()
+    ) : (
+      requirementsNotMet
+    );
 
   const statusBadge = programEnrollment
     ? {
@@ -43,38 +182,19 @@ export function ProgramSidebar({
       }[programEnrollment.status]
     : null;
 
-  const [justApplied, setJustApplied] = useState(false);
-
   const buttonText = useMemo(() => {
     if (justApplied) return "Applied";
-
     if (!programEnrollment) return "Apply";
 
     switch (programEnrollment.status) {
       case "pending":
         return "Applied";
-      case "invited":
-        return "Accept invite";
       case "approved":
         return "Enrolled";
       default:
         return capitalize(programEnrollment.status);
     }
   }, [justApplied, programEnrollment]);
-
-  const { executeAsync: executeAcceptInvite, isPending: isAcceptingInvite } =
-    useAction(acceptProgramInviteAction, {
-      onSuccess: async () => {
-        await mutatePrefix("/api/partner-profile/programs");
-        toast.success("Program invite accepted!");
-        if (program) {
-          router.push(`/programs/${program.slug}`);
-        }
-      },
-      onError: ({ error }) => {
-        toast.error(error.serverError);
-      },
-    });
 
   const { programApplicationSheet, setIsOpen: setIsApplicationSheetOpen } =
     useProgramApplicationSheet({
@@ -83,8 +203,13 @@ export function ProgramSidebar({
       onSuccess: () => setJustApplied(true),
     });
 
+  if (programEnrollment?.status === "invited") {
+    redirect(`/programs/${program.slug}/invite`);
+  }
+
   return (
     <div>
+      {confirmModal}
       {programApplicationSheet}
       <div className="flex items-start justify-between gap-2">
         <BlurImage
@@ -113,11 +238,7 @@ export function ProgramSidebar({
       </div>
 
       <div className="mt-8">
-        <h2 className="mb-2 text-base font-semibold text-neutral-800">
-          Rewards
-        </h2>
-
-        <ProgramRewardList
+        <LanderRewards
           rewards={
             (programEnrollment?.status === "approved"
               ? programEnrollment.rewards
@@ -127,30 +248,38 @@ export function ProgramSidebar({
             []
           }
           discount={
-            programEnrollment?.discount ?? applicationDiscount !== undefined
-              ? applicationDiscount
-              : program.discounts?.[0] ?? null
+            programEnrollment?.discount ??
+            applicationDiscount ??
+            program.discounts?.[0] ??
+            null
           }
-          className="bg-neutral-100"
+          bounties={
+            programEnrollment?.status === "approved" &&
+            programEnrollment.groupId !== program.group?.id
+              ? undefined
+              : program.group?.bounties
+          }
         />
       </div>
 
+      {applicationRequirements && applicationRequirements.length ? (
+        <ProgramEligibilityCard
+          programSlug={program.slug}
+          requirements={applicationRequirements}
+        />
+      ) : null}
+
       <Button
-        className={cn("mt-8", justApplied && "text-green-600")}
+        className={cn("mt-4", justApplied && "text-green-600")}
         text={buttonText}
         icon={justApplied ? <CircleCheck className="size-4" /> : undefined}
         disabled={
-          (programEnrollment && programEnrollment.status !== "invited") ||
-          justApplied
+          !applyDisabledTooltip && (!!programEnrollment || justApplied)
+            ? true
+            : undefined
         }
-        onClick={() => {
-          if (programEnrollment?.status === "invited") {
-            executeAcceptInvite({
-              programId: programEnrollment.programId,
-            });
-          } else setIsApplicationSheetOpen(true);
-        }}
-        loading={isAcceptingInvite}
+        disabledTooltip={applyDisabledTooltip}
+        onClick={() => setIsApplicationSheetOpen(true)}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import { withPartnerProfile } from "@/lib/auth/partner";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
 // GET /api/partner-profile/notification-preferences – get notification preferences for the current partner+user
@@ -17,6 +17,8 @@ export const GET = withPartnerProfile(async ({ partner, session }) => {
         applicationApproved: true,
         newMessageFromProgram: true,
         marketingCampaign: true,
+        connectPayoutReminder: true,
+        monthlyProgramSummary: true,
       },
     },
   );

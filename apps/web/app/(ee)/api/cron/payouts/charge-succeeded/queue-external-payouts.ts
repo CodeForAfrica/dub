@@ -1,9 +1,10 @@
 import { queueBatchEmail } from "@/lib/email/queue-batch-email";
+import { prisma } from "@/lib/prisma";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { payoutWebhookEventSchema } from "@/lib/zod/schemas/payouts";
 import type PartnerPayoutConfirmed from "@dub/email/templates/partner-payout-confirmed";
-import { prisma } from "@dub/prisma";
-import { Invoice } from "@dub/prisma/client";
+import { currencyFormatter, log } from "@dub/utils";
+import { Invoice } from "@prisma/client";
 
 export async function queueExternalPayouts(
   invoice: Pick<
@@ -30,6 +31,7 @@ export async function queueExternalPayouts(
     select: {
       id: true,
       name: true,
+      slug: true,
       logo: true,
       supportEmail: true,
     },
@@ -85,9 +87,11 @@ export async function queueExternalPayouts(
   });
 
   if (webhooks.length === 0) {
-    console.log(
-      `No webhooks found for workspace ${invoice.workspaceId} for invoice ${invoice.id}. Skipping...`,
-    );
+    await log({
+      message: `No payout.confirmed webhook found for workspace ${invoice.workspaceId} (program: ${program.slug}, invoice: ${invoice.id}). Skipping external payouts...`,
+      type: "errors",
+      mention: true,
+    });
     return;
   }
 
@@ -116,31 +120,31 @@ export async function queueExternalPayouts(
   }
 
   await queueBatchEmail<typeof PartnerPayoutConfirmed>(
-    externalPayouts
-      .filter((payout) => payout.partner.email)
-      .map((payout) => ({
-        to: payout.partner.email!,
-        subject: "You've got money coming your way!",
-        variant: "notifications",
-        replyTo: program.supportEmail || "noreply",
-        templateName: "PartnerPayoutConfirmed",
-        templateProps: {
-          email: payout.partner.email!,
-          program: {
-            id: program.id,
-            name: program.name,
-            logo: program.logo,
-          },
-          payout: {
-            id: payout.id,
-            amount: payout.amount,
-            startDate: payout.periodStart,
-            endDate: payout.periodEnd,
-            mode: "external",
-            paymentMethod: invoice.paymentMethod ?? "ach",
-          },
+    externalPayouts.map((payout) => ({
+      to: payout.partner.email!,
+      subject: `Your ${currencyFormatter(payout.amount)} payout for ${program.name} is on the way`,
+      variant: "notifications",
+      replyTo: program.supportEmail || "noreply",
+      templateName: "PartnerPayoutConfirmed",
+      templateProps: {
+        email: payout.partner.email!,
+        program: {
+          id: program.id,
+          name: program.name,
+          logo: program.logo,
         },
-      })),
+        payout: {
+          id: payout.id,
+          amount: payout.amount,
+          initiatedAt: payout.initiatedAt,
+          startDate: payout.periodStart,
+          endDate: payout.periodEnd,
+          mode: "external",
+          paymentMethod: invoice.paymentMethod ?? "ach",
+          payoutMethod: payout.method,
+        },
+      },
+    })),
     {
       idempotencyKey: `payout-confirmed-external/${invoice.id}`,
     },

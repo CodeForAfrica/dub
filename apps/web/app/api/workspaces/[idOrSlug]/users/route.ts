@@ -1,15 +1,16 @@
 import { DubApiError } from "@/lib/api/errors";
-import { throwIfNoAccess } from "@/lib/api/tokens/permissions";
+import { throwIfNoAccess } from "@/lib/api/tokens/throw-if-no-access";
+import { assertRoleAllowedForPlan } from "@/lib/api/workspaces/assert-role-plan";
 import { withWorkspace } from "@/lib/auth";
 import { generateRandomName } from "@/lib/names";
+import { prisma } from "@/lib/prisma";
 import {
   getWorkspaceUsersQuerySchema,
   workspaceUserSchema,
 } from "@/lib/zod/schemas/workspaces";
-import { prisma } from "@dub/prisma";
 import { WorkspaceRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/workspaces/[idOrSlug]/users – get users for a specific workspace
 export const GET = withWorkspace(
@@ -52,17 +53,19 @@ export const GET = withWorkspace(
 
 const updateRoleSchema = z.object({
   userId: z.string().min(1),
-  role: z.nativeEnum(WorkspaceRole, {
-    errorMap: () => ({
-      message: `Role must be either "owner" or "member".`,
-    }),
-  }),
+  role: z.enum(WorkspaceRole),
 });
 
-// PATCH /api/workspaces/[idOrSlug]/users – update a user's role for a specific workspace
+// PATCH /api/workspaces/[idOrSlug]/users – update a user's role for a specific workspace
 export const PATCH = withWorkspace(
   async ({ req, workspace }) => {
     const { userId, role } = updateRoleSchema.parse(await req.json());
+
+    assertRoleAllowedForPlan({
+      role,
+      plan: workspace.plan,
+    });
+
     const response = await prisma.projectUsers.update({
       where: {
         userId_projectId: {
@@ -114,10 +117,12 @@ export const DELETE = withWorkspace(
           user: {
             select: {
               isMachine: true,
+              defaultWorkspace: true,
             },
           },
         },
       }),
+
       prisma.projectUsers.count({
         where: {
           projectId: workspace.id,
@@ -129,7 +134,7 @@ export const DELETE = withWorkspace(
     if (!projectUser) {
       throw new DubApiError({
         code: "not_found",
-        message: "User not found",
+        message: "User not found.",
       });
     }
 
@@ -164,6 +169,17 @@ export const DELETE = withWorkspace(
           userId,
         },
       }),
+
+      // Remove the default workspace for the user if they are leaving the workspace
+      workspace.slug === projectUser.user.defaultWorkspace &&
+        prisma.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            defaultWorkspace: null,
+          },
+        }),
     ]);
 
     // delete the user if it's a machine user
@@ -176,8 +192,5 @@ export const DELETE = withWorkspace(
     }
 
     return NextResponse.json(response);
-  },
-  {
-    skipPermissionChecks: true,
   },
 );

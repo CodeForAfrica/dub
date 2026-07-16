@@ -1,15 +1,18 @@
-import z from "../zod";
+import * as z from "zod/v4";
 import { BountySchema } from "../zod/schemas/bounties";
 import { CommissionWebhookSchema } from "../zod/schemas/commissions";
 import { linkEventSchema } from "../zod/schemas/links";
 import { EnrolledPartnerSchema } from "../zod/schemas/partners";
 import { payoutWebhookEventSchema } from "../zod/schemas/payouts";
 import { partnerApplicationWebhookSchema } from "../zod/schemas/program-application";
+import { WEBHOOK_TRIGGERS } from "./constants";
 import {
   clickWebhookEventSchema,
   leadWebhookEventSchema,
   saleWebhookEventSchema,
 } from "./schemas";
+
+export type WebhookTrigger = (typeof WEBHOOK_TRIGGERS)[number];
 
 export type ClickEventWebhookPayload = z.infer<typeof clickWebhookEventSchema>;
 

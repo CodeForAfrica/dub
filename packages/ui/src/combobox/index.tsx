@@ -14,14 +14,7 @@ import {
 import { AnimatedSizeContainer } from "../animated-size-container";
 import { Button, ButtonProps } from "../button";
 import { useMediaQuery } from "../hooks";
-import {
-  Check2,
-  CheckboxCheckedFill,
-  CheckboxUnchecked,
-  Icon,
-  LoadingSpinner,
-  Plus,
-} from "../icons";
+import { Check2, CheckboxIcon, Icon, LoadingSpinner, Plus } from "../icons";
 import { Popover, PopoverProps } from "../popover";
 import { ScrollContainer } from "../scroll-container";
 import { Tooltip } from "../tooltip";
@@ -48,6 +41,7 @@ export type ComboboxProps<
     ? (options: ComboboxOption<TMeta>[]) => void
     : (option: ComboboxOption<TMeta> | null) => void;
   onSelect?: (option: ComboboxOption<TMeta>) => void;
+  maxSelected?: number;
   options?: ComboboxOption<TMeta>[];
   trigger?: ReactNode;
   icon?: Icon | ReactNode;
@@ -72,8 +66,10 @@ export type ComboboxProps<
   inputClassName?: string;
   optionRight?: (option: ComboboxOption) => ReactNode;
   optionClassName?: string;
+  optionDescription?: (option: ComboboxOption<TMeta>) => ReactNode;
   matchTriggerWidth?: boolean;
   hideSearch?: boolean;
+  forceDropdown?: boolean;
 }>;
 
 function isMultipleSelection(
@@ -88,6 +84,7 @@ export function Combobox({
   selected: selectedProp,
   setSelected,
   onSelect,
+  maxSelected,
   options,
   trigger,
   icon: Icon,
@@ -112,8 +109,10 @@ export function Combobox({
   inputClassName,
   optionRight,
   optionClassName,
+  optionDescription,
   matchTriggerWidth,
   hideSearch = false,
+  forceDropdown = false,
   children,
 }: ComboboxProps<boolean | undefined, any>) {
   const isMultiple = isMultipleSelection(multiple, setSelected);
@@ -139,21 +138,25 @@ export function Combobox({
   const [isCreating, setIsCreating] = useState(false);
 
   const handleSelect = (option: ComboboxOption) => {
+    const isAlreadySelected = isMultiple
+      ? selected.some(({ value }) => value === option.value)
+      : selected.length && selected[0]?.value === option.value;
+
+    if (!isAlreadySelected && maxSelected && selected.length >= maxSelected)
+      return;
+
     onSelect?.(option);
 
-    if (!setSelected) return;
-
     if (isMultiple) {
-      const isAlreadySelected = selected.some(
-        ({ value }) => value === option.value,
-      );
+      if (!setSelected) return;
+
       setSelected(
         isAlreadySelected
           ? selected.filter(({ value }) => value !== option.value)
           : [...selected, option],
       );
     } else {
-      setSelected(
+      setSelected?.(
         selected.length && selected[0]?.value === option.value ? null : option,
       );
       setIsOpen(false);
@@ -188,7 +191,7 @@ export function Combobox({
   // Sort options when the options prop changes
   useEffect(() => {
     setShouldSortOptions(true);
-  }, [options]);
+  }, [JSON.stringify(options?.map((o) => o.value))]);
 
   // Reset search and sort options when the popover closes
   useEffect(() => {
@@ -203,8 +206,8 @@ export function Combobox({
   const createOptionItem = (
     <Command.Item
       className={cn(
-        "flex cursor-pointer items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm text-neutral-700",
-        "data-[selected=true]:bg-neutral-100",
+        "text-content-default flex cursor-pointer items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm",
+        "data-[selected=true]:bg-bg-subtle",
         optionClassName,
       )}
       onSelect={async () => {
@@ -235,6 +238,7 @@ export function Combobox({
       setOpenPopover={setIsOpen}
       align="start"
       side={side}
+      forceDropdown={forceDropdown}
       onWheel={(e) => {
         // Allows scrolling to work when the popover's in a modal
         e.stopPropagation();
@@ -253,13 +257,13 @@ export function Combobox({
         >
           <Command loop shouldFilter={shouldFilter}>
             {!hideSearch && (
-              <div className="flex items-center overflow-hidden rounded-t-lg border-b border-neutral-200">
+              <div className="border-border-subtle flex items-center overflow-hidden rounded-t-lg border-b">
                 <Command.Input
                   placeholder={searchPlaceholder}
                   value={search}
                   onValueChange={setSearch}
                   className={cn(
-                    "grow border-0 py-3 pl-4 pr-2 outline-none placeholder:text-neutral-400 focus:ring-0 sm:text-sm",
+                    "text-content-emphasis placeholder:text-content-muted grow border-0 bg-transparent py-3 pl-4 pr-2 outline-none focus:ring-0 sm:text-sm",
                     inputClassName,
                   )}
                   onKeyDown={(e) => {
@@ -275,7 +279,7 @@ export function Combobox({
                 />
                 {inputRight && <div className="mr-2">{inputRight}</div>}
                 {shortcutHint && (
-                  <kbd className="mr-2 hidden shrink-0 rounded border border-neutral-200 bg-neutral-100 px-2 py-0.5 text-xs font-light text-neutral-500 md:block">
+                  <kbd className="border-border-subtle bg-bg-subtle text-content-subtle mr-2 hidden shrink-0 rounded border px-2 py-0.5 text-xs font-light md:block">
                     {shortcutHint}
                   </kbd>
                 )}
@@ -292,30 +296,39 @@ export function Combobox({
               >
                 {sortedOptions !== undefined ? (
                   <>
-                    {sortedOptions.map((option) => (
-                      <Option
-                        key={`${option.label}, ${option.value}`}
-                        option={option}
-                        multiple={isMultiple}
-                        selected={selected.some(
-                          ({ value }) => value === option.value,
-                        )}
-                        onSelect={() => handleSelect(option)}
-                        right={optionRight?.(option)}
-                        className={optionClassName}
-                      />
-                    ))}
+                    {sortedOptions.map((option) => {
+                      const isSelected = selected.some(
+                        ({ value }) => value === option.value,
+                      );
+                      return (
+                        <Option
+                          key={`${option.label}, ${option.value}`}
+                          option={option}
+                          multiple={isMultiple}
+                          selected={isSelected}
+                          onSelect={() => handleSelect(option)}
+                          disabled={Boolean(
+                            !isSelected &&
+                              maxSelected &&
+                              selected.length >= maxSelected,
+                          )}
+                          right={optionRight?.(option)}
+                          description={optionDescription?.(option)}
+                          className={optionClassName}
+                        />
+                      );
+                    })}
                     {/* for multiple selection, the create option item is shown at the bottom of the list */}
                     {onCreate &&
                       multiple &&
                       search.length > 0 &&
                       createOptionItem}
                     {shouldFilter ? (
-                      <Empty className="flex min-h-12 items-center justify-center text-sm text-neutral-500">
+                      <Empty className="text-content-subtle flex min-h-12 items-center justify-center text-sm">
                         {emptyState ? emptyState : "No matches"}
                       </Empty>
                     ) : sortedOptions.length === 0 ? (
-                      <div className="flex min-h-12 items-center justify-center text-sm text-neutral-500">
+                      <div className="text-content-subtle flex min-h-12 items-center justify-center text-sm">
                         {emptyState ? emptyState : "No matches"}
                       </div>
                     ) : null}
@@ -332,7 +345,7 @@ export function Combobox({
             </ScrollContainer>
             {/* for single selection, the create option item is shown as a sticky item outside of the scroll container */}
             {onCreate && !multiple && (
-              <div className="rounded-b-lg border-t border-neutral-200 bg-white p-1">
+              <div className="border-border-subtle bg-bg-default rounded-b-lg border-t p-1">
                 {createOptionItem}
               </div>
             )}
@@ -364,7 +377,7 @@ export function Combobox({
               {caret &&
                 (caret === true ? (
                   <ChevronDown
-                    className={`ml-1 size-4 shrink-0 text-neutral-400 transition-transform duration-75 group-data-[state=open]:rotate-180`}
+                    className={`text-content-muted ml-1 size-4 shrink-0 transition-transform duration-75 group-data-[state=open]:rotate-180`}
                   />
                 ) : (
                   caret
@@ -391,42 +404,57 @@ function Option({
   onSelect,
   multiple,
   selected,
+  disabled,
   right,
+  description,
   className,
 }: {
   option: ComboboxOption;
   onSelect: () => void;
   multiple: boolean;
   selected: boolean;
+  disabled?: boolean;
   right?: ReactNode;
+  description?: ReactNode;
   className?: string;
 }) {
+  const hasDescription = Boolean(description);
   return (
     <>
       <DisabledTooltip disabledTooltip={option.disabledTooltip}>
         <Command.Item
           className={cn(
-            "flex cursor-pointer items-center gap-3 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm",
-            "data-[selected=true]:bg-neutral-100",
-            Boolean(option.disabledTooltip) && "cursor-not-allowed opacity-50",
+            "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-left text-sm",
+            hasDescription ? "whitespace-normal py-2.5" : "whitespace-nowrap",
+            "data-[selected=true]:bg-bg-subtle",
+            Boolean(disabled || option.disabledTooltip) &&
+              "cursor-not-allowed opacity-50",
             className,
           )}
-          disabled={!!option.disabledTooltip}
+          disabled={disabled || !!option.disabledTooltip}
           onSelect={onSelect}
           value={option.label + option?.value}
         >
           {multiple && (
-            <div className="shrink-0 text-neutral-600">
+            <div className="text-content-default shrink-0">
               {selected ? (
-                <CheckboxCheckedFill className="size-4 text-neutral-600" />
+                <CheckboxIcon
+                  variant="fill"
+                  className="text-content-default size-4"
+                />
               ) : (
-                <CheckboxUnchecked className="size-4 text-neutral-400" />
+                <CheckboxIcon className="text-content-muted size-4" />
               )}
             </div>
           )}
-          <div className="flex min-w-0 grow items-center gap-2">
+          <div
+            className={cn(
+              "flex min-w-0 grow items-center gap-2",
+              hasDescription && "flex-col items-start gap-0.5",
+            )}
+          >
             {option.icon && (
-              <span className="shrink-0 text-neutral-600">
+              <span className="text-content-default shrink-0">
                 {isReactNode(option.icon) ? (
                   option.icon
                 ) : (
@@ -434,16 +462,28 @@ function Option({
                 )}
               </span>
             )}
-            <span className="grow truncate">{option.label}</span>
+            <span
+              className={cn(
+                "grow",
+                hasDescription
+                  ? "text-content-emphasis"
+                  : "text-content-default truncate",
+              )}
+            >
+              {option.label}
+            </span>
+            {hasDescription && (
+              <span className="text-content-subtle text-sm">{description}</span>
+            )}
           </div>
           {right}
           {!multiple && selected && (
-            <Check2 className="size-4 shrink-0 text-neutral-600" />
+            <Check2 className="text-content-default size-4 shrink-0" />
           )}
         </Command.Item>
       </DisabledTooltip>
       {option.separatorAfter && (
-        <Command.Separator className="-mx-1 my-1 h-px bg-neutral-200" />
+        <Command.Separator className="bg-border-subtle -mx-1 my-1 h-px" />
       )}
     </>
   );

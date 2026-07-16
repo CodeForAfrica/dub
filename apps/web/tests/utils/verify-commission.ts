@@ -1,3 +1,7 @@
+import {
+  VITEST_POLL_INTERVAL_MS,
+  VITEST_TEST_TIMEOUT_MS,
+} from "@/lib/constants/misc";
 import { CommissionResponse, Customer } from "@/lib/types";
 import { expect } from "vitest";
 import { HttpClient } from "./http";
@@ -5,24 +9,27 @@ import { HttpClient } from "./http";
 interface VerifyCommissionProps {
   http: HttpClient;
   customerExternalId?: string;
-  invoiceId?: string;
-  expectedAmount?: number;
+  invoiceId?: string; // fetch commission by invoiceId
+  description?: string; // fetch commissions + filter by description
+  expectedSaleAmount?: number;
   expectedEarnings: number;
+  expectedType?: string;
+  query?: Record<string, string>; // to pass additional query params to GET /commissions
 }
 
 export const verifyCommission = async ({
   http,
   customerExternalId,
   invoiceId,
-  expectedAmount,
+  description,
+  expectedSaleAmount,
   expectedEarnings,
+  expectedType,
+  query: queryOverrides,
 }: VerifyCommissionProps) => {
   let customerId: string | undefined;
 
-  // Pause for 1.5 seconds for data to be fully processed
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  // Optional: resolve customer ID if customerExternalId is given
+  // Resolve customer ID (scoped by projectId — externalId is unique per project)
   if (customerExternalId) {
     const { data: customers } = await http.get<Customer[]>({
       path: "/customers",
@@ -31,12 +38,11 @@ export const verifyCommission = async ({
 
     expect(customers.length).toBeGreaterThan(0);
     customerId = customers[0].id;
-
-    // Small delay if necessary for async commission processing
-    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
-  const query: Record<string, string> = {};
+  const query: Record<string, string> = {
+    ...queryOverrides,
+  };
 
   if (invoiceId) {
     query.invoiceId = invoiceId;
@@ -45,28 +51,63 @@ export const verifyCommission = async ({
   if (customerId) {
     query.customerId = customerId;
   }
+  const findMatchingCommission = (
+    commissions: CommissionResponse[],
+  ): CommissionResponse | undefined => {
+    if (description) {
+      return commissions.find((c) => c.description === description);
+    }
 
-  const { status, data: commissions } = await http.get<CommissionResponse[]>({
-    path: "/commissions",
-    query,
-  });
+    if (commissions.length === 1) {
+      return commissions[0];
+    }
 
-  expect(status).toEqual(200);
-  expect(commissions).toHaveLength(1);
+    return undefined;
+  };
 
-  const commission = commissions[0];
+  // Poll for commission every 5 seconds, timeout after 60 seconds
+  const startTime = Date.now();
 
-  if (invoiceId) {
-    expect(commission.invoiceId).toEqual(invoiceId);
+  while (Date.now() - startTime < VITEST_TEST_TIMEOUT_MS) {
+    const { status, data: commissions } = await http.get<CommissionResponse[]>({
+      path: "/commissions",
+      query,
+    });
+
+    const commission = findMatchingCommission(commissions);
+
+    if (status === 200 && commission) {
+      if (invoiceId) {
+        expect(commission.invoiceId).toEqual(invoiceId);
+      }
+
+      if (customerId) {
+        expect(commission.customer?.id).toEqual(customerId);
+      }
+
+      if (expectedSaleAmount !== undefined) {
+        expect(commission.amount).toEqual(expectedSaleAmount);
+      }
+
+      expect(commission.earnings).toEqual(expectedEarnings);
+
+      if (expectedType) {
+        expect(commission.type).toEqual(expectedType);
+      }
+
+      return;
+    }
+
+    // Wait before next poll
+    await new Promise((resolve) =>
+      setTimeout(resolve, VITEST_POLL_INTERVAL_MS),
+    );
   }
 
-  if (customerId) {
-    expect(commission.customer?.id).toEqual(customerId);
-  }
-
-  if (expectedAmount !== undefined) {
-    expect(commission.amount).toEqual(expectedAmount);
-  }
-
-  expect(commission.earnings).toEqual(expectedEarnings);
+  // Timeout reached - fail the test
+  throw new Error(
+    `Commission not found within ${VITEST_TEST_TIMEOUT_MS / 1000} seconds. ` +
+      `Query: ${JSON.stringify(query)}` +
+      (description ? `, description: ${description}` : ""),
+  );
 };

@@ -1,4 +1,4 @@
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { getBillingStartDate } from "@dub/utils";
 import { Project } from "@prisma/client";
 
@@ -11,9 +11,18 @@ export async function getNetworkInvitesUsage(
       program: {
         workspaceId: workspace.id,
       },
-      invitedAt: {
-        gt: getBillingStartDate(workspace.billingCycleStart),
-      },
+      OR: [
+        {
+          invitedAt: {
+            gt: getBillingStartDate(workspace.billingCycleStart),
+          },
+        },
+        {
+          messagedAt: {
+            gt: getBillingStartDate(workspace.billingCycleStart),
+          },
+        },
+      ],
     },
   });
 

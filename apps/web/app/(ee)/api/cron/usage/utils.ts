@@ -1,17 +1,20 @@
 import { getAnalytics } from "@/lib/analytics/get-analytics";
 import { qstash } from "@/lib/cron";
-import { sendLimitEmail } from "@/lib/cron/send-limit-email";
+import {
+  getSlackWebhooks,
+  sendWorkspaceLimitAlert,
+} from "@/lib/cron/send-limit-alert";
+import { prisma } from "@/lib/prisma";
 import { WorkspaceProps } from "@/lib/types";
 import { sendBatchEmail } from "@dub/email";
 import ClicksSummary from "@dub/email/templates/clicks-summary";
-import { prisma } from "@dub/prisma";
 import {
   APP_DOMAIN_WITH_NGROK,
   capitalize,
   getAdjustedBillingCycleStart,
-  getPrettyUrl,
   log,
 } from "@dub/utils";
+import { getMonth, getYear } from "date-fns";
 
 const limit = 100;
 
@@ -56,57 +59,70 @@ export const updateUsage = async () => {
 
   // if no workspaces left, meaning cron is complete
   if (workspaces.length === 0) {
-    return;
+    return "No workspaces left to update";
   }
 
   // Reset billing cycles for workspaces that have
   // adjustedBillingCycleStart that matches today's date
   const billingReset = workspaces.filter(
     ({ billingCycleStart }) =>
-      getAdjustedBillingCycleStart(billingCycleStart as number) ===
-      new Date().getDate(),
+      getAdjustedBillingCycleStart(billingCycleStart) === new Date().getDate(),
   );
 
   // Reset usage and alert emails for the billingReset workspaces
   // also send 30-day summary email
   await Promise.allSettled(
     billingReset.map(async (workspace) => {
-      const { plan, usage, usageLimit } = workspace;
+      const { usage, usageLimit, plan, planPeriod, billingCycleEndsAt } =
+        workspace;
 
-      /* 
-        We only reset clicks usage if it's not over usageLimit by:
-        - 4x for free plan (4K clicks)
-        - 2x for all other plans
-      */
+      // if yearly plan, we skip resetting usage if the billing cycle end date is not this year+month
+      let resetUsage = true;
+      if (
+        planPeriod === "yearly" &&
+        billingCycleEndsAt &&
+        !(
+          getYear(billingCycleEndsAt) === getYear(new Date()) &&
+          getMonth(billingCycleEndsAt) === getMonth(new Date())
+        )
+      ) {
+        resetUsage = false;
+      }
 
-      const resetUsage =
-        plan === "free" ? usage <= usageLimit * 4 : usage <= usageLimit * 2;
+      if (resetUsage) {
+        /* 
+          We only reset events usage if it's not over usageLimit by:
+          - 4x for free plan (4K events)
+          - 2x for all other plans
+        */
+        const resetEventsUsage =
+          plan === "free" ? usage <= usageLimit * 4 : usage <= usageLimit * 2;
 
-      await prisma.project.update({
-        where: {
-          id: workspace.id,
-        },
-        data: {
-          ...(resetUsage && {
-            usage: 0,
-          }),
-          linksUsage: 0,
-          payoutsUsage: 0,
-          aiUsage: 0,
-          sentEmails: {
-            deleteMany: {
-              type: {
-                in: [
-                  "firstUsageLimitEmail",
-                  "secondUsageLimitEmail",
-                  "firstLinksLimitEmail",
-                  "secondLinksLimitEmail",
-                ],
+        await prisma.project.update({
+          where: {
+            id: workspace.id,
+          },
+          data: {
+            usage: resetEventsUsage ? 0 : undefined,
+            linksUsage: 0,
+            payoutsUsage: 0,
+            aiUsage: 0,
+            sentEmails: {
+              deleteMany: {
+                type: {
+                  in: [
+                    "firstUsageLimitEmail",
+                    "secondUsageLimitEmail",
+                    "firstLinksLimitEmail",
+                    "secondLinksLimitEmail",
+                  ],
+                },
               },
             },
           },
-        },
-      });
+        });
+        console.log(`Reset usage for workspace "${workspace.slug}"`);
+      }
 
       /* Only send the 30-day summary email if:
          - the workspace has at least 1 link click
@@ -125,14 +141,13 @@ export const updateUsage = async () => {
           root: false,
         });
 
-        const topFive = topLinks.slice(0, 5);
-        const topFiveLinkIds = topFive.map(({ link }) => link);
+        const topLinkIds = topLinks.slice(0, 100).map(({ link }) => link);
 
         const linksMetadata = await prisma.link.findMany({
           where: {
             projectId: workspace.id,
             id: {
-              in: topFiveLinkIds,
+              in: topLinkIds,
             },
           },
           select: {
@@ -141,13 +156,15 @@ export const updateUsage = async () => {
           },
         });
 
-        const topFiveLinks = topFive.map((d) => ({
-          link:
-            getPrettyUrl(
-              linksMetadata.find((l) => l.id === d.link)?.shortLink,
-            ) || d.link,
-          clicks: d.clicks,
-        }));
+        const topFiveLinks = topLinks
+          .filter((d: { link: string; clicks: number }) =>
+            linksMetadata.find((l) => l.id === d.link),
+          )
+          .slice(0, 5)
+          .map((d: { link: string; clicks: number }) => ({
+            link: linksMetadata.find((l) => l.id === d.link)!, // coerce here since we're already filtering out links that don't exist
+            clicks: d.clicks,
+          }));
 
         const totalClicks = topLinks.reduce(
           (acc, curr) => acc + curr.clicks,
@@ -160,7 +177,7 @@ export const updateUsage = async () => {
 
         await sendBatchEmail(
           emails.map((email) => ({
-            subject: `Your 30-day ${process.env.NEXT_PUBLIC_APP_NAME} summary for ${workspace.name}`,
+            subject: `Your 30-day Dub summary for ${workspace.name}`,
             to: email,
             react: ClicksSummary({
               email,
@@ -194,11 +211,16 @@ export const updateUsage = async () => {
     ({ usage, usageLimit }) => usage > usageLimit,
   );
 
+  const slackWebhookByWorkspace = await getSlackWebhooks(
+    exceedingUsage.map(({ id }) => id),
+  );
+
   // Send email to notify overages
   await Promise.allSettled(
     exceedingUsage.map(async (workspace) => {
       const { slug, plan, usage, usageLimit, users, sentEmails } = workspace;
       const emails = users.map((user) => user.user.email) as string[];
+      const slackWebhookUrl = slackWebhookByWorkspace.get(workspace.id);
 
       await log({
         message: `*${slug}* is over their *${capitalize(
@@ -213,10 +235,11 @@ export const updateUsage = async () => {
         (email) => email.type === "firstUsageLimitEmail",
       );
       if (!sentFirstUsageLimitEmail) {
-        sendLimitEmail({
+        await sendWorkspaceLimitAlert({
           emails,
           workspace: workspace as unknown as WorkspaceProps,
           type: "firstUsageLimitEmail",
+          slackWebhookUrl,
         });
       } else {
         const sentSecondUsageLimitEmail = sentEmails.some(
@@ -229,10 +252,11 @@ export const updateUsage = async () => {
               (1000 * 3600 * 24),
           );
           if (daysSinceFirstEmail >= 3) {
-            sendLimitEmail({
+            sendWorkspaceLimitAlert({
               emails,
               workspace: workspace as unknown as WorkspaceProps,
               type: "secondUsageLimitEmail",
+              slackWebhookUrl,
             });
           }
         }
@@ -240,9 +264,11 @@ export const updateUsage = async () => {
     }),
   );
 
-  return await qstash.publishJSON({
+  await qstash.publishJSON({
     url: `${APP_DOMAIN_WITH_NGROK}/api/cron/usage`,
     method: "POST",
     body: {},
   });
+
+  return `Updated usage stats for ${workspaces.length} workspaces`;
 };

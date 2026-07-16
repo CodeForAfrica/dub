@@ -1,170 +1,157 @@
 "use server";
 
-import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
-import { queueDiscountCodeDeletion } from "@/lib/api/discounts/queue-discount-code-deletion";
-import { linkCache } from "@/lib/api/links/cache";
-import { includeTags } from "@/lib/api/links/include-tags";
-import { syncTotalCommissions } from "@/lib/api/partners/sync-total-commissions";
+import { trackActivityLog } from "@/lib/api/activity-log/track-activity-log";
+import { DubApiError } from "@/lib/api/errors";
+import { resolveFraudGroups } from "@/lib/api/fraud/resolve-fraud-groups";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { getProgramEnrollmentOrThrow } from "@/lib/api/programs/get-program-enrollment-or-throw";
-import { recordLink } from "@/lib/tinybird";
-import {
-  BAN_PARTNER_REASONS,
-  banPartnerSchema,
-} from "@/lib/zod/schemas/partners";
-import { sendEmail } from "@dub/email";
-import PartnerBanned from "@dub/email/templates/partner-banned";
-import { prisma } from "@dub/prisma";
+import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
+import { UserProps, WorkspaceProps } from "@/lib/types";
+import { banPartnerSchema } from "@/lib/zod/schemas/partners";
+import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { ProgramEnrollmentStatus } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
+import * as z from "zod/v4";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
+
+const queue = qstash.queue({
+  queueName: "ban-partner",
+});
+
+type BanPartnerInput = Omit<z.infer<typeof banPartnerSchema>, "workspaceId"> & {
+  user: Pick<UserProps, "id">;
+  workspace: Pick<WorkspaceProps, "id" | "defaultProgramId">;
+};
 
 // Ban a partner
 export const banPartnerAction = authActionClient
-  .schema(banPartnerSchema)
+  .inputSchema(banPartnerSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
-    const { partnerId } = parsedInput;
+    const { partnerId, reason, flagForFraud, flagForFraudReason } = parsedInput;
 
-    const programId = getDefaultProgramIdOrThrow(workspace);
-
-    const programEnrollment = await getProgramEnrollmentOrThrow({
-      partnerId,
-      programId,
-      include: {
-        program: true,
-        partner: true,
-        links: {
-          include: includeTags,
-        },
-        discountCodes: true,
-      },
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
     });
 
-    if (programEnrollment.status === "banned") {
-      throw new Error("This partner is already banned.");
-    }
-
-    const where = {
-      programId,
+    await banPartner({
+      workspace,
       partnerId,
-    };
+      reason,
+      user,
+      flagForFraud,
+      flagForFraudReason,
+    });
+  });
 
-    await prisma.$transaction([
-      prisma.link.updateMany({
-        where,
-        data: {
-          disabledAt: new Date(),
-          expiresAt: new Date(),
-        },
-      }),
+export const banPartner = async ({
+  workspace,
+  partnerId,
+  reason,
+  user,
+  flagForFraud,
+  flagForFraudReason,
+}: BanPartnerInput) => {
+  const programId = getDefaultProgramIdOrThrow(workspace);
 
-      prisma.programEnrollment.update({
-        where: {
-          partnerId_programId: where,
-        },
-        data: {
-          status: ProgramEnrollmentStatus.banned,
-          bannedAt: new Date(),
-          bannedReason: parsedInput.reason,
-          groupId: null,
-          clickRewardId: null,
-          leadRewardId: null,
-          saleRewardId: null,
-          discountId: null,
-        },
-      }),
+  const programEnrollment = await getProgramEnrollmentOrThrow({
+    partnerId,
+    programId,
+    include: {
+      partner: true,
+    },
+  });
 
-      prisma.commission.updateMany({
-        where: {
-          ...where,
-          status: "pending",
-        },
-        data: {
-          status: "canceled",
-        },
-      }),
+  if (flagForFraud && (!flagForFraudReason || !flagForFraudReason.trim())) {
+    throw new DubApiError({
+      code: "bad_request",
+      message: "Fraud reason is required when flagging for fraud.",
+    });
+  }
 
-      prisma.payout.updateMany({
-        where: {
-          ...where,
-          status: "pending",
-        },
-        data: {
-          status: "canceled",
-        },
-      }),
+  if (programEnrollment.status === "pending") {
+    throw new DubApiError({
+      code: "bad_request",
+      message: "This partner is not approved yet to be banned.",
+    });
+  }
 
-      prisma.bountySubmission.updateMany({
-        where: {
-          ...where,
+  if (programEnrollment.status === "banned") {
+    throw new DubApiError({
+      code: "bad_request",
+      message: "This partner is already banned from your program.",
+    });
+  }
+
+  const commonWhere = {
+    partnerId,
+    programId,
+  };
+
+  const programEnrollmentUpdated = await prisma.programEnrollment.update({
+    where: {
+      partnerId_programId: commonWhere,
+    },
+    data: {
+      status: ProgramEnrollmentStatus.banned,
+      bannedAt: new Date(),
+      bannedReason: reason,
+      clickRewardId: null,
+      leadRewardId: null,
+      saleRewardId: null,
+      referralRewardId: null,
+      discountId: null,
+    },
+  });
+
+  // Automatically resolve all pending fraud events for this partner in the current program
+  await resolveFraudGroups({
+    where: commonWhere,
+    userId: user.id,
+    resolutionReason: "Resolved automatically because the partner was banned.",
+  });
+
+  waitUntil(
+    Promise.allSettled([
+      trackActivityLog({
+        workspaceId: workspace.id,
+        programId,
+        resourceType: "partner",
+        resourceId: partnerId,
+        userId: user.id,
+        action: "partner.banned",
+        changeSet: {
           status: {
-            not: "approved",
+            old: programEnrollment.status,
+            new: "banned",
           },
         },
-        data: {
-          status: "rejected",
+      }),
+
+      queue.enqueueJSON({
+        url: `${APP_DOMAIN_WITH_NGROK}/api/cron/partners/ban`,
+        deduplicationId: `ban-${programId}-${partnerId}`,
+        method: "POST",
+        body: {
+          programId,
+          partnerId,
         },
       }),
 
-      prisma.discountCode.updateMany({
-        where,
-        data: {
-          discountId: null,
-        },
-      }),
-    ]);
+      flagForFraud && flagForFraudReason
+        ? prisma.fraudAlert.create({
+            data: {
+              partnerId,
+              programId,
+              reason: flagForFraudReason,
+            },
+          })
+        : undefined,
+    ]),
+  );
 
-    waitUntil(
-      (async () => {
-        // Sync total commissions
-        await syncTotalCommissions({ partnerId, programId });
-
-        const { program, partner, links, discountCodes } = programEnrollment;
-
-        await Promise.allSettled([
-          // Expire links from cache
-          linkCache.expireMany(links),
-
-          // Delete links from Tinybird links metadata
-          recordLink(links, { deleted: true }),
-
-          queueDiscountCodeDeletion(discountCodes.map(({ id }) => id)),
-
-          partner.email &&
-            sendEmail({
-              subject: `You've been banned from the ${program.name} Partner Program`,
-              to: partner.email,
-              replyTo: program.supportEmail || "noreply",
-              react: PartnerBanned({
-                partner: {
-                  name: partner.name,
-                  email: partner.email,
-                },
-                program: {
-                  name: program.name,
-                  slug: program.slug,
-                },
-                bannedReason: BAN_PARTNER_REASONS[parsedInput.reason],
-              }),
-              variant: "notifications",
-            }),
-
-          recordAuditLog({
-            workspaceId: workspace.id,
-            programId,
-            action: "partner.banned",
-            description: `Partner ${partnerId} banned`,
-            actor: user,
-            targets: [
-              {
-                type: "partner",
-                id: partnerId,
-                metadata: partner,
-              },
-            ],
-          }),
-        ]);
-      })(),
-    );
-  });
+  return programEnrollmentUpdated;
+};

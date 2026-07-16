@@ -1,11 +1,12 @@
 import { DubApiError } from "@/lib/api/errors";
-import { isDubAdmin, withWorkspace } from "@/lib/auth";
+import { getDubAdminRole, withWorkspace } from "@/lib/auth";
 import { getDubCustomer } from "@/lib/dub";
 import { stripe } from "@/lib/stripe";
+import { isEligibleForTrial } from "@/lib/stripe/is-eligible-for-trial";
 import { booleanQuerySchema } from "@/lib/zod/schemas/misc";
-import { APP_DOMAIN } from "@dub/utils";
+import { APP_DOMAIN, DUB_TRIAL_PERIOD_DAYS } from "@dub/utils";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const upgradePlanSchema = z.object({
   plan: z.enum(["pro", "business", "advanced"]),
@@ -18,109 +19,148 @@ const upgradePlanSchema = z.object({
 });
 
 // POST /api/workspaces/[idOrSlug]/billing/upgrade
-export const POST = withWorkspace(async ({ req, workspace, session }) => {
-  let { plan, period, tier, baseUrl, onboarding } = upgradePlanSchema.parse(
-    await req.json(),
-  );
+export const POST = withWorkspace(
+  async ({ req, workspace, session }) => {
+    let { plan, period, tier, baseUrl, onboarding } = upgradePlanSchema.parse(
+      await req.json(),
+    );
 
-  const lookupKey = tier > 1 ? `${plan}${tier}_${period}` : `${plan}_${period}`;
-  const prices = await stripe.prices.list({
-    lookup_keys: [lookupKey],
-  });
+    const lookupKey =
+      tier > 1 ? `${plan}${tier}_${period}` : `${plan}_${period}`;
 
-  if (prices.data.length === 0) {
-    throw new DubApiError({
-      code: "not_found",
-      message: `Price not found for lookup key: ${lookupKey}`,
+    const prices = await stripe.prices.list({
+      lookup_keys: [lookupKey],
     });
-  }
 
-  const activeSubscription = workspace.stripeId
-    ? await stripe.subscriptions
-        .list({
-          customer: workspace.stripeId,
-          status: "active",
-        })
-        .then((res) => res.data[0])
-    : null;
-
-  if (process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview") {
-    const isAdminUser = await isDubAdmin(session.user.id);
-    if (!isAdminUser) {
+    if (prices.data.length === 0) {
       throw new DubApiError({
-        code: "unauthorized",
-        message: "Unauthorized: Not an admin.",
+        code: "not_found",
+        message: `Price not found for lookup key: ${lookupKey}`,
       });
     }
-  }
 
-  // if the user has an active subscription, create billing portal to upgrade
-  if (workspace.stripeId && activeSubscription) {
-    const { url } = await stripe.billingPortal.sessions.create({
-      customer: workspace.stripeId,
-      return_url: baseUrl,
-      flow_data: {
-        type: "subscription_update_confirm",
-        subscription_update_confirm: {
-          subscription: activeSubscription.id,
+    const existingSubscription = workspace.stripeId
+      ? await Promise.all([
+          stripe.subscriptions.list({
+            customer: workspace.stripeId,
+            status: "active",
+            limit: 1,
+          }),
+          stripe.subscriptions.list({
+            customer: workspace.stripeId,
+            status: "trialing",
+            limit: 1,
+          }),
+        ]).then(([active, trialing]) => active.data[0] ?? trialing.data[0])
+      : null;
+
+    if (process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview") {
+      const adminRole = await getDubAdminRole(session.user.id);
+      if (!adminRole) {
+        throw new DubApiError({
+          code: "unauthorized",
+          message: "Unauthorized: Not an admin.",
+        });
+      }
+    }
+
+    if (workspace.stripeId && existingSubscription) {
+      if (existingSubscription.status === "trialing") {
+        await stripe.subscriptions.update(existingSubscription.id, {
           items: [
             {
-              id: activeSubscription.items.data[0].id,
-              quantity: 1,
+              id: existingSubscription.items.data[0].id,
               price: prices.data[0].id,
             },
           ],
-        },
-      },
-    });
-    return NextResponse.json({ url });
-  } else {
-    const customer = await getDubCustomer(session.user.id);
+          proration_behavior: "none", // no invoice is created and no charge is issued
+        });
 
-    // For both new users and users with canceled subscriptions
-    const stripeSession = await stripe.checkout.sessions.create({
-      ...(workspace.stripeId
-        ? {
-            customer: workspace.stripeId,
-            // need to pass this or Stripe will throw an error: https://git.new/kX4fi6B
-            customer_update: {
-              name: "auto",
-              address: "auto",
-            },
-          }
-        : {
-            customer_email: session.user.email,
-          }),
-      billing_address_collection: "required",
-      success_url: `${APP_DOMAIN}/${workspace.slug}?${onboarding ? "onboarded" : "upgraded"}=true&plan=${plan}&period=${period}`,
-      cancel_url: baseUrl,
-      line_items: [{ price: prices.data[0].id, quantity: 1 }],
-      ...(customer?.discount?.couponId
-        ? {
-            discounts: [
+        const successUrl = new URL(baseUrl);
+        successUrl.searchParams.set("upgraded", "true");
+        successUrl.searchParams.set("plan", plan);
+        successUrl.searchParams.set("period", period);
+        return NextResponse.json({ url: successUrl.toString() });
+      }
+
+      // Active subscriptions: use the billing portal's plan-change confirmation flow.
+      const { url } = await stripe.billingPortal.sessions.create({
+        customer: workspace.stripeId,
+        return_url: baseUrl,
+        flow_data: {
+          type: "subscription_update_confirm",
+          subscription_update_confirm: {
+            subscription: existingSubscription.id,
+            items: [
               {
-                coupon:
-                  process.env.NODE_ENV !== "production" &&
-                  customer.discount.couponTestId
-                    ? customer.discount.couponTestId
-                    : customer.discount.couponId,
+                id: existingSubscription.items.data[0].id,
+                quantity: 1,
+                price: prices.data[0].id,
               },
             ],
-          }
-        : { allow_promotion_codes: true }),
-      automatic_tax: {
-        enabled: true,
-      },
-      tax_id_collection: {
-        enabled: true,
-      },
-      mode: "subscription",
-      client_reference_id: workspace.id,
-      metadata: {
-        dubCustomerId: session.user.id,
-      },
-    });
+          },
+        },
+      });
+      return NextResponse.json({ url });
+    } else {
+      const customer = await getDubCustomer(session.user.id);
 
-    return NextResponse.json(stripeSession);
-  }
-});
+      const stripeSession = await stripe.checkout.sessions.create({
+        ...(workspace.stripeId
+          ? {
+              customer: workspace.stripeId,
+              // need to pass this or Stripe will throw an error: https://git.new/kX4fi6B
+              customer_update: {
+                name: "auto",
+                address: "auto",
+              },
+            }
+          : {
+              customer_email: session.user.email,
+            }),
+        billing_address_collection: "required",
+        success_url: onboarding
+          ? `${APP_DOMAIN}/onboarding/success?workspace=${workspace.slug}`
+          : `${APP_DOMAIN}/${workspace.slug}?upgraded=true&plan=${plan}&period=${period}`,
+        cancel_url: baseUrl,
+        line_items: [{ price: prices.data[0].id, quantity: 1 }],
+        ...(customer?.discount?.couponId
+          ? {
+              discounts: [
+                {
+                  coupon:
+                    process.env.NODE_ENV !== "production" &&
+                    customer.discount.couponTestId
+                      ? customer.discount.couponTestId
+                      : customer.discount.couponId,
+                },
+              ],
+            }
+          : { allow_promotion_codes: true }),
+        automatic_tax: {
+          enabled: true,
+        },
+        tax_id_collection: {
+          enabled: true,
+        },
+        mode: "subscription",
+        ...(isEligibleForTrial({ workspace, session })
+          ? {
+              subscription_data: {
+                trial_period_days: DUB_TRIAL_PERIOD_DAYS,
+              },
+            }
+          : {}),
+        client_reference_id: workspace.id,
+        metadata: {
+          dubCustomerId: session.user.id,
+        },
+      });
+
+      return NextResponse.json({ id: stripeSession.id });
+    }
+  },
+  {
+    requiredPermissions: ["billing.write"],
+  },
+);

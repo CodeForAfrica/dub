@@ -1,6 +1,6 @@
 import { R2_URL } from "@dub/utils";
-import { z } from "zod";
-import { uploadedImageSchema } from "./misc";
+import * as z from "zod/v4";
+import { uploadedImageSchema } from "./images";
 
 export const integrationSchema = z.object({
   id: z.string(),
@@ -22,18 +22,28 @@ export const integrationSchema = z.object({
   installations: z.number().default(0),
 });
 
+export const installedIntegrationSchema = integrationSchema.pick({
+  id: true,
+  projectId: true,
+  name: true,
+  slug: true,
+  description: true,
+  logo: true,
+  verified: true,
+  guideUrl: true,
+  comingSoon: true,
+});
+
 export const createIntegrationSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100),
   developer: z.string().min(1).max(100),
   website: z
-    .string()
     .url({
       message: "website must be a valid URL",
     })
     .max(100),
   installUrl: z
-    .string()
     .url({
       message: "installUrl must be a valid URL",
     })

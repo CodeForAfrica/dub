@@ -1,14 +1,25 @@
 "use client";
 
+import { clientAccessCheck } from "@/lib/client-access-check";
+import { MEGA_WORKSPACE_LINKS_LIMIT } from "@/lib/constants/misc";
 import useGroupsCount from "@/lib/swr/use-groups-count";
-import usePartnersCount from "@/lib/swr/use-partners-count";
-import useTagsCount from "@/lib/swr/use-tags-count";
-import useUsage from "@/lib/swr/use-usage";
+import { useLinkTagsCount } from "@/lib/swr/use-link-tags-count";
+import { useUsageTimeseries } from "@/lib/swr/use-usage-timeseries";
 import useWorkspace from "@/lib/swr/use-workspace";
 import useWorkspaceUsers from "@/lib/swr/use-workspace-users";
+import { useConfirmModal } from "@/ui/modals/confirm-modal";
 import { useManageUsageModal } from "@/ui/modals/manage-usage-modal";
+import { useStartPaidPlanModal } from "@/ui/modals/start-paid-plan-modal";
 import SubscriptionMenu from "@/ui/workspaces/subscription-menu";
-import { Button, Icon, Tooltip, useRouterStuff } from "@dub/ui";
+import {
+  AnimatedSizeContainer,
+  Badge,
+  Button,
+  DynamicTooltipWrapper,
+  Icon,
+  Tooltip,
+  useRouterStuff,
+} from "@dub/ui";
 import {
   CirclePercentage,
   CreditCard,
@@ -24,22 +35,25 @@ import {
 import {
   capitalize,
   cn,
-  getFirstAndLastDay,
+  getBillingPeriodBounds,
   INFINITY_NUMBER,
+  isLegacyBusinessPlan,
+  isWorkspaceBillingTrialActive,
   nFormatter,
 } from "@dub/utils";
-import { isLegacyBusinessPlan } from "@dub/utils/src/constants/pricing";
 import NumberFlow from "@number-flow/react";
 import Link from "next/link";
-import { CSSProperties, useMemo } from "react";
+import { CSSProperties, ReactNode, useMemo } from "react";
+import { toast } from "sonner";
 import { UsageChart } from "./usage-chart";
 
 export default function PlanUsage() {
   const {
+    id: workspaceId,
     slug,
     plan,
+    role,
     stripeId,
-    defaultProgramId,
     usage,
     usageLimit,
     linksUsage,
@@ -48,208 +62,392 @@ export default function PlanUsage() {
     payoutsUsage,
     payoutsLimit,
     payoutFee,
+    payoutFeeWaiverLimit,
+    payoutFeeWaiverUsage,
     domains,
     domainsLimit,
     foldersUsage,
     foldersLimit,
+    partnersUsage,
+    partnersLimit,
     groupsLimit,
     tagsLimit,
     usersLimit,
     billingCycleStart,
+    planPeriod,
+    trialEndsAt,
+    subscriptionCanceledAt,
+    billingCycleEndsAt,
+    mutate,
   } = useWorkspace();
 
-  const { data: tags } = useTagsCount();
-  const { users } = useWorkspaceUsers();
+  const permissionsError = clientAccessCheck({
+    action: "billing.write",
+    role,
+  }).error;
 
-  const { partnersCount } = usePartnersCount<number>({
-    programId: defaultProgramId ?? undefined,
-    status: "approved",
-  });
+  const { StartPaidPlanModal, setShowStartPaidPlanModal } =
+    useStartPaidPlanModal();
+
+  const { data: tags } = useLinkTagsCount();
+  const { users } = useWorkspaceUsers();
 
   const { groupsCount } = useGroupsCount();
 
-  const [billingStart, billingEnd] = useMemo(() => {
+  const [billingStart, billingEnd, billingPeriodLabel] = useMemo(() => {
     if (billingCycleStart) {
-      const { firstDay, lastDay } = getFirstAndLastDay(billingCycleStart);
-      const start = firstDay.toLocaleDateString("en-us", {
+      const { start, displayEnd } = getBillingPeriodBounds({
+        planPeriod,
+        billingCycleStart,
+        billingCycleEndsAt,
+      });
+      const startFormatted = start.toLocaleDateString("en-us", {
         month: "short",
         day: "numeric",
         year: "numeric",
       });
-      const end = lastDay.toLocaleDateString("en-us", {
+      const endFormatted = displayEnd.toLocaleDateString("en-us", {
         month: "short",
         day: "numeric",
         year: "numeric",
       });
-      return [start, end];
+      const label =
+        planPeriod === "yearly" && billingCycleEndsAt
+          ? "Current billing period"
+          : "Current billing cycle";
+
+      return [startFormatted, endFormatted, label];
     }
     return [];
-  }, [billingCycleStart]);
-
-  const { usage: usageTimeseries, hasActiveFilters } = useUsage({
-    disabledWhenNoFilters: true,
-  });
+  }, [billingCycleStart, planPeriod, billingCycleEndsAt]);
 
   const usageTabs = useMemo(() => {
-    const linksTabFilteredUsage = usageTimeseries?.reduce((acc, curr) => {
-      acc += curr.value;
-      return acc;
-    }, 0);
-
     const tabs = [
       {
-        id: "events" as const,
+        resource: "events" as const,
         icon: CursorRays,
         title: "Events tracked",
         usage: usage,
         limit: usageLimit,
       },
       {
-        id: "links" as const,
+        resource: "links" as const,
         icon: Hyperlink,
         title: "Links created",
-        usage:
-          linksTabFilteredUsage !== undefined && hasActiveFilters
-            ? linksTabFilteredUsage
-            : linksUsage,
+        usage: linksUsage,
         limit: linksLimit,
       },
     ];
-    if (totalLinks && totalLinks > 10_000) {
+    if (totalLinks && totalLinks > MEGA_WORKSPACE_LINKS_LIMIT) {
       // Find the links tab and move it to the first position
-      const linksTabIndex = tabs.findIndex((tab) => tab.id === "links");
+      const linksTabIndex = tabs.findIndex((tab) => tab.resource === "links");
       if (linksTabIndex !== -1) {
         const linksTab = tabs.splice(linksTabIndex, 1)[0];
         tabs.unshift(linksTab);
       }
     }
     return tabs;
-  }, [
-    usage,
-    usageLimit,
-    linksUsage,
-    linksLimit,
-    totalLinks,
-    usageTimeseries,
-    hasActiveFilters,
-  ]);
+  }, [usage, usageLimit, linksUsage, linksLimit, totalLinks]);
+
+  // Display the payout fee in a readable format
+  const payoutFeeDisplay = useMemo((): ReactNode => {
+    if (!plan || payoutFee === undefined) return undefined;
+
+    const hasTieredPricing = payoutFeeWaiverLimit && payoutFeeWaiverLimit > 0;
+    const hasWaiverRemaining =
+      payoutFeeWaiverUsage !== undefined &&
+      payoutFeeWaiverUsage < payoutFeeWaiverLimit!;
+
+    if (hasTieredPricing && hasWaiverRemaining) {
+      const waiverLimitFormatted = nFormatter(payoutFeeWaiverLimit / 100, {
+        full: payoutFeeWaiverLimit < 100000,
+      });
+
+      return (
+        <>
+          <span className="text-neutral-400 line-through">
+            {payoutFee * 100}%
+          </span>{" "}
+          0% for the first ${waiverLimitFormatted}
+        </>
+      );
+    }
+
+    return `${payoutFee * 100}%`;
+  }, [plan, payoutFee, payoutFeeWaiverLimit, payoutFeeWaiverUsage]);
+
+  const pendingCancellationEndDate =
+    subscriptionCanceledAt && billingCycleEndsAt && plan !== "free" && stripeId
+      ? billingCycleEndsAt
+      : null;
+
+  const showPendingCancellation = pendingCancellationEndDate != null;
+
+  const confirmResubscribe = async () => {
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/billing/cancel`, {
+        method: "POST",
+      });
+
+      if (res.ok) {
+        // sleep for 2 seconds to make sure Stripe webhook was received, and then mutate
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await mutate();
+        toast.success("Your subscription will continue as normal.");
+      } else {
+        try {
+          const body = await res.json();
+          toast.error(body?.error?.message ?? "Failed to resume subscription.");
+        } catch (error) {
+          console.error(error);
+          toast.error("Failed to resume subscription.");
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to resume subscription.");
+    }
+  };
+
+  const { setShowConfirmModal: setShowResubscribeModal, confirmModal } =
+    useConfirmModal({
+      title: "Resume subscription",
+      description: (
+        <p>
+          Your subscription is scheduled to end on{" "}
+          <span className="font-medium text-neutral-900">
+            {pendingCancellationEndDate
+              ? new Date(pendingCancellationEndDate).toLocaleDateString(
+                  "en-US",
+                  {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  },
+                )
+              : "—"}
+          </span>
+          . Resuming removes that cancellation and your plan will continue as
+          before.
+        </p>
+      ),
+      cancelText: "Not now",
+      confirmText: "Resume subscription",
+      onConfirm: confirmResubscribe,
+    });
 
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white">
-      <div className="flex flex-col items-start justify-between gap-y-4 p-6 md:px-8 lg:flex-row">
-        <div>
-          <h2 className="text-xl font-medium">
-            {plan && isLegacyBusinessPlan({ plan, payoutsLimit })
-              ? "Business (Legacy)"
-              : capitalize(plan)}{" "}
-            Plan
-          </h2>
-          {billingStart && billingEnd && (
-            <p className="mt-1.5 text-balance text-sm font-medium leading-normal text-neutral-700">
-              <>
-                Current billing cycle:{" "}
-                <span className="font-normal">
-                  {billingStart} - {billingEnd}
-                </span>
-              </>
+    <>
+      <StartPaidPlanModal />
+      {confirmModal}
+      <div className="rounded-xl border border-neutral-200 bg-white">
+        {showPendingCancellation ? (
+          <div className="mx-1 mt-1 flex items-center justify-center rounded-lg bg-amber-100/50 px-3 py-2">
+            <p className="text-center text-xs text-amber-900">
+              Your subscription will be canceled on{" "}
+              <span className="font-medium">
+                {new Date(pendingCancellationEndDate).toLocaleDateString(
+                  "en-US",
+                  {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  },
+                )}
+              </span>
+              .
             </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {plan !== "enterprise" && (
-            <Link href={`/${slug}/settings/billing/upgrade`}>
-              <Button text="Manage plan" variant="primary" className="h-9" />
+          </div>
+        ) : trialEndsAt != null &&
+          isWorkspaceBillingTrialActive(trialEndsAt) ? (
+          <div className="mx-1 mt-1 flex items-center justify-center rounded-lg bg-blue-50/50 px-3 py-2">
+            <p className="text-xs font-medium text-blue-600">
+              Trial ends on{" "}
+              <span className="font-semibold">
+                {new Date(trialEndsAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+              . Your card will be charged when the trial ends unless you cancel.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col items-start justify-between gap-y-4 p-6 md:px-8 lg:flex-row">
+          <div>
+            <h2 className="flex items-center gap-2 text-xl font-medium">
+              <span>
+                {plan && isLegacyBusinessPlan({ plan, partnersLimit })
+                  ? "Business (Legacy)"
+                  : capitalize(plan)}{" "}
+                Plan
+              </span>
+              {planPeriod && (
+                <Badge variant="gray">{capitalize(planPeriod)}</Badge>
+              )}
+            </h2>
+            {billingStart && billingEnd && (
+              <p className="mt-1.5 text-balance text-sm font-medium leading-normal text-neutral-700">
+                <>
+                  {billingPeriodLabel}:{" "}
+                  <span className="font-normal">
+                    {billingStart} - {billingEnd}
+                  </span>
+                </>
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {plan !== "enterprise" &&
+              (plan === "free" ? (
+                <Link href={`/${slug}/settings/billing/upgrade`}>
+                  <Button text="Upgrade" variant="primary" className="h-9" />
+                </Link>
+              ) : isWorkspaceBillingTrialActive(trialEndsAt) ? (
+                <DynamicTooltipWrapper
+                  tooltipProps={
+                    permissionsError ? { content: permissionsError } : undefined
+                  }
+                >
+                  <Button
+                    text="Start paid plan"
+                    variant="primary"
+                    className="h-9"
+                    disabled={Boolean(permissionsError)}
+                    onClick={() => setShowStartPaidPlanModal(true)}
+                  />
+                </DynamicTooltipWrapper>
+              ) : showPendingCancellation ? (
+                <DynamicTooltipWrapper
+                  tooltipProps={
+                    permissionsError ? { content: permissionsError } : undefined
+                  }
+                >
+                  <Button
+                    text="Resume subscription"
+                    variant="primary"
+                    className="h-9"
+                    disabled={Boolean(permissionsError)}
+                    onClick={() => setShowResubscribeModal(true)}
+                  />
+                </DynamicTooltipWrapper>
+              ) : (
+                <Link href={`/${slug}/settings/billing/upgrade`}>
+                  <Button
+                    text="Manage plan"
+                    variant="primary"
+                    className="h-9"
+                  />
+                </Link>
+              ))}
+
+            <Link
+              href={
+                isWorkspaceBillingTrialActive(trialEndsAt)
+                  ? `/${slug}/settings/billing/upgrade`
+                  : `/${slug}/settings/billing/invoices`
+              }
+            >
+              <Button
+                text={
+                  isWorkspaceBillingTrialActive(trialEndsAt)
+                    ? "View plans"
+                    : "View invoices"
+                }
+                variant="secondary"
+                className="h-9"
+              />
             </Link>
-          )}
-          <Link href={`/${slug}/settings/billing/invoices`}>
-            <Button text="View invoices" variant="secondary" className="h-9" />
-          </Link>
-          {stripeId && plan !== "free" && <SubscriptionMenu />}
-        </div>
-      </div>
-      <div className="grid grid-cols-[minmax(0,1fr)] divide-y divide-neutral-200 border-t border-neutral-200">
-        <div>
-          <div className="grid gap-4 p-6 pb-0 sm:grid-cols-2 md:p-8 md:pb-0 lg:gap-6">
-            {usageTabs.map((tab) => (
-              <UsageTabCard key={tab.id} {...tab} />
-            ))}
-          </div>
-          <div className="w-full px-2 pb-8 md:px-8">
-            <UsageChart />
+
+            {stripeId && plan !== "free" && <SubscriptionMenu />}
           </div>
         </div>
-        <div
-          className={cn(
-            "grid grid-cols-1 gap-[1px] overflow-hidden rounded-b-lg bg-neutral-200 md:grid-cols-3",
-            "md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4",
-          )}
-        >
-          <UsageCategory
-            title="Custom Domains"
-            icon={Globe}
-            usage={domains?.length}
-            usageLimit={domainsLimit}
-            href={`/${slug}/settings/domains`}
-          />
-          <UsageCategory
-            title="Folders"
-            icon={Folder5}
-            usage={foldersUsage}
-            usageLimit={foldersLimit}
-            href={`/${slug}/settings/library/folders`}
-          />
-          <UsageCategory
-            title="Tags"
-            icon={Tag}
-            usage={tags}
-            usageLimit={tagsLimit}
-            href={`/${slug}/settings/library/tags`}
-          />
-          <UsageCategory
-            title="Teammates"
-            icon={Users}
-            usage={users?.filter((user) => !user.isMachine).length}
-            usageLimit={usersLimit}
-            href={`/${slug}/settings/people`}
-          />
-        </div>
-        <div className="grid grid-cols-1 gap-[1px] overflow-hidden rounded-b-lg bg-neutral-200 md:grid-cols-4">
-          <UsageCategory
-            title="Partners"
-            icon={Users}
-            usage={partnersCount ?? 0}
-            usageLimit={INFINITY_NUMBER}
-            href={`/${slug}/program/partners`}
-          />
-          <UsageCategory
-            title="Partner Groups"
-            icon={Users6}
-            usage={groupsCount ?? 0}
-            usageLimit={groupsLimit}
-            href={`/${slug}/program/groups`}
-          />
-          <UsageCategory
-            title="Partner payouts"
-            icon={CreditCard}
-            usage={payoutsUsage}
-            usageLimit={payoutsLimit}
-            unit="$"
-            href={`/${slug}/program/payouts`}
-          />
-          <UsageCategory
-            title="Payout fees"
-            icon={CirclePercentage}
-            usage={plan && payoutFee && `${payoutFee * 100}%`}
-            href="https://dub.co/help/article/partner-payouts#payout-fees-and-timing"
-          />
+        <div className="grid grid-cols-[minmax(0,1fr)] divide-y divide-neutral-200 border-t border-neutral-200">
+          <div>
+            <div className="grid gap-4 p-6 pb-0 sm:grid-cols-2 md:p-8 md:pb-0 lg:gap-6">
+              {usageTabs.map((tab) => (
+                <UsageTabCard key={tab.resource} {...tab} />
+              ))}
+            </div>
+            <div className="w-full px-2 pb-8 md:px-8">
+              <UsageChart />
+            </div>
+          </div>
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-[1px] overflow-hidden rounded-b-lg bg-neutral-200 md:grid-cols-3",
+              "md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4",
+            )}
+          >
+            <UsageCategory
+              title="Custom domains"
+              icon={Globe}
+              usage={domains?.length}
+              usageLimit={domainsLimit}
+              href={`/${slug}/settings/domains`}
+            />
+            <UsageCategory
+              title="Link folders"
+              icon={Folder5}
+              usage={foldersUsage}
+              usageLimit={foldersLimit}
+              href={`/${slug}/settings/library/folders`}
+            />
+            <UsageCategory
+              title="Link tags"
+              icon={Tag}
+              usage={tags}
+              usageLimit={tagsLimit}
+              href={`/${slug}/settings/library/tags`}
+            />
+            <UsageCategory
+              title="Teammates"
+              icon={Users}
+              usage={users?.filter((user) => !user.isMachine).length}
+              usageLimit={usersLimit}
+              href={`/${slug}/settings/people`}
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-[1px] overflow-hidden rounded-b-xl bg-neutral-200 md:grid-cols-4">
+            <UsageCategory
+              title="Partners"
+              icon={Users}
+              usage={partnersUsage}
+              usageLimit={partnersLimit}
+              href={`/${slug}/program/partners`}
+            />
+            <UsageCategory
+              title="Partner groups"
+              icon={Users6}
+              usage={groupsCount ?? 0}
+              usageLimit={groupsLimit}
+              href={`/${slug}/program/groups`}
+            />
+            <UsageCategory
+              title="Partner payouts"
+              icon={CreditCard}
+              usage={payoutsUsage}
+              usageLimit={payoutsLimit}
+              unit="$"
+              href={`/${slug}/program/payouts?status=pending`}
+            />
+            <UsageCategory
+              title="Payout fees"
+              icon={CirclePercentage}
+              usage={payoutFeeDisplay}
+              href="https://dub.co/help/article/partner-payouts#payout-fees-and-timing"
+            />
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
 function UsageTabCard({
-  id,
+  resource,
   icon: Icon,
   title,
   usage: usageProp,
@@ -257,7 +455,7 @@ function UsageTabCard({
   unit,
   requiresUpgrade,
 }: {
-  id: "links" | "events";
+  resource: "links" | "events";
   icon: Icon;
   title: string;
   usage?: number;
@@ -265,22 +463,49 @@ function UsageTabCard({
   unit?: string;
   requiresUpgrade?: boolean;
 }) {
-  const { queryParams } = useRouterStuff();
+  const { queryParams, searchParamsObj } = useRouterStuff();
   const { slug, plan } = useWorkspace();
 
   const { ManageUsageModal, setShowManageUsageModal } = useManageUsageModal({
-    type: id,
+    type: resource,
   });
 
-  const { activeResource } = useUsage();
+  const hasActiveFilters = useMemo(() => {
+    return !!(
+      searchParamsObj.folderId ||
+      searchParamsObj.domain ||
+      searchParamsObj.interval ||
+      searchParamsObj.start ||
+      searchParamsObj.end
+    );
+  }, [searchParamsObj]);
+
+  const { usage: usageTimeseries, activeResource } = useUsageTimeseries({
+    resource: hasActiveFilters ? resource : undefined,
+  });
+
+  const filteredUsage = usageTimeseries?.reduce((acc, curr) => {
+    acc += curr.value;
+    return acc;
+  }, 0);
 
   const [usage, limit] =
     unit === "$" && usageProp !== undefined && limitProp !== undefined
-      ? [usageProp / 100, limitProp / 100]
-      : [usageProp, limitProp];
+      ? [
+          (hasActiveFilters && filteredUsage !== undefined
+            ? filteredUsage
+            : usageProp) / 100,
+          limitProp / 100,
+        ]
+      : [
+          hasActiveFilters && filteredUsage !== undefined
+            ? filteredUsage
+            : usageProp,
+          limitProp,
+        ];
 
   const loading = usage === undefined || limit === undefined;
-  const unlimited = limitProp !== undefined && limitProp >= INFINITY_NUMBER; // using limitProp here cause payouts is divided by 100
+  const unlimited = limitProp !== undefined && limitProp >= INFINITY_NUMBER;
   const warning = !loading && !unlimited && usage >= limit * 0.9;
   const remaining = !loading && !unlimited ? Math.max(0, limit - usage) : 0;
 
@@ -293,13 +518,16 @@ function UsageTabCard({
         className={cn(
           "w-full rounded-lg border border-neutral-300 bg-white px-4 py-3 text-left transition-colors duration-75",
           "outline-none focus-visible:border-blue-600 focus-visible:ring-1 focus-visible:ring-blue-600",
-          activeResource === id && "border-neutral-900 ring-1 ring-neutral-900",
+          activeResource === resource &&
+            "border-neutral-900 ring-1 ring-neutral-900",
           requiresUpgrade
             ? "border-neutral-100 bg-neutral-100 hover:bg-neutral-100"
             : "hover:bg-neutral-50 lg:px-5 lg:py-4",
         )}
-        aria-selected={activeResource === id}
-        onClick={() => !requiresUpgrade && queryParams({ set: { tab: id } })}
+        aria-selected={activeResource === resource}
+        onClick={() =>
+          !requiresUpgrade && queryParams({ set: { tab: resource } })
+        }
         disabled={requiresUpgrade}
       >
         <Icon className="size-4 text-neutral-600" />
@@ -326,11 +554,11 @@ function UsageTabCard({
             </Tooltip>
           )}
         </div>
-        <div className="mt-2">
+        <div className="mt-1.5">
           {!loading ? (
             <NumberFlow
               value={usage}
-              className="text-xl leading-none text-neutral-900"
+              className="text-2xl font-medium leading-none text-neutral-900"
               format={
                 unit === "$"
                   ? {
@@ -349,47 +577,54 @@ function UsageTabCard({
             <div className="h-5 w-16 animate-pulse rounded-md bg-neutral-200" />
           )}
         </div>
-        <div className="mt-5">
-          <div
-            className={cn(
-              "h-1 w-full overflow-hidden rounded-full bg-neutral-900/10 transition-colors",
-              loading && "bg-neutral-900/5",
-            )}
-          >
-            {!loading && !unlimited && (
-              <div
-                className="animate-slide-right-fade size-full"
-                style={{ "--offset": "-100%" } as CSSProperties}
-              >
+        <AnimatedSizeContainer height>
+          {!hasActiveFilters && (
+            <div className="h-12">
+              <div className="mt-4">
                 <div
                   className={cn(
-                    "size-full rounded-full",
-                    requiresUpgrade
-                      ? "bg-neutral-900/10"
-                      : "bg-gradient-to-r from-blue-500/80 to-blue-600",
-                    warning && "from-neutral-900/10 via-red-500 to-red-600",
+                    "h-1 w-full overflow-hidden rounded-full bg-neutral-900/10 transition-colors",
+                    loading && "bg-neutral-900/5",
                   )}
-                  style={{
-                    transform: `translateX(-${100 - Math.max(Math.floor((usage / Math.max(0, usage, limit)) * 100), usage === 0 ? 0 : 1)}%)`,
-                  }}
-                />
+                >
+                  {!loading && !unlimited && (
+                    <div
+                      className="animate-slide-right-fade size-full"
+                      style={{ "--offset": "-100%" } as CSSProperties}
+                    >
+                      <div
+                        className={cn(
+                          "size-full rounded-full",
+                          requiresUpgrade
+                            ? "bg-neutral-900/10"
+                            : "bg-neutral-800",
+                          warning &&
+                            "from-neutral-900/10 via-red-500 to-red-600",
+                        )}
+                        style={{
+                          transform: `translateX(-${100 - Math.max(Math.floor((usage / Math.max(0, usage, limit)) * 100), usage === 0 ? 0 : 1)}%)`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        </div>
-        <div className="mt-2 leading-none">
-          {!loading ? (
-            <span className="text-xs leading-none text-neutral-600">
-              {unlimited
-                ? "Unlimited"
-                : `${prefix}${nFormatter(remaining, { full: true })} remaining of ${prefix}${nFormatter(limit, { full: limit < INFINITY_NUMBER })}`}
-            </span>
-          ) : (
-            <div className="h-4 w-20 animate-pulse rounded-md bg-neutral-200" />
+              <div className="mt-2 leading-none">
+                {!loading ? (
+                  <span className="text-xs font-medium leading-none text-neutral-600">
+                    {unlimited
+                      ? "Unlimited"
+                      : `${prefix}${nFormatter(remaining, { full: true })} remaining of ${prefix}${nFormatter(limit, { full: limit < INFINITY_NUMBER })}`}
+                  </span>
+                ) : (
+                  <div className="h-4 w-20 animate-pulse rounded-md bg-neutral-200" />
+                )}
+              </div>
+            </div>
           )}
-        </div>
+        </AnimatedSizeContainer>
       </button>
-      {["links", "events"].includes(id) && plan !== "enterprise" && (
+      {["links", "events"].includes(resource) && plan !== "enterprise" && (
         <div className="absolute right-3 top-3">
           <Button
             onClick={() => setShowManageUsageModal(true)}
@@ -406,7 +641,7 @@ function UsageTabCard({
 function UsageCategory(data: {
   title: string;
   icon: Icon;
-  usage?: number | string;
+  usage?: number | string | ReactNode;
   usageLimit?: number;
   href?: string;
   unit?: string;
@@ -432,9 +667,7 @@ function UsageCategory(data: {
         {usage || usage === 0 ? (
           <p>
             {typeof usage === "number"
-              ? `${unit ?? ""}${nFormatter(usage / (unit === "$" ? 100 : 1), {
-                  full: true,
-                })}`
+              ? `${unit ?? ""}${nFormatter(usage / (unit === "$" ? 100 : 1), { full: true })}`
               : usage}
           </p>
         ) : (

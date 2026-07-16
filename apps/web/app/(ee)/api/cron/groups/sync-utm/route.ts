@@ -3,13 +3,13 @@ import { linkCache } from "@/lib/api/links/cache";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { qstash } from "@/lib/cron";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import {
   APP_DOMAIN_WITH_NGROK,
   constructURLFromUTMParams,
   log,
 } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 export const dynamic = "force-dynamic";
 
@@ -147,8 +147,6 @@ export async function POST(req: Request) {
       message: `Error syncing UTM settings: ${error.message}.`,
       type: "errors",
     });
-
-    console.error(error);
 
     return handleAndReturnErrorResponse(error);
   }

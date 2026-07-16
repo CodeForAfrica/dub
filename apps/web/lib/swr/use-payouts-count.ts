@@ -1,15 +1,17 @@
 import { useRouterStuff } from "@dub/ui";
 import { fetcher } from "@dub/utils";
 import useSWR from "swr";
-import { z } from "zod";
-import { PayoutsCount } from "../types";
-import { payoutsCountQuerySchema } from "../zod/schemas/payouts";
+import { PayoutsCount, PayoutsCountQueryFilters } from "../types";
 import useWorkspace from "./use-workspace";
 
-export default function usePayoutsCount<T>({
+export function usePayoutsCount({
+  ignoreParams,
   enabled = true,
   ...query
-}: z.input<typeof payoutsCountQuerySchema> & { enabled?: boolean } = {}) {
+}: PayoutsCountQueryFilters & {
+  ignoreParams?: boolean;
+  enabled?: boolean;
+} = {}) {
   const { id: workspaceId, defaultProgramId } = useWorkspace();
   const { getQueryString } = useRouterStuff();
 
@@ -17,20 +19,22 @@ export default function usePayoutsCount<T>({
     workspaceId &&
       defaultProgramId &&
       enabled &&
-      `/api/programs/${defaultProgramId}/payouts/count${getQueryString(
+      `/api/payouts/count${getQueryString(
         {
           ...query,
           workspaceId,
         },
         {
-          include: ["status", "partnerId", "invoiceId"],
+          include: ignoreParams
+            ? []
+            : ["status", "partnerId", "invoiceId", "groupId"],
         },
       )}`,
     fetcher,
   );
 
   return {
-    payoutsCount: payoutsCount as T,
+    payoutsCount,
     error,
     loading: payoutsCount === undefined && !error,
   };

@@ -4,8 +4,10 @@ import {
   useLinkBuilderContext,
 } from "@/ui/links/link-builder/link-builder-provider";
 import { Link } from "@/ui/shared/icons";
+import { MaxCharactersCounter } from "@/ui/shared/max-characters-counter";
 import { ProBadgeTooltip } from "@/ui/shared/pro-badge-tooltip";
 import { UpgradeRequiredToast } from "@/ui/shared/upgrade-required-toast";
+import { useCompletion } from "@ai-sdk/react";
 import {
   Button,
   ButtonTooltip,
@@ -16,8 +18,6 @@ import {
 } from "@dub/ui";
 import { LoadingCircle, Magic, Unsplash } from "@dub/ui/icons";
 import { resizeImage } from "@dub/utils";
-import { useCompletion } from "ai/react";
-import posthog from "posthog-js";
 import {
   Dispatch,
   SetStateAction,
@@ -66,6 +66,7 @@ function OGModalInner({
     setValue,
     reset,
     handleSubmit,
+    control,
     formState: { isDirty },
   } = useForm<Pick<LinkFormData, "image" | "title" | "description" | "proxy">>({
     defaultValues: {
@@ -107,6 +108,7 @@ function OGModalInner({
     complete: completeTitle,
   } = useCompletion({
     api: `/api/ai/completion?workspaceId=${workspaceId}`,
+    streamProtocol: "text",
     onError: (error) => {
       if (error.message.includes("Upgrade to Pro")) {
         toast.custom(() => (
@@ -119,12 +121,8 @@ function OGModalInner({
         toast.error(error.message);
       }
     },
-    onFinish: (_, completion) => {
+    onFinish: () => {
       mutate();
-      posthog.capture("ai_meta_title_generated", {
-        title: completion,
-        url,
-      });
     },
   });
 
@@ -156,6 +154,7 @@ function OGModalInner({
     complete: completeDescription,
   } = useCompletion({
     api: `/api/ai/completion?workspaceId=${workspaceId}`,
+    streamProtocol: "text",
     onError: (error) => {
       if (error.message.includes("Upgrade to Pro")) {
         toast.custom(() => (
@@ -168,12 +167,8 @@ function OGModalInner({
         toast.error(error.message);
       }
     },
-    onFinish: (_, completion) => {
+    onFinish: (_, __) => {
       mutate();
-      posthog.capture("ai_meta_description_generated", {
-        description: completion,
-        url,
-      });
     },
   });
 
@@ -333,9 +328,11 @@ function OGModalInner({
                   Title
                 </p>
                 <div className="flex items-center gap-2">
-                  <p className="text-sm text-neutral-500">
-                    {title?.length || 0}/120
-                  </p>
+                  <MaxCharactersCounter
+                    name="title"
+                    maxLength={120}
+                    control={control}
+                  />
                   <ButtonTooltip
                     tooltipProps={{
                       content: exceededAI
@@ -387,9 +384,11 @@ function OGModalInner({
                   Description
                 </p>
                 <div className="flex items-center gap-2">
-                  <p className="text-sm text-neutral-500">
-                    {description?.length || 0}/240
-                  </p>
+                  <MaxCharactersCounter
+                    name="description"
+                    maxLength={240}
+                    control={control}
+                  />
                   <ButtonTooltip
                     tooltipProps={{
                       content: exceededAI

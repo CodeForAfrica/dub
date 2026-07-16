@@ -1,28 +1,33 @@
+import { queueDomainUpdate } from "@/lib/api/domains/queue-domain-update";
 import { DubApiError } from "@/lib/api/errors";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { withWorkspace } from "@/lib/auth";
 import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
 import {
   createOrUpdateDefaultLinkSchema,
   PartnerGroupDefaultLinkSchema,
 } from "@/lib/zod/schemas/groups";
-import { prisma } from "@dub/prisma";
-import { APP_DOMAIN_WITH_NGROK, constructURLFromUTMParams } from "@dub/utils";
+import {
+  APP_DOMAIN_WITH_NGROK,
+  constructURLFromUTMParams,
+  prettyPrint,
+} from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
 // PATCH /api/groups/[groupIdOrSlug]/default-links/[defaultLinkId] - update a default link for a group
 export const PATCH = withWorkspace(
   async ({ workspace, req, params }) => {
+    const { groupIdOrSlug } = params;
+
     const programId = getDefaultProgramIdOrThrow(workspace);
 
-    const { url } = createOrUpdateDefaultLinkSchema.parse(
+    const { domain, url } = createOrUpdateDefaultLinkSchema.parse(
       await parseRequestBody(req),
     );
-
-    const { groupIdOrSlug } = params;
 
     const group = await prisma.partnerGroup.findUniqueOrThrow({
       where: {
@@ -45,6 +50,11 @@ export const PATCH = withWorkspace(
             id: params.defaultLinkId,
           },
         },
+        program: {
+          select: {
+            domain: true,
+          },
+        },
       },
     });
 
@@ -55,12 +65,50 @@ export const PATCH = withWorkspace(
       });
     }
 
+    const defaultLink = group.partnerGroupDefaultLinks[0];
+
+    // Domain change detected, we should do the following
+    // - Update the program's domain
+    // - Update all default links across groups to use the new domain
+    // - Update all partner links to use the new domain (via cron job)
+    if (domain !== group.program.domain) {
+      await prisma.$transaction([
+        prisma.program.update({
+          where: {
+            id: programId,
+          },
+          data: {
+            domain,
+          },
+        }),
+
+        prisma.partnerGroupDefaultLink.updateMany({
+          where: {
+            programId,
+          },
+          data: {
+            domain,
+          },
+        }),
+      ]);
+
+      // Queue domain update for all partner links
+      waitUntil(
+        queueDomainUpdate({
+          newDomain: domain,
+          oldDomain: defaultLink.domain,
+          programId,
+        }),
+      );
+    }
+
     try {
       const updatedDefaultLink = await prisma.partnerGroupDefaultLink.update({
         where: {
-          id: group.partnerGroupDefaultLinks[0].id,
+          id: defaultLink.id,
         },
         data: {
+          domain,
           url: group.utmTemplate
             ? constructURLFromUTMParams(
                 url,
@@ -70,12 +118,12 @@ export const PATCH = withWorkspace(
         },
       });
 
-      if (updatedDefaultLink.url !== group.partnerGroupDefaultLinks[0].url) {
+      if (updatedDefaultLink.url !== defaultLink.url) {
         waitUntil(
           qstash.publishJSON({
             url: `${APP_DOMAIN_WITH_NGROK}/api/cron/groups/update-default-links`,
             body: {
-              defaultLinkId: group.partnerGroupDefaultLinks[0].id,
+              defaultLinkId: defaultLink.id,
             },
           }),
         );
@@ -100,14 +148,7 @@ export const PATCH = withWorkspace(
   },
   {
     requiredPermissions: ["groups.write"],
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );
 
@@ -148,25 +189,36 @@ export const DELETE = withWorkspace(
       });
     }
 
-    await prisma.partnerGroupDefaultLink.delete({
-      where: {
-        id: group.partnerGroupDefaultLinks[0].id,
+    const defaultLinkId = group.partnerGroupDefaultLinks[0].id;
+
+    const deleteDefaultLinksJob = await qstash.publishJSON({
+      url: `${APP_DOMAIN_WITH_NGROK}/api/cron/groups/delete-default-links`,
+      body: {
+        partnerGroupDefaultLinkId: defaultLinkId,
       },
     });
 
+    console.log(
+      `Scheduled delete-default-links job for partner group default link ${defaultLinkId}: ${prettyPrint(deleteDefaultLinksJob)}`,
+    );
+
+    // soft delete the default link by setting the groupId to null
+    await prisma.partnerGroupDefaultLink.update({
+      where: {
+        id: defaultLinkId,
+      },
+      data: {
+        groupId: null,
+      },
+    });
+    console.log(`Soft deleted default link ${defaultLinkId}`);
+
     return NextResponse.json({
-      id: group.partnerGroupDefaultLinks[0].id,
+      id: defaultLinkId,
     });
   },
   {
     requiredPermissions: ["groups.write"],
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

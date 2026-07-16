@@ -1,28 +1,30 @@
 "use server";
 
-import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
-import { queueDiscountCodeDeletion } from "@/lib/api/discounts/queue-discount-code-deletion";
-import { linkCache } from "@/lib/api/links/cache";
-import { includeTags } from "@/lib/api/links/include-tags";
-import { syncTotalCommissions } from "@/lib/api/partners/sync-total-commissions";
+import { trackActivityLog } from "@/lib/api/activity-log/track-activity-log";
+import { resolveFraudGroups } from "@/lib/api/fraud/resolve-fraud-groups";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
-import { recordLink } from "@/lib/tinybird";
+import { enqueueBatchJobs } from "@/lib/cron/enqueue-batch-jobs";
+import { prisma } from "@/lib/prisma";
 import {
-  BAN_PARTNER_REASONS,
+  ACTIVE_ENROLLMENT_STATUSES,
   bulkBanPartnersSchema,
 } from "@/lib/zod/schemas/partners";
-import { sendBatchEmail } from "@dub/email";
-import PartnerBanned from "@dub/email/templates/partner-banned";
-import { prisma } from "@dub/prisma";
+import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { ProgramEnrollmentStatus } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 export const bulkBanPartnersAction = authActionClient
-  .schema(bulkBanPartnersSchema)
+  .inputSchema(bulkBanPartnersSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
-    const { partnerIds } = parsedInput;
+    const { partnerIds, reason } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -33,11 +35,14 @@ export const bulkBanPartnersAction = authActionClient
         },
         programId,
         status: {
-          not: "banned",
+          in: ACTIVE_ENROLLMENT_STATUSES,
         },
       },
       select: {
         id: true,
+        programId: true,
+        partnerId: true,
+        status: true,
         partner: {
           select: {
             id: true,
@@ -45,173 +50,75 @@ export const bulkBanPartnersAction = authActionClient
             email: true,
           },
         },
-        links: {
-          include: {
-            ...includeTags,
-            discountCode: true,
-          },
-        },
       },
     });
 
+    // Don't throw an error if no partners are found, just return
     if (programEnrollments.length === 0) {
-      throw new Error("You must provide at least one valid partner ID.");
+      return;
     }
 
-    const commonWhere = {
-      programId,
-      partnerId: {
-        in: partnerIds,
+    await prisma.programEnrollment.updateMany({
+      where: {
+        id: {
+          in: programEnrollments.map(({ id }) => id),
+        },
       },
-    };
+      data: {
+        status: ProgramEnrollmentStatus.banned,
+        bannedAt: new Date(),
+        bannedReason: reason,
+        clickRewardId: null,
+        leadRewardId: null,
+        saleRewardId: null,
+        referralRewardId: null,
+        discountId: null,
+      },
+    });
 
-    await prisma.$transaction([
-      prisma.programEnrollment.updateMany({
-        where: {
-          ...commonWhere,
-        },
-        data: {
-          status: ProgramEnrollmentStatus.banned,
-          bannedAt: new Date(),
-          bannedReason: parsedInput.reason,
-          groupId: null,
-          clickRewardId: null,
-          leadRewardId: null,
-          saleRewardId: null,
-          discountId: null,
-        },
-      }),
-
-      prisma.link.updateMany({
-        where: {
-          ...commonWhere,
-        },
-        data: {
-          disabledAt: new Date(),
-          expiresAt: new Date(),
-        },
-      }),
-
-      prisma.commission.updateMany({
-        where: {
-          ...commonWhere,
-          status: "pending",
-        },
-        data: {
-          status: "canceled",
-        },
-      }),
-
-      prisma.payout.updateMany({
-        where: {
-          ...commonWhere,
-          status: "pending",
-        },
-        data: {
-          status: "canceled",
-        },
-      }),
-
-      prisma.bountySubmission.updateMany({
-        where: {
-          ...commonWhere,
-          status: {
-            not: "approved",
+    await resolveFraudGroups({
+      where: {
+        programEnrollment: {
+          id: {
+            in: programEnrollments.map(({ id }) => id),
           },
         },
-        data: {
-          status: "rejected",
-        },
-      }),
-
-      prisma.discountCode.updateMany({
-        where: {
-          ...commonWhere,
-        },
-        data: {
-          discountId: null,
-        },
-      }),
-    ]);
+      },
+      userId: user.id,
+      resolutionReason:
+        "Resolved automatically because the partner was banned.",
+    });
 
     waitUntil(
-      (async () => {
-        // Sync total commissions for each partner
-        await Promise.allSettled(
-          programEnrollments.map(({ partner }) =>
-            syncTotalCommissions({
-              partnerId: partner.id,
-              programId,
-            }),
-          ),
-        );
-
-        const links = programEnrollments.flatMap(({ links }) => links);
-
-        await Promise.allSettled([
-          // Expire links from cache
-          linkCache.expireMany(links),
-          // Delete links from Tinybird links metadata
-          recordLink(links, { deleted: true }),
-          // Queue discount code deletions
-          queueDiscountCodeDeletion(
-            links
-              .map((link) => link.discountCode?.id)
-              .filter((id): id is string => id !== undefined),
-          ),
-        ]);
-
-        // Record audit log for each partner
-        await recordAuditLog(
-          programEnrollments.map(({ partner }) => ({
+      Promise.allSettled([
+        trackActivityLog(
+          programEnrollments.map(({ partnerId, status }) => ({
             workspaceId: workspace.id,
             programId,
+            resourceType: "partner",
+            resourceId: partnerId,
+            userId: user.id,
             action: "partner.banned",
-            description: `Partner ${partner.id} banned`,
-            actor: user,
-            targets: [
-              {
-                type: "partner",
-                id: partner.id,
-                metadata: partner,
+            changeSet: {
+              status: {
+                old: status,
+                new: "banned",
               },
-            ],
+            },
           })),
-        );
+        ),
 
-        // Send email
-        const program = await prisma.program.findUniqueOrThrow({
-          where: {
-            id: programId,
-          },
-          select: {
-            name: true,
-            slug: true,
-            supportEmail: true,
-          },
-        });
-
-        await sendBatchEmail(
-          programEnrollments
-            .filter(({ partner }) => partner.email)
-            .map(({ partner }) => ({
-              to: partner.email!,
-              subject: `You've been banned from the ${program.name} Partner Program`,
-              variant: "notifications",
-              replyTo: program.supportEmail || "noreply",
-              react: PartnerBanned({
-                partner: {
-                  name: partner.name,
-                  email: partner.email!,
-                },
-                program: {
-                  name: program.name,
-                  slug: program.slug,
-                },
-                bannedReason: BAN_PARTNER_REASONS[parsedInput.reason],
-              }),
-            })),
-        );
-      })(),
+        enqueueBatchJobs(
+          programEnrollments.map(({ programId, partnerId }) => ({
+            queueName: "ban-partner",
+            url: `${APP_DOMAIN_WITH_NGROK}/api/cron/partners/ban`,
+            deduplicationId: `ban-${programId}-${partnerId}`,
+            body: {
+              programId,
+              partnerId,
+            },
+          })),
+        ),
+      ]),
     );
   });

@@ -1,18 +1,25 @@
 import { formatApplicationFormData } from "@/lib/partners/format-application-form-data";
+import { prisma } from "@/lib/prisma";
 import { sendBatchEmail } from "@dub/email";
 import { ResendBulkEmailOptions } from "@dub/email/resend/types";
 import PartnerApplicationReceived from "@dub/email/templates/partner-application-received";
-import { prisma } from "@dub/prisma";
-import { Partner, Program, ProgramApplication } from "@dub/prisma/client";
 import { chunk } from "@dub/utils";
+import {
+  Partner,
+  PartnerGroup,
+  Program,
+  ProgramApplication,
+} from "@prisma/client";
 
 export async function notifyPartnerApplication({
   partner,
   program,
+  group,
   application,
 }: {
   partner: Partner;
   program: Program;
+  group: Pick<PartnerGroup, "autoApprovePartnersEnabledAt"> | null;
   application: ProgramApplication;
 }) {
   const workspaceUsers = await prisma.projectUsers.findMany({
@@ -59,7 +66,7 @@ export async function notifyPartnerApplication({
         },
         program: {
           name: program.name,
-          autoApprovePartners: program.autoApprovePartnersEnabledAt
+          autoApprovePartners: group?.autoApprovePartnersEnabledAt
             ? true
             : false,
         },

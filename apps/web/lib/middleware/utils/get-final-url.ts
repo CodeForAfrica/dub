@@ -5,6 +5,7 @@ import {
 import { getUrlFromStringIfValid } from "@dub/utils/src/functions";
 import { ipAddress } from "@vercel/functions";
 import { NextRequest, userAgent } from "next/server";
+import { isAppsFlyerTrackingUrl } from "./is-appsflyer-tracking-url";
 import { isGooglePlayStoreUrl } from "./is-google-play-store-url";
 import { isSingularTrackingUrl } from "./is-singular-tracking-url";
 import { parse } from "./parse";
@@ -38,7 +39,7 @@ export const getFinalUrl = (
 
   if (clickId) {
     /*
-       custom query param for stripe payment links + Dub Conversions
+       custom query param for stripe payment links:
        - if there is a clickId and dub_client_reference_id is 1
        - then set client_reference_id to dub_id_${clickId} and drop the dub_client_reference_id param
        - our Stripe integration will then detect `dub_id_${clickId}` as the dubClickId in the `checkout.session.completed` webhook
@@ -55,6 +56,28 @@ export const getFinalUrl = (
     }
   }
 
+  // for AppsFlyer tracking links
+  if (isAppsFlyerTrackingUrl(url)) {
+    const { ua } = userAgent(req);
+    const ip = process.env.VERCEL === "1" ? ipAddress(req) : LOCALHOST_IP;
+
+    // set hardcoded query params
+    urlObj.searchParams.set("pid", "dubinc_int");
+
+    if (clickId) {
+      urlObj.searchParams.set("clickid", clickId);
+    }
+
+    // set dynamic params (if not exist)
+    if (!urlObj.searchParams.has("c") && via) {
+      urlObj.searchParams.set("c", via);
+    }
+
+    if (!urlObj.searchParams.has("af_siteid") && via) {
+      urlObj.searchParams.set("af_siteid", via);
+    }
+  }
+
   // for Singular tracking links
   if (isSingularTrackingUrl(url)) {
     const ua = userAgent(req);
@@ -62,29 +85,28 @@ export const getFinalUrl = (
     urlObj.searchParams.set("cl", clickId ?? "");
     urlObj.searchParams.set("ua", ua?.ua ?? "");
     urlObj.searchParams.set("ip", ip ?? "");
-  }
+    // Polyfill wpcn & wpcl params for Singular integration
+    const wpcn = urlObj.searchParams.get("wpcn");
+    const wpcl = urlObj.searchParams.get("wpcl");
 
-  // Polyfill wpcn & wpcl params for Singular integration
-  const wpcn = urlObj.searchParams.get("wpcn");
-  const wpcl = urlObj.searchParams.get("wpcl");
+    if (wpcn && wpcn === "{via}") {
+      urlObj.searchParams.set("wpcn", via ?? "");
+    }
 
-  if (wpcn && wpcn === "{via}") {
-    urlObj.searchParams.set("wpcn", via ?? "");
-  }
-
-  if (wpcl && wpcl === "{dub_id}") {
-    urlObj.searchParams.set("wpcl", clickId ?? "");
+    if (wpcl && wpcl === "{dub_id}") {
+      urlObj.searchParams.set("wpcl", clickId ?? "");
+    }
   }
 
   // for Google Play Store links
   if (isGooglePlayStoreUrl(url)) {
-    const { shortLink } = parse(req);
+    const { shortLink, searchParamsString } = parse(req);
     const existingReferrer = urlObj.searchParams.get("referrer");
 
     const referrerSearchParam = new URLSearchParams(
       existingReferrer ? decodeURIComponent(existingReferrer) : "",
     );
-    referrerSearchParam.set("deepLink", shortLink);
+    referrerSearchParam.set("deepLink", `${shortLink}${searchParamsString}`);
     urlObj.searchParams.set("referrer", referrerSearchParam.toString());
   }
 
@@ -107,46 +129,6 @@ export const getFinalUrl = (
   // remove skip_deeplink_preview param from the final url (only used for internal redirection behavior)
   if (urlObj.searchParams.get("skip_deeplink_preview") === "1") {
     urlObj.searchParams.delete("skip_deeplink_preview");
-  }
-
-  return urlObj.toString();
-};
-
-// Only add query params to the final URL if they are in this list
-const allowedQueryParams = [
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_term",
-  "utm_content",
-  "ref",
-];
-
-// Get final cleaned url for storing in TB
-export const getFinalUrlForRecordClick = ({
-  req,
-  url,
-}: {
-  req: Request;
-  url: string;
-}) => {
-  const searchParams = new URL(req.url).searchParams;
-
-  // if there is a redirection url set, then use it instead of the target url
-  const redirectionUrl = getUrlFromStringIfValid(
-    searchParams.get(REDIRECTION_QUERY_PARAM) ?? "",
-  );
-
-  // get the query params of the target url
-  const urlObj = redirectionUrl ? new URL(redirectionUrl) : new URL(url);
-
-  // Filter out query params that are not in the allowed list
-  if (searchParams.size > 0) {
-    for (const [key, value] of searchParams) {
-      if (allowedQueryParams.includes(key)) {
-        urlObj.searchParams.set(key, value);
-      }
-    }
   }
 
   return urlObj.toString();

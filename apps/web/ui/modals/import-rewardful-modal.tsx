@@ -16,7 +16,7 @@ import {
   useMediaQuery,
   useRouterStuff,
 } from "@dub/ui";
-import { cn, fetcher } from "@dub/utils";
+import { cn, currencyFormatter, fetcher } from "@dub/utils";
 import { Command } from "cmdk";
 import { ArrowRight, ServerOff, Users } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
@@ -32,6 +32,7 @@ import {
 import { toast } from "sonner";
 import useSWRImmutable from "swr/immutable";
 import { useDebounce } from "use-debounce";
+import { MarkdownDescription } from "../shared/markdown-description";
 
 function ImportRewardfulModal({
   showImportRewardfulModal,
@@ -163,12 +164,13 @@ function ImportRewardfulModal({
         </div>
         <div className="flex flex-col items-center space-y-1">
           <h3 className="text-lg font-medium">
-            Import Your Rewardful Campaigns
+            Import your Rewardful campaigns
           </h3>
-          <p className="text-center text-sm text-neutral-500">
-            Import your existing Rewardful campaigns. You can select specific
-            campaigns or import all of them at once.
-          </p>
+          <MarkdownDescription className="text-center text-sm text-neutral-500">
+            [Migrate your existing Rewardful
+            campaigns](https://dub.co/help/article/migrating-from-rewardful),
+            partners, and historical stats into Dub in just a few clicks.
+          </MarkdownDescription>
         </div>
 
         {/* Steps indicator */}
@@ -328,7 +330,7 @@ function CampaignsStep({
   const formatCommission = useCallback((campaign: RewardfulCampaign) => {
     return campaign.reward_type === "percent"
       ? `${campaign.commission_percent}%`
-      : `$${(campaign.commission_amount_cents / 100).toFixed(2)}`;
+      : `${currencyFormatter(campaign.commission_amount_cents)}`;
   }, []);
 
   const sortCampaigns = useCallback(

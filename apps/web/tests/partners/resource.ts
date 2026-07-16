@@ -1,6 +1,6 @@
 import { normalizeWorkspaceId } from "@/lib/api/workspaces/workspace-id";
 import { expect } from "vitest";
-import { z } from "zod";
+import * as z from "zod/v4";
 import {
   E2E_PARTNER,
   E2E_PARTNER_GROUP,
@@ -29,10 +29,6 @@ export const normalizedPartnerDateFields = z.object({
   createdAt: z.string(),
   bannedAt: z.string().nullish(),
   payoutsEnabledAt: z.string().nullish(),
-  websiteVerifiedAt: z.string().nullish(),
-  youtubeVerifiedAt: z.string().nullish(),
-  twitterVerifiedAt: z.string().nullish(),
-  linkedinVerifiedAt: z.string().nullish(),
-  instagramVerifiedAt: z.string().nullish(),
-  tiktokVerifiedAt: z.string().nullish(),
+  identityVerifiedAt: z.string().nullish(),
+  trustedAt: z.string().nullish(),
 });

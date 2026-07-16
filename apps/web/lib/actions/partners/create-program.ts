@@ -2,10 +2,11 @@ import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
 import { createId } from "@/lib/api/create-id";
 import { getDomainOrThrow } from "@/lib/api/domains/get-domain-or-throw";
 import { createAndEnrollPartner } from "@/lib/api/partners/create-and-enroll-partner";
-import { getPartnerInviteRewardsAndBounties } from "@/lib/api/partners/get-partner-invite-rewards-and-bounties";
+import { getGroupRewardsAndBounties } from "@/lib/api/partners/get-group-rewards-and-bounties";
 import { generateRandomString } from "@/lib/api/utils/generate-random-string";
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
-import { isStored, storage } from "@/lib/storage";
+import { prisma } from "@/lib/prisma";
+import { storage } from "@/lib/storage";
 import { PlanProps } from "@/lib/types";
 import { redis } from "@/lib/upstash";
 import {
@@ -17,23 +18,49 @@ import { REWARD_EVENT_COLUMN_MAPPING } from "@/lib/zod/schemas/rewards";
 import { sendEmail } from "@dub/email";
 import ProgramInvite from "@dub/email/templates/program-invite";
 import ProgramWelcome from "@dub/email/templates/program-welcome";
-import { prisma } from "@dub/prisma";
-import { getDomainWithoutWWW, nanoid, R2_URL } from "@dub/utils";
+import TrialStartedEmail from "@dub/email/templates/trial/trial-started";
+import { getDomainWithoutWWW, isLegacyBusinessPlan, nanoid } from "@dub/utils";
 import { Program, Project, User } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { redirect } from "next/navigation";
 
-// Create a program from the onboarding data
 export const createProgram = async ({
   workspace,
   user,
+  isProgramOnboarding = false,
 }: {
   workspace: Pick<
     Project,
-    "id" | "slug" | "plan" | "store" | "webhookEnabled" | "invoicePrefix"
+    | "id"
+    | "slug"
+    | "logo"
+    | "name"
+    | "plan"
+    | "partnersLimit"
+    | "trialEndsAt"
+    | "store"
+    | "webhookEnabled"
+    | "invoicePrefix"
   >;
   user: Pick<User, "id" | "email">;
+  isProgramOnboarding?: boolean;
 }) => {
+  const { canManageProgram, canMessagePartners } = getPlanCapabilities(
+    workspace.plan,
+  );
+
+  if (
+    !canManageProgram ||
+    isLegacyBusinessPlan({
+      plan: workspace.plan,
+      partnersLimit: workspace.partnersLimit,
+    })
+  ) {
+    throw new Error(
+      "Your current plan does not have access to create a partner program. Please upgrade to a higher plan to proceed.",
+    );
+  }
+
   const store = workspace.store as Record<string, any>;
   if (!store.programOnboarding) {
     throw new Error("Program onboarding data not found");
@@ -59,14 +86,20 @@ export const createProgram = async ({
 
   const programId = createId({ prefix: "prog_" });
 
-  const logoUrl = uploadedLogo
-    ? await storage
-        .upload({
-          key: `programs/${programId}/logo_${nanoid(7)}`,
-          body: uploadedLogo,
-        })
-        .then(({ url }) => url)
-    : null;
+  let logoUrl: string | null = null;
+
+  if (uploadedLogo) {
+    try {
+      const { url } = await storage.upload({
+        key: `programs/${programId}/logo_${nanoid(7)}`,
+        body: uploadedLogo,
+      });
+
+      logoUrl = url;
+    } catch (error) {
+      console.error(`Failed to upload program logo for ${programId}`, error);
+    }
+  }
 
   // create a new program
   const program = await prisma.$transaction(async (tx) => {
@@ -101,18 +134,15 @@ export const createProgram = async ({
         workspaceId: workspace.id,
         name,
         slug: workspace.slug,
-        ...(logoUrl && { logo: logoUrl }),
         domain,
         url,
+        logo: logoUrl, // TODO: remove after we refactor all program.logo fields to use group.logo instead
         defaultFolderId: programFolder.id,
         defaultGroupId,
         supportEmail,
         helpUrl,
         termsUrl,
-        messagingEnabledAt: getPlanCapabilities(workspace.plan)
-          .canMessagePartners
-          ? new Date()
-          : null,
+        messagingEnabledAt: canMessagePartners ? new Date() : null,
         ...(type &&
           (amountInCents != null || amountInPercentage != null) && {
             rewards: {
@@ -150,6 +180,7 @@ export const createProgram = async ({
         slug: DEFAULT_PARTNER_GROUP.slug,
         name: DEFAULT_PARTNER_GROUP.name,
         color: DEFAULT_PARTNER_GROUP.color,
+        ...(logoUrl && { logo: logoUrl }),
         ...(createdReward && {
           [REWARD_EVENT_COLUMN_MAPPING[createdReward.event]]: createdReward.id,
         }),
@@ -214,21 +245,44 @@ export const createProgram = async ({
           )
         : []),
 
-      // delete the temporary uploaded logo
-      uploadedLogo &&
-        isStored(uploadedLogo) &&
-        storage.delete({ key: uploadedLogo.replace(`${R2_URL}/`, "") }),
-
-      // send email about the new program
-      sendEmail({
-        subject: `Your program ${program.name} is created and ready to share with your partners.`,
-        to: user.email!,
-        react: ProgramWelcome({
-          email: user.email!,
-          workspace,
-          program,
-        }),
-      }),
+      // for individual program onboarding flow, send ProgramWelcomeEmail
+      ...(isProgramOnboarding
+        ? [
+            sendEmail({
+              subject: `Your program ${program.name} is created and ready to share with your partners.`,
+              to: user.email!,
+              react: ProgramWelcome({
+                email: user.email!,
+                workspace,
+                program,
+              }),
+            }),
+          ]
+        : // for workspace trial, send TrialStartedEmail
+          workspace.trialEndsAt
+          ? [
+              sendEmail({
+                to: user.email!,
+                replyTo: "steven.tey@dub.co",
+                subject: "Welcome to your 14-day Dub trial",
+                react: TrialStartedEmail({
+                  email: user.email!,
+                  plan: workspace.plan,
+                  workspace: {
+                    slug: workspace.slug,
+                    logo: workspace.logo,
+                    name: workspace.name,
+                  },
+                  program: {
+                    slug: program.slug,
+                    name: program.name,
+                    logo: program.logo,
+                  },
+                }),
+                variant: "marketing",
+              }),
+            ]
+          : []),
 
       // delete the workspace product cache
       redis.del(`workspace:product:${workspace.slug}`),
@@ -251,7 +305,8 @@ export const createProgram = async ({
     ]),
   );
 
-  redirect(`/${workspace.slug}/program?onboarded-program=true`);
+  if (isProgramOnboarding)
+    redirect(`/${workspace.slug}/program?onboarded-program=true`);
 };
 
 // Invite a partner to the program
@@ -286,6 +341,11 @@ async function invitePartner({
 
   waitUntil(
     (async () => {
+      const { rewards, bounties } = await getGroupRewardsAndBounties({
+        programId: program.id,
+        groupId: program.defaultGroupId,
+      });
+
       await sendEmail({
         subject: `${program.name} invited you to join Dub Partners`,
         variant: "notifications",
@@ -298,11 +358,10 @@ async function invitePartner({
             name: program.name,
             slug: program.slug,
             logo: program.logo,
+            website: program.url,
           },
-          ...(await getPartnerInviteRewardsAndBounties({
-            programId: program.id,
-            groupId: program.defaultGroupId,
-          })),
+          rewards,
+          bounties,
         }),
       });
     })(),

@@ -1,8 +1,10 @@
 "use client";
 
 import { addProgramResourceAction } from "@/lib/actions/partners/program-resources/add-program-resource";
+import { updateProgramResourceAction } from "@/lib/actions/partners/program-resources/update-program-resource";
 import useProgramResources from "@/lib/swr/use-program-resources";
 import useWorkspace from "@/lib/swr/use-workspace";
+import { ProgramResourceFile } from "@/lib/zod/schemas/program-resources";
 import { Button, FileUpload, Modal } from "@dub/ui";
 import { cn } from "@dub/utils";
 import { useAction } from "next-safe-action/hooks";
@@ -11,40 +13,50 @@ import {
   SetStateAction,
   useCallback,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { z } from "zod";
+import * as z from "zod/v4";
+import { useUploadProgramResource } from "./use-upload-program-resource";
 
-type AddLogoModalProps = {
-  showAddLogoModal: boolean;
-  setShowAddLogoModal: Dispatch<SetStateAction<boolean>>;
+type LogoModalProps = {
+  showLogoModal: boolean;
+  setShowLogoModal: Dispatch<SetStateAction<boolean>>;
+  existingResource?: ProgramResourceFile;
 };
 
-// Define the form schema
 const logoFormSchema = z.object({
   name: z.string(),
-  file: z.string().min(1, "Logo file is required"),
+  previewSrc: z.string().optional(),
+  hasFile: z.boolean().optional(),
   extension: z.string().nullish(),
 });
 
 type LogoFormData = z.infer<typeof logoFormSchema>;
 
-function AddLogoModal(props: AddLogoModalProps) {
+function LogoModal(props: LogoModalProps) {
   return (
     <Modal
-      showModal={props.showAddLogoModal}
-      setShowModal={props.setShowAddLogoModal}
+      showModal={props.showLogoModal}
+      setShowModal={props.setShowLogoModal}
     >
-      <AddLogoModalInner {...props} />
+      <LogoModalInner {...props} />
     </Modal>
   );
 }
 
-function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
+function LogoModalInner({
+  setShowLogoModal,
+  existingResource,
+}: LogoModalProps) {
   const { id: workspaceId } = useWorkspace();
   const { mutate } = useProgramResources();
+  const isEditing = Boolean(existingResource);
+
+  const rawFileRef = useRef<File | null>(null);
+  const [hasNewFile, setHasNewFile] = useState(false);
 
   const {
     register,
@@ -56,15 +68,18 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
     formState: { errors, isSubmitting, isSubmitSuccessful },
   } = useForm<LogoFormData>({
     defaultValues: {
-      name: "",
-      file: "",
+      name: existingResource?.name || "",
+      previewSrc: "",
+      hasFile: false,
     },
   });
 
-  const { executeAsync } = useAction(addProgramResourceAction, {
+  const { upload } = useUploadProgramResource(workspaceId!);
+
+  const { executeAsync: executeAdd } = useAction(addProgramResourceAction, {
     onSuccess: () => {
       mutate();
-      setShowAddLogoModal(false);
+      setShowLogoModal(false);
       toast.success("Logo added successfully!");
     },
     onError({ error }) {
@@ -79,21 +94,88 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
     },
   });
 
+  const { executeAsync: executeUpdate } = useAction(
+    updateProgramResourceAction,
+    {
+      onSuccess: () => {
+        mutate();
+        setShowLogoModal(false);
+        toast.success("Logo updated successfully!");
+      },
+      onError({ error }) {
+        if (error.serverError) {
+          setError("root.serverError", {
+            message: error.serverError,
+          });
+          toast.error(error.serverError);
+        } else {
+          toast.error("Failed to update logo");
+        }
+      },
+    },
+  );
+
   return (
     <>
       <div className="space-y-2 border-b border-neutral-200 p-4 sm:p-6">
-        <h3 className="text-lg font-medium leading-none">Add logo</h3>
+        <h3 className="text-lg font-medium leading-none">
+          {isEditing ? "Edit logo" : "Add logo"}
+        </h3>
       </div>
 
       <form
         onSubmit={handleSubmit(async (data: LogoFormData) => {
-          await executeAsync({
-            workspaceId: workspaceId!,
-            name: data.name,
-            resourceType: "logo",
-            file: data.file,
-            extension: data.extension,
-          });
+          try {
+            if (isEditing && existingResource) {
+              let uploadedKey: string | undefined;
+              let uploadedFileSize: number | undefined;
+
+              if (hasNewFile && rawFileRef.current) {
+                const { key, fileSize } = await upload({
+                  file: rawFileRef.current,
+                  resourceType: "logo",
+                  name: data.name,
+                  extension: data.extension ?? undefined,
+                });
+                uploadedKey = key;
+                uploadedFileSize = fileSize;
+              }
+
+              await executeUpdate({
+                workspaceId: workspaceId!,
+                resourceId: existingResource.id,
+                resourceType: "logo",
+                name: data.name,
+                ...(uploadedKey
+                  ? { key: uploadedKey, fileSize: uploadedFileSize }
+                  : {}),
+              });
+            } else {
+              if (!rawFileRef.current) {
+                setError("hasFile", { message: "Logo file is required" });
+                return;
+              }
+
+              const { key, fileSize } = await upload({
+                file: rawFileRef.current,
+                resourceType: "logo",
+                name: data.name,
+                extension: data.extension ?? undefined,
+              });
+
+              await executeAdd({
+                workspaceId: workspaceId!,
+                name: data.name,
+                resourceType: "logo",
+                key,
+                fileSize,
+              });
+            }
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Something went wrong";
+            toast.error(message);
+          }
         })}
       >
         <div className="bg-neutral-50 p-4 sm:p-6">
@@ -107,25 +189,32 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
               </label>
               <Controller
                 control={control}
-                name="file"
-                rules={{ required: "Logo file is required" }}
+                name="previewSrc"
+                rules={{
+                  validate: (_, formValues) =>
+                    !isEditing && !formValues.hasFile
+                      ? "Logo file is required"
+                      : true,
+                }}
                 render={({ field }) => (
                   <FileUpload
                     accept="programResourceImages"
                     className={cn(
                       "aspect-[4.2] w-full rounded-md border border-neutral-300",
-                      errors.file && "border-red-300 ring-1 ring-red-500",
+                      errors.previewSrc && "border-red-300 ring-1 ring-red-500",
                     )}
                     iconClassName="size-5"
                     previewClassName="object-contain"
                     variant="plain"
-                    imageSrc={field.value}
+                    imageSrc={field.value || existingResource?.url}
                     readFile
                     onChange={({ file, src }) => {
+                      rawFileRef.current = file;
                       field.onChange(src);
+                      setValue("hasFile", true);
                       setValue("extension", file.name.split(".").pop());
+                      setHasNewFile(true);
 
-                      // Set the logo name to the file name without extension if no name is provided
                       const currentName = getValues("name");
                       if (!currentName && file.name) {
                         const nameWithoutExtension = file.name
@@ -135,14 +224,18 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
                         setValue("name", nameWithoutExtension || file.name);
                       }
                     }}
-                    content="SVG, JPG, PNG, or WEBP, max size of 5MB"
+                    content={
+                      isEditing
+                        ? "Drop a new file to replace, or leave unchanged"
+                        : "SVG, JPG, PNG, or WEBP, max size of 5MB"
+                    }
                     maxFileSizeMB={5}
                   />
                 )}
               />
-              {errors.file && (
+              {errors.previewSrc && (
                 <p className="mt-1 text-xs text-red-600">
-                  {errors.file.message}
+                  {errors.previewSrc.message}
                 </p>
               )}
             </div>
@@ -175,7 +268,7 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
 
         <div className="flex items-center justify-end gap-2 border-t border-neutral-200 bg-neutral-50 px-4 py-5 sm:px-6">
           <Button
-            onClick={() => setShowAddLogoModal(false)}
+            onClick={() => setShowLogoModal(false)}
             variant="secondary"
             text="Cancel"
             className="h-8 w-fit px-3"
@@ -185,7 +278,7 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
             type="submit"
             autoFocus
             loading={isSubmitting || isSubmitSuccessful}
-            text="Add Logo"
+            text={isEditing ? "Save Changes" : "Add Logo"}
             className="h-8 w-fit px-3"
           />
         </div>
@@ -194,23 +287,28 @@ function AddLogoModalInner({ setShowAddLogoModal }: AddLogoModalProps) {
   );
 }
 
-export function useAddLogoModal() {
-  const [showAddLogoModal, setShowAddLogoModal] = useState(false);
+export function useLogoModal({
+  existingResource,
+}: { existingResource?: ProgramResourceFile } = {}) {
+  const [showLogoModal, setShowLogoModal] = useState(false);
 
-  const AddLogoModalCallback = useCallback(() => {
+  const LogoModalCallback = useCallback(() => {
     return (
-      <AddLogoModal
-        showAddLogoModal={showAddLogoModal}
-        setShowAddLogoModal={setShowAddLogoModal}
+      <LogoModal
+        showLogoModal={showLogoModal}
+        setShowLogoModal={setShowLogoModal}
+        existingResource={existingResource}
       />
     );
-  }, [showAddLogoModal, setShowAddLogoModal]);
+  }, [showLogoModal, setShowLogoModal, existingResource]);
 
   return useMemo(
     () => ({
-      setShowAddLogoModal,
-      AddLogoModal: AddLogoModalCallback,
+      setShowLogoModal,
+      LogoModal: LogoModalCallback,
     }),
-    [setShowAddLogoModal, AddLogoModalCallback],
+    [setShowLogoModal, LogoModalCallback],
   );
 }
+
+export const useAddLogoModal = useLogoModal;

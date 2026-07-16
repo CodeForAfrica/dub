@@ -1,12 +1,15 @@
-import { constructRewardAmount } from "@/lib/api/sales/construct-reward-amount";
+"use client";
+
 import { getRewardAmount } from "@/lib/partners/get-reward-amount";
 import { DiscountProps, RewardProps } from "@/lib/types";
-import { Gift, Icon } from "@dub/ui";
+import { Button, Gift, Icon } from "@dub/ui";
 import { cn } from "@dub/utils";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { PropsWithChildren } from "react";
-import { REWARD_EVENTS } from "./constants";
 import { formatDiscountDescription } from "./format-discount-description";
-import { ProgramRewardModifiersTooltip } from "./program-reward-modifiers-tooltip";
+import { ProgramRewardDescription } from "./program-reward-description";
+import { REWARD_EVENT_ICON } from "./rewards/reward-event-icon";
 
 export function ProgramRewardList({
   rewards,
@@ -23,7 +26,28 @@ export function ProgramRewardList({
   iconClassName?: string;
   showModifiersTooltip?: boolean;
 }) {
+  const { programSlug } = useParams();
   const sortedFilteredRewards = rewards.filter((r) => getRewardAmount(r) >= 0);
+
+  if (sortedFilteredRewards.length === 0 && !discount) {
+    return (
+      <div className="border-border-subtle bg-bg-default flex items-center justify-between rounded-md border px-4 py-3">
+        <p className="text-content-subtle text-sm">
+          You are not eligible for any rewards at this time.
+        </p>
+
+        {programSlug && (
+          <Link href={`/messages/${programSlug}`}>
+            <Button
+              variant="secondary"
+              text="Contact program"
+              className="h-8 rounded-lg px-3"
+            />
+          </Link>
+        )}
+      </div>
+    );
+  }
 
   return (
     <ul
@@ -37,44 +61,13 @@ export function ProgramRewardList({
       {sortedFilteredRewards.map((reward) => (
         <Item
           key={reward.id}
-          icon={REWARD_EVENTS[reward.event].icon}
+          icon={REWARD_EVENT_ICON[reward.event]}
           iconClassName={iconClassName}
         >
-          {reward.description || (
-            <>
-              {constructRewardAmount(reward)}{" "}
-              {reward.event === "sale" && reward.maxDuration === 0 ? (
-                <>for the first sale</>
-              ) : (
-                <>per {reward.event}</>
-              )}
-              {reward.maxDuration === null ? (
-                <>
-                  {" "}
-                  for the{" "}
-                  <strong className={cn("font-semibold")}>
-                    customer's lifetime
-                  </strong>
-                </>
-              ) : reward.maxDuration && reward.maxDuration > 1 ? (
-                <>
-                  {" "}
-                  for{" "}
-                  <strong className={cn("font-semibold")}>
-                    {reward.maxDuration % 12 === 0
-                      ? `${reward.maxDuration / 12} year${reward.maxDuration / 12 > 1 ? "s" : ""}`
-                      : `${reward.maxDuration} months`}
-                  </strong>
-                </>
-              ) : null}
-              {showModifiersTooltip && !!reward.modifiers?.length && (
-                <>
-                  {" "}
-                  <ProgramRewardModifiersTooltip reward={reward} />
-                </>
-              )}
-            </>
-          )}
+          <ProgramRewardDescription
+            reward={reward}
+            showModifiersTooltip={showModifiersTooltip}
+          />
         </Item>
       ))}
 

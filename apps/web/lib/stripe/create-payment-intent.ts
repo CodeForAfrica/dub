@@ -51,14 +51,15 @@ export const createPaymentIntent = async ({
         currency: "usd",
         confirmation_method: "automatic",
         confirm: true,
-        statement_descriptor: statementDescriptor,
+        // Card PI creation rejects `statement_descriptor`; use suffix (max 22 chars on networks).
+        statement_descriptor_suffix: statementDescriptor.slice(0, 22),
         description,
       },
       idempotencyKey ? { idempotencyKey } : undefined,
     );
 
     console.log(
-      `Payment intent ${paymentIntent.id} created ${invoiceId ? `for invoice ${invoiceId} ` : ""}with amount ${currencyFormatter(paymentIntent.amount / 100)}`,
+      `Payment intent ${paymentIntent.id} created ${invoiceId ? `for invoice ${invoiceId} ` : ""}with amount ${currencyFormatter(paymentIntent.amount)}`,
     );
 
     return { paymentIntent, paymentMethod };

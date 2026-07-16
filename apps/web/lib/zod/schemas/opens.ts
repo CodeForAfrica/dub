@@ -1,5 +1,5 @@
 import { parseUrlSchema } from "@/lib/zod/schemas/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 export const trackOpenRequestSchema = z
   .object({
@@ -30,20 +30,20 @@ export const trackOpenResponseSchema = z.object({
     .string()
     .nullable()
     .describe(
-      "The click ID of the associated open event (or the prior click that led the user to the app store for probabilistic tracking). This will be `null` if the open event was not associated with a link (e.g. a direct download from the app store). Learn more: https://d.to/ddl",
+      "The click ID of the associated open event (or the prior click that led the user to the app store for probabilistic tracking). Learn more: https://d.to/ddl",
     ),
   link: z
     .object({
-      id: z.string().describe("The ID of the deep link.").openapi({
+      id: z.string().describe("The ID of the deep link.").meta({
         example: "link_xxx",
       }),
-      domain: z.string().describe("The domain of the deep link.").openapi({
+      domain: z.string().describe("The domain of the deep link.").meta({
         example: "acme.link",
       }),
-      key: z.string().describe("The key of the deep link.").openapi({
+      key: z.string().describe("The key of the deep link.").meta({
         example: "fb-promo",
       }),
-      url: z.string().describe("The URL of the deep link.").openapi({
+      url: z.string().describe("The URL of the deep link.").meta({
         example: "https://acme.com/product/123",
       }),
     })

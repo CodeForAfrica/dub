@@ -1,4 +1,4 @@
-import z from "@/lib/zod";
+import * as z from "zod/v4";
 import { clickEventSchema, clickEventSchemaTB } from "./clicks";
 import { CustomerSchema } from "./customers";
 import { commonDeprecatedEventFields } from "./deprecated";
@@ -19,7 +19,7 @@ export const trackLeadRequestSchema = z.object({
     .describe(
       "The name of the lead event to track. Can also be used as a unique identifier to associate a given lead event for a customer for a subsequent sale event (via the `leadEventName` prop in `/track/sale`).",
     )
-    .openapi({ example: "Sign up" }),
+    .meta({ example: "Sign up" }),
   customerExternalId: z
     .string()
     .trim()
@@ -37,7 +37,6 @@ export const trackLeadRequestSchema = z.object({
       "The name of the customer. If not passed, a random name will be generated (e.g. “Big Red Caribou”).",
     ),
   customerEmail: z
-    .string()
     .email()
     .max(100)
     .nullish()
@@ -56,12 +55,15 @@ export const trackLeadRequestSchema = z.object({
     ),
   eventQuantity: z
     .number()
+    .int()
+    .positive()
+    .max(100)
     .nullish()
     .describe(
       "The numerical value associated with this lead event (e.g., number of provisioned seats in a free trial). If defined as N, the lead event will be tracked N times.",
     ),
   metadata: z
-    .record(z.unknown())
+    .record(z.string(), z.any())
     .nullish()
     .default(null)
     .refine((val) => !val || JSON.stringify(val).length <= 10000, {
@@ -97,14 +99,12 @@ export const trackLeadResponseSchema = z.object({
 
 export const leadEventSchemaTB = clickEventSchemaTB
   .omit({ timestamp: true }) // remove timestamp from lead data because tinybird will generate its own at ingestion time
-  .merge(
-    z.object({
-      event_id: z.string(),
-      event_name: z.string(),
-      customer_id: z.string().default(""),
-      metadata: z.string().default(""),
-    }),
-  );
+  .extend({
+    event_id: z.string(),
+    event_name: z.string(),
+    customer_id: z.string().default(""),
+    metadata: z.string().default(""),
+  });
 
 // response from tinybird endpoint
 export const leadEventSchemaTBEndpoint = z.object({
@@ -124,6 +124,7 @@ export const leadEventSchemaTBEndpoint = z.object({
   device: z.string().nullable(),
   browser: z.string().nullable(),
   os: z.string().nullable(),
+  ua: z.string().nullish(),
   trigger: z.string().nullish(), // backwards compatibility
   referer: z.string().nullable(),
   referer_url: z.string().nullable(),
@@ -147,5 +148,5 @@ export const leadEventResponseSchema = z
     link: linkEventSchema,
     customer: CustomerSchema,
   })
-  .merge(commonDeprecatedEventFields)
-  .openapi({ ref: "LeadEvent", title: "LeadEvent" });
+  .extend(commonDeprecatedEventFields.shape)
+  .meta({ title: "LeadEvent" });

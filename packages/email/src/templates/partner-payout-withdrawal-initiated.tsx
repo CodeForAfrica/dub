@@ -18,8 +18,8 @@ import { Footer } from "../components/footer";
 export default function PartnerPayoutWithdrawalInitiated({
   email = "panic@thedis.co",
   payout = {
-    amount: 45590,
-    currency: "usd",
+    amount: 260689,
+    currency: "vnd",
     arrivalDate: 1722163200,
   },
 }: {
@@ -30,7 +30,7 @@ export default function PartnerPayoutWithdrawalInitiated({
     arrivalDate: number;
   };
 }) {
-  const amountInDollars = currencyFormatter(payout.amount / 100, {
+  const finalPayoutAmount = currencyFormatter(payout.amount, {
     currency: payout.currency,
   });
 
@@ -52,7 +52,7 @@ export default function PartnerPayoutWithdrawalInitiated({
             <Text className="text-sm leading-6 text-neutral-600">
               Good news!{" "}
               <span className="font-semibold text-neutral-800">
-                {amountInDollars}
+                {finalPayoutAmount}
               </span>{" "}
               is being transferred from your Stripe Express account to your
               connected bank account.
@@ -69,14 +69,14 @@ export default function PartnerPayoutWithdrawalInitiated({
                   },
                 )}
               </span>
-              . If there are any delays, please contact{" "}
+              . If there are any delays, please{" "}
               <Link
-                href="https://support.stripe.com/express"
+                href="https://dub.co/contact/support"
                 className="font-medium text-black underline"
               >
-                Stripe support
-              </Link>
-              .
+                reach out to us
+              </Link>{" "}
+              and we'd be happy to help.
             </Text>
 
             <Section className="mb-12 mt-8">

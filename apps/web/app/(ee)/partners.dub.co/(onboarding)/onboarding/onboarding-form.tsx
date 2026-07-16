@@ -1,30 +1,31 @@
 "use client";
 
-import { PartnerData } from "@/lib/actions/partners/create-program-application";
+import { parseActionError } from "@/lib/actions/parse-action-errors";
 import { onboardPartnerAction } from "@/lib/actions/partners/onboard-partner";
-import { onboardPartnerSchema } from "@/lib/zod/schemas/partners";
-import { CountryCombobox } from "@/ui/partners/country-combobox";
-import { Partner } from "@dub/prisma/client";
+import { getValidInternalRedirectPath } from "@/lib/middleware/utils/is-valid-internal-redirect";
+import {
+  MAX_PARTNER_DESCRIPTION_LENGTH,
+  onboardPartnerSchema,
+} from "@/lib/zod/schemas/partners";
+import { MaxCharactersCounter } from "@/ui/shared/max-characters-counter";
 import {
   Button,
-  buttonVariants,
   FileUpload,
   ToggleGroup,
-  TooltipContent,
   useEnterSubmit,
-  useLocalStorage,
   useMediaQuery,
 } from "@dub/ui";
-import { cn } from "@dub/utils/src/functions";
+import { cn } from "@dub/utils";
+import { Partner } from "@prisma/client";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useSession } from "next-auth/react";
 import { useAction } from "next-safe-action/hooks";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import ReactTextareaAutosize from "react-textarea-autosize";
 import { toast } from "sonner";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 type FormData = z.infer<typeof onboardPartnerSchema>;
 
@@ -36,7 +37,6 @@ export function OnboardingForm({
       Partner,
       | "name"
       | "description"
-      | "country"
       | "image"
       | "profileType"
       | "companyName"
@@ -45,6 +45,7 @@ export function OnboardingForm({
   > | null;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { isMobile } = useMediaQuery();
   const [accountCreated, setAccountCreated] = useState(false);
   const { data: session, update: refreshSession } = useSession();
@@ -61,27 +62,20 @@ export function OnboardingForm({
     defaultValues: {
       name: partner?.name ?? undefined,
       description: partner?.description ?? undefined,
-      country: partner?.country ?? undefined,
       image: partner?.image ?? undefined,
       profileType: partner?.profileType ?? "individual",
       companyName: partner?.companyName ?? undefined,
     },
   });
 
-  const { name, image, country, profileType } = watch();
-
-  const [partnerData] = useLocalStorage<PartnerData | null>(
-    `application-form-partner-data`,
-    null,
-  );
+  const { name, image, profileType } = watch();
 
   useEffect(() => {
     if (session?.user) {
-      !name && setValue("name", partnerData?.name ?? session.user.name ?? "");
+      !name && setValue("name", session.user.name ?? "");
       !image && setValue("image", session.user.image ?? "");
-      !country && setValue("country", partnerData?.country ?? "");
     }
-  }, [session?.user, name, image, country, partnerData]);
+  }, [session?.user, name, image, setValue]);
 
   // refresh the session after the Partner account is created
   useEffect(() => {
@@ -93,10 +87,18 @@ export function OnboardingForm({
   const { executeAsync, isPending } = useAction(onboardPartnerAction, {
     onSuccess: () => {
       setAccountCreated(true);
-      router.push("/onboarding/online-presence");
+      const next = getValidInternalRedirectPath({
+        redirectPath: searchParams.get("next"),
+        currentUrl: window.location.href,
+      });
+      if (next) {
+        router.push(next);
+      } else {
+        router.push("/onboarding/platforms");
+      }
     },
     onError: ({ error, input }) => {
-      toast.error(error.serverError);
+      toast.error(parseActionError(error, "An unknown error occurred."));
       reset(input);
     },
   });
@@ -107,11 +109,12 @@ export function OnboardingForm({
   return (
     <form
       ref={formRef}
+      method="post"
       onSubmit={handleSubmit(async (data) => await executeAsync(data))}
       className="flex w-full flex-col gap-6 text-left"
     >
       <label>
-        <span className="text-sm font-medium text-neutral-800">Full Name</span>
+        <span className="text-sm font-medium text-neutral-800">Name</span>
         <input
           type="text"
           className={cn(
@@ -129,22 +132,18 @@ export function OnboardingForm({
 
       <label>
         <span className="text-sm font-medium text-neutral-800">
-          Profile Image
+          Profile image
         </span>
         <div className="flex items-center gap-5">
           <Controller
             control={control}
             name="image"
-            rules={{ required: true }}
             render={({ field }) => (
               <FileUpload
                 accept="images"
-                className={cn(
-                  "mt-1.5 size-20 rounded-full border border-neutral-300",
-                  errors.image && "border-0 ring-2 ring-red-500",
-                )}
+                className="mt-1.5 size-20 shrink-0 rounded-full border border-neutral-300 transition-[border-color,box-shadow] focus-within:border-neutral-500 focus-within:ring-1 focus-within:ring-neutral-500"
                 iconClassName="size-5"
-                previewClassName="size-10 rounded-full"
+                previewClassName="size-20 rounded-full"
                 variant="plain"
                 imageSrc={field.value}
                 readFile
@@ -156,66 +155,39 @@ export function OnboardingForm({
             )}
           />
           <div>
-            <div
-              className={cn(
-                buttonVariants({ variant: "secondary" }),
-                "flex h-7 w-fit cursor-pointer items-center rounded-md border px-2 text-xs",
-              )}
-            >
-              Upload image
-            </div>
-            <p className="mt-1.5 text-xs text-neutral-500">
-              Recommended size: 160x160px
+            <p className="text-xs font-medium text-neutral-600">
+              Visible to programs and helps with approvals
             </p>
+            <p className="mt-0.5 text-xs text-neutral-500">Max 2 MB</p>
           </div>
         </div>
       </label>
 
       <label>
-        <span className="text-sm font-medium text-neutral-800">Country</span>
-        <Controller
-          control={control}
-          name="country"
-          rules={{ required: true }}
-          render={({ field }) => (
-            <CountryCombobox
-              {...field}
-              error={errors.country ? true : false}
-              disabledTooltip={
-                partner?.payoutsEnabledAt ? (
-                  <TooltipContent
-                    title="Since you've already connected your bank account for payouts, you cannot change your profile country."
-                    cta="Contact support"
-                    href="https://dub.co/support"
-                    target="_blank"
-                  />
-                ) : undefined
-              }
-            />
-          )}
-        />
-        <p className="mt-1.5 text-xs text-neutral-500">
-          Your country cannot be changed once set.
-        </p>
-      </label>
-
-      <label>
         <span className="text-sm font-medium text-neutral-800">
-          Description
+          About you
           <span className="font-normal text-neutral-500"> (optional)</span>
         </span>
-        <ReactTextareaAutosize
-          className={cn(
-            "mt-1.5 block w-full rounded-md focus:outline-none sm:text-sm",
-            errors.description
-              ? "border-red-300 pr-10 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-500"
-              : "border-neutral-300 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:ring-neutral-500",
-          )}
-          placeholder="Tell us about the kind of content you create – e.g. tech, travel, fashion, etc."
-          minRows={3}
-          onKeyDown={handleKeyDown}
-          {...register("description")}
-        />
+        <div>
+          <ReactTextareaAutosize
+            className={cn(
+              "mt-1.5 block w-full rounded-md focus:outline-none sm:text-sm",
+              errors.description
+                ? "border-red-300 pr-10 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-500"
+                : "border-neutral-300 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:ring-neutral-500",
+            )}
+            placeholder="Share who you are, what you do, and who your audience is."
+            maxLength={MAX_PARTNER_DESCRIPTION_LENGTH}
+            minRows={3}
+            onKeyDown={handleKeyDown}
+            {...register("description")}
+          />
+          <MaxCharactersCounter
+            name="description"
+            maxLength={MAX_PARTNER_DESCRIPTION_LENGTH}
+            control={control}
+          />
+        </div>
       </label>
 
       <LayoutGroup>

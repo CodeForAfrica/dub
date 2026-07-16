@@ -1,14 +1,26 @@
-import { Prisma, Program } from "@dub/prisma/client";
+import { TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS } from "@/lib/tremendous/constants";
+import { Prisma, Program } from "@prisma/client";
 
-export function getPayoutEligibilityFilter(
-  program: Pick<Program, "id" | "minPayoutAmount" | "payoutMode">,
-): Prisma.PayoutWhereInput {
+export function getPayoutEligibilityFilter({
+  program,
+}: {
+  program: Pick<Program, "id" | "minPayoutAmount" | "payoutMode">;
+}): Prisma.PayoutWhereInput {
   const commonWhere: Prisma.PayoutWhereInput = {
     programId: program.id,
     status: "pending",
     invoiceId: null,
     amount: {
       gte: program.minPayoutAmount,
+    },
+    // Gift card payouts are capped at $2,000 per payout
+    NOT: {
+      partner: {
+        defaultPayoutMethod: "tremendous",
+      },
+      amount: {
+        gt: TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
+      },
     },
   };
 
@@ -28,14 +40,9 @@ export function getPayoutEligibilityFilter(
     case "external":
       return {
         ...commonWhere,
-        partner: {
-          programs: {
-            some: {
-              programId: program.id,
-              tenantId: {
-                not: null,
-              },
-            },
+        programEnrollment: {
+          tenantId: {
+            not: null,
           },
         },
       };
@@ -44,26 +51,22 @@ export function getPayoutEligibilityFilter(
     case "hybrid":
       return {
         ...commonWhere,
-        partner: {
-          OR: [
-            {
+        OR: [
+          {
+            partner: {
               payoutsEnabledAt: {
                 not: null,
               },
             },
-            {
-              payoutsEnabledAt: null,
-              programs: {
-                some: {
-                  programId: program.id,
-                  tenantId: {
-                    not: null,
-                  },
-                },
+          },
+          {
+            programEnrollment: {
+              tenantId: {
+                not: null,
               },
             },
-          ],
-        },
+          },
+        ],
       };
 
     default:

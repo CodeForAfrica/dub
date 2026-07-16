@@ -1,21 +1,19 @@
 "use client";
 
 import { RegisterDomainForm } from "@/ui/domains/register-domain-form";
-import { LaterButton } from "../../../later-button";
+import { useOnboardingProduct } from "../../../use-onboarding-product";
 import { useOnboardingProgress } from "../../../use-onboarding-progress";
 
 export function Form() {
+  const product = useOnboardingProduct();
   const { continueTo } = useOnboardingProgress();
 
   return (
-    <div>
-      <RegisterDomainForm
-        saveOnly
-        onSuccess={() => {
-          continueTo("invite");
-        }}
-      />
-      <LaterButton next="invite" className="mt-4" />
-    </div>
+    <RegisterDomainForm
+      saveOnly
+      onSuccess={() => {
+        continueTo(product === "partners" ? "program" : "plan");
+      }}
+    />
   );
 }

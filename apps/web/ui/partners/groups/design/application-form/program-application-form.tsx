@@ -9,15 +9,15 @@ import {
   ProgramApplicationFormDataWithValues,
   ProgramProps,
 } from "@/lib/types";
+import { useTrackApplyStart } from "@/ui/application-analytics";
 import { Button, useLocalStorage, useMediaQuery } from "@dub/ui";
 import { cn } from "@dub/utils";
 import { useSession } from "next-auth/react";
 import { useAction } from "next-safe-action/hooks";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { Controller, FormProvider, useForm } from "react-hook-form";
+import { useCallback, useEffect, useState } from "react";
+import { FormProvider, useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { CountryCombobox } from "../../../country-combobox";
 import { ProgramApplicationFormField } from "./fields";
 import { FormControlRequiredBadge } from "./fields/form-control";
 import { formDataForApplicationFormData } from "./form-data-for-application-form-data";
@@ -25,7 +25,6 @@ import { formDataForApplicationFormData } from "./form-data-for-application-form
 type FormData = {
   name: string;
   email: string;
-  country: string;
   termsAgreement: boolean;
   formData: ProgramApplicationFormDataWithValues;
 };
@@ -42,12 +41,14 @@ export function ProgramApplicationForm({
   const { isMobile } = useMediaQuery();
   const router = useRouter();
   const { data: session } = useSession();
+  const trackApplyStart = useTrackApplyStart({
+    preview,
+  });
 
   const form = useForm<FormData>({
     defaultValues: {
       name: "",
       email: "",
-      country: "",
       termsAgreement: false,
       formData: formDataForApplicationFormData(
         group.applicationFormData?.fields ?? [],
@@ -56,13 +57,30 @@ export function ProgramApplicationForm({
   });
 
   const {
-    control,
     register,
     handleSubmit,
     setError,
     setValue,
     formState: { errors, isSubmitting, isSubmitSuccessful },
   } = form;
+
+  const [fieldStatuses, setFieldStatuses] = useState<Record<string, boolean>>(
+    {},
+  );
+
+  const handleFieldStatusChange = useCallback(
+    (fieldId: string, isLoading: boolean) => {
+      setFieldStatuses((prev) => ({
+        ...prev,
+        [fieldId]: isLoading,
+      }));
+    },
+    [],
+  );
+
+  const hasAnyLoadingStatus = Object.values(fieldStatuses).some(
+    (loading) => loading,
+  );
 
   useEffect(() => {
     if (preview || !session?.user) return;
@@ -109,11 +127,13 @@ export function ProgramApplicationForm({
     },
   );
 
-  const isLoading = isSubmitting || isSubmitSuccessful || isPending;
+  const isLoading =
+    isSubmitting || isSubmitSuccessful || isPending || hasAnyLoadingStatus;
 
   return (
     <FormProvider {...form}>
       <form
+        onInputCapture={trackApplyStart}
         onSubmit={handleSubmit(async (data) => {
           const result = await executeAsync({
             ...data,
@@ -176,35 +196,15 @@ export function ProgramApplicationForm({
           />
         </label>
 
-        <label className="flex flex-col">
-          <div className="flex items-center gap-1.5">
-            <span className="text-content-emphasis text-sm font-medium">
-              Country
-            </span>
-            <FormControlRequiredBadge />
-          </div>
-
-          <Controller
-            control={control}
-            name="country"
-            rules={{ required: true }}
-            render={({ field }) => (
-              <CountryCombobox
-                value={field.value || ""}
-                onChange={field.onChange}
-                error={errors.country ? true : false}
-                className="focus:border-[var(--brand)] focus:ring-[var(--brand)]"
-              />
-            )}
-          />
-        </label>
-
         {group?.applicationFormData?.fields.map((field, index) => {
           return (
             <ProgramApplicationFormField
               key={field.id}
               field={field}
               keyPath={`formData.fields.${index}`}
+              onStatusChange={(loading) =>
+                handleFieldStatusChange(field.id, loading)
+              }
             />
           );
         })}
@@ -231,7 +231,7 @@ export function ProgramApplicationForm({
                 rel="noopener noreferrer"
                 className="text-[var(--brand)] underline hover:opacity-80"
               >
-                {program.name} Affiliate Program Terms ↗
+                {program.name} Program Terms ↗
               </a>
             </label>
           </div>
