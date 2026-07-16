@@ -1,7 +1,7 @@
 import type { CreateEmailOptions } from "resend";
 import { resend } from "./resend";
 import { VARIANT_TO_FROM_MAP, RESEND_REPLY_TO } from "./resend/constants";
-import { ResendEmailOptions } from "./resend/types";
+import { ResendBulkEmailOptions, ResendEmailOptions } from "./resend/types";
 
 const resendEmailForOptions = (
   opts: ResendEmailOptions,
