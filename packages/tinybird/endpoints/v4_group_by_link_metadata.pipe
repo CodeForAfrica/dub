@@ -589,3 +589,5 @@ SQL >
         {% end %}
 
 
+
+TYPE endpoint
