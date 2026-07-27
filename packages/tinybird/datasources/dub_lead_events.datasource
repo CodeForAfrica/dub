@@ -37,9 +37,6 @@ SCHEMA >
     `key` Nullable(String) `json:$.key`,
     `workspace_id` Nullable(String) `json:$.workspace_id`
 
-FORWARD_QUERY >
-  SELECT timestamp, event_id, event_name, customer_id, click_id, link_id, url, continent, country, city, region, latitude, longitude, device, device_model, device_vendor, browser, browser_version, os, os_version, engine, engine_version, cpu_architecture, ua, bot, referer, referer_url, ip, qr, metadata, defaultValueOfTypeName('String') AS trigger, defaultValueOfTypeName('Nullable(String)') AS domain, defaultValueOfTypeName('Nullable(String)') AS key, defaultValueOfTypeName('Nullable(String)') AS workspace_id
-
 ENGINE "MergeTree"
 ENGINE_PARTITION_KEY "toYYYYMM(timestamp)"
 ENGINE_SORTING_KEY "timestamp, link_id, customer_id"
