@@ -18,6 +18,9 @@ SCHEMA >
     `partner_group_id` String `json:$.partner_group_id`,
     `partner_tag_ids` Array(String) `json:$.partner_tag_ids[:]` DEFAULT []
 
+FORWARD_QUERY >
+  SELECT timestamp, link_id, domain, key, url, tag_ids, workspace_id, created_at, deleted, program_id, tenant_id, partner_id, folder_id, defaultValueOfTypeName('String') AS partner_group_id, defaultValueOfTypeName('Array(String)') AS partner_tag_ids
+
 ENGINE "MergeTree"
 ENGINE_PARTITION_KEY "toYear(timestamp)"
 ENGINE_SORTING_KEY "timestamp, link_id, workspace_id"

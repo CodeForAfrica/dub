@@ -16,6 +16,9 @@ SCHEMA >
     `user_id` String `json:$.user_id`,
     `request_type` LowCardinality(String) `json:$.request_type`
 
+FORWARD_QUERY >
+  SELECT id, timestamp, workspace_id, CAST(method, 'LowCardinality(String)') AS method, path, CAST(route_pattern, 'LowCardinality(String)') AS route_pattern, CAST(status_code, 'UInt16') AS status_code, CAST(duration, 'UInt32') AS duration, user_agent, request_body, response_body, token_id, user_id, CAST(request_type, 'LowCardinality(String)') AS request_type
+
 ENGINE "MergeTree"
 ENGINE_PARTITION_KEY "toYYYYMM(timestamp)"
 ENGINE_SORTING_KEY "workspace_id, timestamp"
