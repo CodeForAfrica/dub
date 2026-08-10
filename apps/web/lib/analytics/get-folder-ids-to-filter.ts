@@ -1,4 +1,4 @@
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { Project } from "@prisma/client";
 import { getFolders } from "../folder/get-folders";
 import { getPlanCapabilities } from "../plan-capabilities";

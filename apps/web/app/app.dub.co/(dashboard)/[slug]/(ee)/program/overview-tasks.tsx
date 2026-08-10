@@ -1,6 +1,6 @@
-import { usePartnerMessagesCount } from "@/lib/swr/use-partner-messages-count";
+import { usePartnerMessagesCount } from "@/lib/messages/hooks/use-partner-messages-count";
 import usePartnersCount from "@/lib/swr/use-partners-count";
-import usePayoutsCount from "@/lib/swr/use-payouts-count";
+import { usePayoutsCount } from "@/lib/swr/use-payouts-count";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { ProgramOverviewCard } from "@/ui/partners/overview/program-overview-card";
 import { MoneyBills2, Msgs, UserCheck } from "@dub/ui";
@@ -18,9 +18,10 @@ export function OverviewTasks() {
   const {
     payoutsCount: eligiblePayoutsCount,
     loading: eligiblePayoutsLoading,
-  } = usePayoutsCount<number | undefined>({
+  } = usePayoutsCount({
     eligibility: "eligible",
     status: "pending",
+    ignoreParams: true,
   });
 
   const { count: unreadMessagesCount, isLoading: unreadMessagesLoading } =
@@ -35,8 +36,8 @@ export function OverviewTasks() {
       {
         icon: MoneyBills2,
         label: "Confirm pending payouts",
-        count: eligiblePayoutsCount,
-        href: `/${slug}/program/payouts?status=pending&sortBy=amount`,
+        count: eligiblePayoutsCount?.[0]?.count ?? 0,
+        href: `/${slug}/program/payouts?status=pending`,
         loading: eligiblePayoutsLoading,
       },
       {

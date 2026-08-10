@@ -12,12 +12,13 @@ import { getProgramOrThrow } from "@/lib/api/programs/get-program-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { withWorkspace } from "@/lib/auth";
+import { throwIfNoPartnerIdOrTenantId } from "@/lib/partners/throw-if-no-partnerid-tenantid";
+import { prisma } from "@/lib/prisma";
 import { NewLinkProps } from "@/lib/types";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { linkEventSchema } from "@/lib/zod/schemas/links";
 import { upsertPartnerLinkSchema } from "@/lib/zod/schemas/partners";
-import { prisma } from "@dub/prisma";
-import { constructURLFromUTMParams, deepEqual } from "@dub/utils";
+import { deepEqual, getUTMParamsFromURL } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
@@ -29,6 +30,8 @@ export const PUT = withWorkspace(
     const { partnerId, tenantId, url, key, linkProps } =
       upsertPartnerLinkSchema.parse(await parseRequestBody(req));
 
+    throwIfNoPartnerIdOrTenantId({ partnerId, tenantId });
+
     const program = await getProgramOrThrow({
       workspaceId: workspace.id,
       programId,
@@ -38,14 +41,7 @@ export const PUT = withWorkspace(
       throw new DubApiError({
         code: "bad_request",
         message:
-          "You need to set a domain and url for this program before creating a partner.",
-      });
-    }
-
-    if (!partnerId && !tenantId) {
-      throw new DubApiError({
-        code: "bad_request",
-        message: "You must provide a partnerId or tenantId.",
+          "You need to set a domain and url for this program before upserting a partner link.",
       });
     }
 
@@ -81,7 +77,7 @@ export const PUT = withWorkspace(
     }
 
     validatePartnerLinkUrl({
-      group: partner.partnerGroup,
+      group: partnerGroup,
       url,
     });
 
@@ -196,7 +192,7 @@ export const PUT = withWorkspace(
         });
       }
     } else {
-      const utmTemplate = partner.partnerGroup?.utmTemplate;
+      const linkUrl = url || partnerGroup.partnerGroupDefaultLinks[0].url;
 
       // proceed with /api/partners/links POST logic
       const { link, error, code } = await processLink({
@@ -204,11 +200,13 @@ export const PUT = withWorkspace(
           ...linkProps,
           domain: program.domain,
           key: key || undefined,
-          url: constructURLFromUTMParams(
-            url || partnerGroup.partnerGroupDefaultLinks[0].url,
-            extractUtmParams(partnerGroup.utmTemplate),
-          ),
-          ...extractUtmParams(partnerGroup.utmTemplate, { excludeRef: true }),
+          url: linkUrl,
+          ...(partnerGroup.utmTemplate
+            ? {
+                ...extractUtmParams(partnerGroup.utmTemplate),
+                ...getUTMParamsFromURL(linkUrl),
+              }
+            : {}),
           programId: program.id,
           tenantId: partner.tenantId,
           partnerId: partner.partnerId,
@@ -244,6 +242,6 @@ export const PUT = withWorkspace(
   },
   {
     requiredPermissions: ["links.write"],
-    requiredPlan: ["advanced", "enterprise"],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

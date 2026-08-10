@@ -1,6 +1,6 @@
 "use client";
 
-import { isValidDomainFormat } from "@/lib/api/domains/is-valid-domain";
+import { isValidDomainFormatWithLocalhost } from "@/lib/api/domains/is-valid-domain";
 import { PartnerGroupAdditionalLink } from "@/lib/types";
 import { MAX_ADDITIONAL_PARTNER_LINKS } from "@/lib/zod/schemas/groups";
 import {
@@ -11,7 +11,7 @@ import {
   Modal,
   useMediaQuery,
 } from "@dub/ui";
-import { CircleCheckFill } from "@dub/ui/icons";
+import { CircleCheck } from "@dub/ui/icons";
 import { cn } from "@dub/utils";
 import { Dispatch, SetStateAction, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -143,7 +143,7 @@ function AddDestinationUrlModalContent({
   const validateForm = (data: PartnerGroupAdditionalLink): boolean => {
     const domainNormalized = data.domain.trim().toLowerCase();
 
-    if (!isValidDomainFormat(domainNormalized)) {
+    if (!isValidDomainFormatWithLocalhost(domainNormalized)) {
       const errorField = data.validationMode === "exact" ? "url" : "domain";
       setError(errorField, {
         type: "manual",
@@ -283,7 +283,8 @@ function AddDestinationUrlModalContent({
                         {type.recommended && (
                           <Badge variant="blueGradient">Recommended</Badge>
                         )}
-                        <CircleCheckFill
+                        <CircleCheck
+                          variant="fill"
                           className={cn(
                             "-mr-px -mt-px flex size-4 scale-75 items-center justify-center rounded-full opacity-0 transition-[transform,opacity] duration-150",
                             isSelected && "scale-100 opacity-100",

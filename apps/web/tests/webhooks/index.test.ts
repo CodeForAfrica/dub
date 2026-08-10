@@ -1,5 +1,4 @@
 import { qstash } from "@/lib/cron";
-import { WebhookTrigger } from "@/lib/types";
 import { WEBHOOK_TRIGGERS } from "@/lib/webhook/constants";
 import { sendWebhooks } from "@/lib/webhook/qstash";
 import { samplePayload } from "@/lib/webhook/sample-events/payload";
@@ -8,6 +7,7 @@ import {
   leadWebhookEventSchema,
   saleWebhookEventSchema,
 } from "@/lib/webhook/schemas";
+import type { WebhookTrigger } from "@/lib/webhook/types";
 import { BountySchema } from "@/lib/zod/schemas/bounties";
 import { CommissionWebhookSchema } from "@/lib/zod/schemas/commissions";
 import { CustomerSchema } from "@/lib/zod/schemas/customers";
@@ -16,7 +16,7 @@ import { EnrolledPartnerSchema } from "@/lib/zod/schemas/partners";
 import { payoutWebhookEventSchema } from "@/lib/zod/schemas/payouts";
 import { partnerApplicationWebhookSchema } from "@/lib/zod/schemas/program-application";
 import { describe, expect, test } from "vitest";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const webhook = {
   id: "wh_IFL4j0toU6RAMz4R7mXjJ6C5", // dummy id
@@ -37,8 +37,9 @@ const saleWebhookEventSchemaExtended = saleWebhookEventSchema.extend({
 });
 
 const enrolledPartnerSchemaExtended = EnrolledPartnerSchema.extend({
-  payoutsEnabledAt: z.string().nullable(),
   createdAt: z.string(),
+  payoutsEnabledAt: z.string().nullable(),
+  identityVerifiedAt: z.string().nullable(),
 });
 
 const commissionWebhookEventSchemaExtended = CommissionWebhookSchema.extend({
@@ -68,6 +69,7 @@ const payoutWebhookEventSchemaExtended = payoutWebhookEventSchema.extend({
     .nullable()
     .transform((str) => (str ? new Date(str) : null)),
   createdAt: z.string().transform((str) => new Date(str)),
+  initiatedAt: z.string().transform((str) => new Date(str)),
   paidAt: z
     .string()
     .nullable()
@@ -100,17 +102,18 @@ describe("Webhooks", () => {
 const testWebhookEvent = async (trigger: WebhookTrigger) => {
   const data = samplePayload[trigger];
 
-  const response = await sendWebhooks({
+  const results = await sendWebhooks({
     webhooks: [webhook],
     trigger,
     data,
   });
 
-  if (!response) {
+  const result = results[0];
+  if (!result?.ok || !result.messageId) {
     throw new Error("No response from sendWebhooks");
   }
 
-  await assertQstashMessage(response[0].messageId, data, trigger);
+  await assertQstashMessage(result.messageId, data, trigger);
 };
 
 const assertQstashMessage = async (

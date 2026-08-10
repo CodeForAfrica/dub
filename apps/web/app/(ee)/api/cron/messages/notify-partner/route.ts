@@ -1,13 +1,14 @@
 import { createId } from "@/lib/api/create-id";
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { messageAttachmentsOrderBy } from "@/lib/messages/utils";
+import { prisma } from "@/lib/prisma";
 import { sendBatchEmail } from "@dub/email";
 import NewMessageFromProgram from "@dub/email/templates/new-message-from-program";
-import { prisma } from "@dub/prisma";
-import { NotificationEmailType } from "@dub/prisma/client";
 import { log } from "@dub/utils";
+import { NotificationEmailType } from "@prisma/client";
 import { subDays } from "date-fns";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 
 export const dynamic = "force-dynamic";
@@ -54,6 +55,14 @@ export async function POST(req: Request) {
             },
             include: {
               senderUser: true,
+              attachments: {
+                orderBy: messageAttachmentsOrderBy,
+                select: {
+                  name: true,
+                  size: true,
+                  type: true,
+                },
+              },
             },
           },
           users: {
@@ -114,6 +123,7 @@ export async function POST(req: Request) {
           messages: [...unreadMessages].reverse().map((message) => ({
             text: message.text,
             createdAt: message.createdAt,
+            attachments: message.attachments,
             user: message.senderUser.name
               ? {
                   name: message.senderUser.name,

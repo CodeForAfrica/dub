@@ -1,11 +1,11 @@
 "use server";
 
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { waitUntil } from "@vercel/functions";
-import { webhookCache } from "../webhook/cache";
-import { toggleWebhooksForWorkspace } from "../webhook/update-webhook";
-import z from "../zod";
+import * as z from "zod/v4";
+import { syncWorkspaceWebhookStatus } from "../webhook/click-webhook-workspaces";
 import { authActionClient } from "./safe-action";
+import { throwIfNoPermission } from "./throw-if-no-permission";
 
 const schema = z.object({
   workspaceId: z.string(),
@@ -14,10 +14,15 @@ const schema = z.object({
 
 // Enable or disable a webhook
 export const enableOrDisableWebhook = authActionClient
-  .schema(schema)
+  .inputSchema(schema)
   .action(async ({ ctx, parsedInput }) => {
     const { workspace } = ctx;
     const { webhookId } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredPermissions: ["webhooks.write"],
+    });
 
     if (["free", "pro"].includes(workspace.plan)) {
       throw new Error("You must upgrade your plan to enable webhooks.");
@@ -35,7 +40,7 @@ export const enableOrDisableWebhook = authActionClient
 
     const disabledAt = webhook.disabledAt ? null : new Date();
 
-    const updatedWebhook = await prisma.webhook.update({
+    await prisma.webhook.update({
       where: {
         id: webhookId,
         projectId: workspace.id,
@@ -45,17 +50,7 @@ export const enableOrDisableWebhook = authActionClient
       },
     });
 
-    waitUntil(
-      (async () => {
-        await Promise.all([
-          toggleWebhooksForWorkspace({
-            workspaceId: workspace.id,
-          }),
-
-          webhookCache.set(updatedWebhook),
-        ]);
-      })(),
-    );
+    waitUntil(syncWorkspaceWebhookStatus(workspace.id));
 
     return {
       disabledAt,

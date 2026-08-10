@@ -22,7 +22,7 @@ export default function ConnectPayoutReminder({
     {
       id: "1",
       name: "Acme",
-      logo: "https://dubassets.com/programs/prog_CYCu7IMAapjkRpTnr8F1azjN/logo_ObfFYsM",
+      logo: "https://dubassets.com/programs/prog_CYCu7IMAapjkRpTnr8F1azjN/logo_HPEaC8P",
       amount: 120_00,
     },
     {
@@ -117,7 +117,10 @@ export default function ConnectPayoutReminder({
               </Link>
             </Section>
 
-            <Footer email={email} />
+            <Footer
+              email={email}
+              notificationSettingsUrl="https://partners.dub.co/profile/notifications"
+            />
           </Container>
         </Body>
       </Tailwind>

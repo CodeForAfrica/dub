@@ -2,13 +2,13 @@
 
 import { generateOTP } from "@/lib/auth/utils";
 import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
 import { ratelimit, redis } from "@/lib/upstash";
 import { emailSchema } from "@/lib/zod/schemas/auth";
 import { sendBatchEmail } from "@dub/email";
 import VerifyEmailForAccountMerge from "@dub/email/templates/verify-email-for-account-merge";
-import { prisma } from "@dub/prisma";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { authPartnerActionClient } from "../safe-action";
 
 const CACHE_KEY_PREFIX = "merge-partner-accounts";
@@ -37,7 +37,7 @@ const schema = z.discriminatedUnion("step", [
 ]);
 
 export const mergePartnerAccountsAction = authPartnerActionClient
-  .schema(schema)
+  .inputSchema(schema)
   .action(async ({ parsedInput, ctx }) => {
     const { user } = ctx;
     const { step } = parsedInput;
@@ -117,11 +117,11 @@ const sendTokens = async ({
   }
 
   const sourceAccount = partnerAccounts.find(
-    ({ email }) => email === sourceEmail,
+    ({ email }) => email?.toLowerCase() === sourceEmail.toLowerCase(),
   );
 
   const targetAccount = partnerAccounts.find(
-    ({ email }) => email === targetEmail,
+    ({ email }) => email?.toLowerCase() === targetEmail.toLowerCase(),
   );
 
   if (!sourceAccount) {
@@ -133,12 +133,6 @@ const sendTokens = async ({
   if (!targetAccount) {
     throw new Error(
       `Target partner account ${targetEmail} not found. Please check the email you entered.`,
-    );
-  }
-
-  if (sourceAccount.payoutsEnabledAt) {
-    throw new Error(
-      "Account merging is not available if payouts are enabled on the source account. Please contact support for assistance.",
     );
   }
 
@@ -348,7 +342,7 @@ const mergeAccounts = async ({ userId }: { userId: string }) => {
   const { sourceEmail, targetEmail } = accounts;
 
   await qstash.publishJSON({
-    url: `${APP_DOMAIN_WITH_NGROK}/api/cron/merge-partner-accounts`,
+    url: `${APP_DOMAIN_WITH_NGROK}/api/cron/partners/merge-accounts`,
     body: {
       userId,
       sourceEmail,

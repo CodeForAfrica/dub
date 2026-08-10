@@ -3,7 +3,7 @@ import { redis } from "@/lib/upstash";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { FirstPromoterCredentials, FirstPromoterImportPayload } from "./types";
 
-export const PAGE_LIMIT = 100;
+export const FIRSTPROMOTER_PAGE_LIMIT = 100;
 export const MAX_BATCHES = 10;
 export const CACHE_EXPIRY = 60 * 60 * 24;
 export const CACHE_KEY_PREFIX = "firstpromoter:import";
@@ -31,10 +31,12 @@ class FirstPromoterImporter {
     return await redis.del(`${CACHE_KEY_PREFIX}:${workspaceId}`);
   }
 
-  async queue(body: FirstPromoterImportPayload) {
+  async queue(body: FirstPromoterImportPayload, options?: { delay?: number }) {
     return await qstash.publishJSON({
       url: `${APP_DOMAIN_WITH_NGROK}/api/cron/import/firstpromoter`,
       body,
+      contentBasedDeduplication: true,
+      ...(options?.delay != null && { delay: options.delay }),
     });
   }
 }

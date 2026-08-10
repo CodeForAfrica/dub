@@ -1,32 +1,37 @@
 import { isBlacklistedEmail } from "@/lib/edge-config";
 import { jackson } from "@/lib/jackson";
+import { prisma } from "@/lib/prisma";
 import { isStored, storage } from "@/lib/storage";
 import { UserProps } from "@/lib/types";
 import { ratelimit } from "@/lib/upstash";
 import { sendEmail } from "@dub/email";
 import LoginLink from "@dub/email/templates/login-link";
-import { prisma } from "@dub/prisma";
-import { PrismaClient } from "@dub/prisma/client";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
+import { PrismaClient } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { User, type NextAuthOptions } from "next-auth";
-import { AdapterUser } from "next-auth/adapters";
+import { AdapterAccount, AdapterUser } from "next-auth/adapters";
 import { JWT } from "next-auth/jwt";
 import CredentialsProvider from "next-auth/providers/credentials";
 import EmailProvider from "next-auth/providers/email";
 import GithubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
 import { createId } from "../api/create-id";
+import { isProduction, shouldApplyRateLimit } from "../api/environment";
 import { isSamlEnforcedForEmailDomain } from "../api/workspaces/is-saml-enforced-for-email-domain";
 import { qstash } from "../cron";
 import { completeProgramApplications } from "../partners/complete-program-applications";
-import { FRAMER_API_HOST } from "./constants";
+import {
+  consumeAdminImpersonation,
+  markAdminImpersonation,
+} from "./admin-impersonation";
 import {
   exceededLoginAttemptsThreshold,
   incrementLoginAttempts,
 } from "./lock-account";
 import { validatePassword } from "./password";
+import { SSO_LOGIN_PROGRAMS } from "./sso-login-programs";
 import { trackDubLead } from "./track-dub-lead";
 
 const VERCEL_DEPLOYMENT = !!process.env.VERCEL_URL;
@@ -39,8 +44,50 @@ const CustomPrismaAdapter = (p: PrismaClient) => {
         data: {
           ...data,
           id: createId({ prefix: "user_" }),
+          notificationPreferences: {
+            create: {},
+          },
         },
       });
+    },
+    // Some IdPs (e.g. Beehiiv) return extra token fields
+    // so we need to only include the fields that are valid columns on Account table
+    linkAccount: (account: AdapterAccount) =>
+      p.account.create({
+        data: {
+          userId: account.userId,
+          type: account.type,
+          provider: account.provider,
+          providerAccountId: account.providerAccountId,
+          refresh_token: account.refresh_token,
+          refresh_token_expires_in: account.refresh_token_expires_in as any,
+          access_token: account.access_token,
+          expires_at: account.expires_at,
+          token_type: account.token_type,
+          scope: account.scope,
+          id_token: account.id_token,
+          session_state: account.session_state,
+        },
+      }),
+    // simplified version of https://github.com/nextauthjs/next-auth/blob/main/packages/adapter-prisma/src/index.ts#L80
+    useVerificationToken: async ({ identifier, token }) => {
+      try {
+        const verificationToken = await p.verificationToken.delete({
+          where: { identifier_token: { identifier, token } },
+        });
+
+        if (verificationToken.isAdminImpersonation) {
+          markAdminImpersonation(identifier);
+        }
+
+        return verificationToken;
+      } catch (error: any) {
+        if (error.code === "P2025") {
+          return null;
+        }
+
+        throw error;
+      }
     },
   };
 };
@@ -49,16 +96,16 @@ export const authOptions: NextAuthOptions = {
   providers: [
     EmailProvider({
       sendVerificationRequest({ identifier, url }) {
-        if (process.env.NODE_ENV === "development") {
+        if (!isProduction) {
           console.log(`Login link: ${url}`);
           return;
-        } else {
-          sendEmail({
-            to: identifier,
-            subject: `Your ${process.env.NEXT_PUBLIC_APP_NAME} Login Link`,
-            react: LoginLink({ url, email: identifier }),
-          });
         }
+
+        sendEmail({
+          to: identifier,
+          subject: "Your Dub Login Link",
+          react: LoginLink({ url, email: identifier }),
+        });
       },
     }),
     GoogleProvider({
@@ -104,6 +151,9 @@ export const authOptions: NextAuthOptions = {
               name: `${profile.firstName || ""} ${
                 profile.lastName || ""
               }`.trim(),
+              notificationPreferences: {
+                create: {},
+              },
             },
           });
         }
@@ -175,6 +225,9 @@ export const authOptions: NextAuthOptions = {
               name: `${userInfo.firstName || ""} ${
                 userInfo.lastName || ""
               }`.trim(),
+              notificationPreferences: {
+                create: {},
+              },
             },
           });
         }
@@ -213,12 +266,14 @@ export const authOptions: NextAuthOptions = {
           throw new Error("no-credentials");
         }
 
-        const { success } = await ratelimit(5, "1 m").limit(
-          `login-attempts:${email}`,
-        );
+        if (shouldApplyRateLimit) {
+          const { success } = await ratelimit(5, "1 m").limit(
+            `login-attempts:${email}`,
+          );
 
-        if (!success) {
-          throw new Error("too-many-login-attempts");
+          if (!success) {
+            throw new Error("too-many-login-attempts");
+          }
         }
 
         // SSO enforcement check
@@ -287,24 +342,26 @@ export const authOptions: NextAuthOptions = {
       },
     }),
 
-    // Framer
-    {
-      id: "framer",
-      name: "Framer",
-      type: "oauth",
-      clientId: process.env.FRAMER_CLIENT_ID,
-      clientSecret: process.env.FRAMER_CLIENT_SECRET,
-      checks: ["state"],
+    // SSO Login Programs
+    ...SSO_LOGIN_PROGRAMS.map(({ slug, name, oauth, mapProfile }) => ({
+      id: slug,
+      name,
+      type: "oauth" as const,
+      clientId: oauth.clientId,
+      clientSecret: oauth.clientSecret,
+      checks: ["state" as const],
       authorization: {
-        url: `${FRAMER_API_HOST}/auth/oauth/authorize`,
+        url: oauth.authorizationUrl,
         params: {
-          scope: "email",
+          scope: oauth.scope,
           response_type: "code",
         },
       },
-      token: `${FRAMER_API_HOST}/auth/oauth/token`,
-      userinfo: `${FRAMER_API_HOST}/auth/oauth/profile`,
-      profile({ sub, email, name, picture }) {
+      token: oauth.tokenUrl,
+      userinfo: oauth.userInfoUrl,
+      profile(profile) {
+        if (mapProfile) return mapProfile(profile);
+        const { sub, email, name, picture } = profile;
         return {
           id: sub,
           name,
@@ -312,7 +369,7 @@ export const authOptions: NextAuthOptions = {
           image: picture,
         };
       },
-    },
+    })),
   ],
   // @ts-ignore
   adapter: CustomPrismaAdapter(prisma),
@@ -326,8 +383,8 @@ export const authOptions: NextAuthOptions = {
         path: "/",
         // When working on localhost, the cookie domain must be omitted entirely (https://stackoverflow.com/a/1188145)
         domain: VERCEL_DEPLOYMENT
-          ? `.${process.env.NEXT_PUBLIC_APP_DOMAIN}`
-          : undefined,
+        ? process.env.NEXTAUTH_COOKIE_DOMAIN || ".dub.co"
+        : undefined,
         secure: VERCEL_DEPLOYMENT,
       },
     },
@@ -338,18 +395,20 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     signIn: async ({ user, account, profile }) => {
-      console.log({ user, account, profile });
-
       if (!user.email || (await isBlacklistedEmail(user.email))) {
         return false;
       }
 
       if (user?.lockedAt) {
-        return false;
+        throw new Error("exceeded-login-attempts");
       }
+
+      const isAdminImpersonation =
+        account?.provider === "email" && consumeAdminImpersonation(user.email);
 
       // If the user is not using SAML, we need to check if SAML is enforced for the email domain
       if (
+        !isAdminImpersonation &&
         account?.provider !== "saml" &&
         account?.provider !== "saml-idp" &&
         account?.provider !== "credentials" // for credentials, we do the check in the CredentialsProvider
@@ -468,33 +527,6 @@ export const authOptions: NextAuthOptions = {
             }),
           ]);
         }
-        // Login with Framer
-      } else if (account?.provider === "framer") {
-        const userFound = await prisma.user.findUnique({
-          where: {
-            email: user.email,
-          },
-          include: {
-            accounts: true,
-          },
-        });
-
-        // account doesn't exist, let the user sign in
-        if (!userFound) {
-          return true;
-        }
-
-        const otherAccounts = userFound?.accounts.filter(
-          (account) => account.provider !== "framer",
-        );
-
-        // we don't allow account linking for Framer partners
-        // so redirect to the standard login page
-        if (otherAccounts && otherAccounts.length > 0) {
-          throw new Error("framer-account-linking-not-allowed");
-        }
-
-        return true;
       }
       return true;
     },
@@ -523,8 +555,8 @@ export const authOptions: NextAuthOptions = {
             email: true,
             image: true,
             isMachine: true,
-            defaultPartnerId: true,
             defaultWorkspace: true,
+            defaultPartnerId: true,
           },
         });
 
@@ -548,7 +580,6 @@ export const authOptions: NextAuthOptions = {
   },
   events: {
     async signIn(message) {
-      console.log("signIn", message);
       const email = message.user.email as string;
       const user = await prisma.user.findUnique({
         where: { email },
@@ -578,10 +609,10 @@ export const authOptions: NextAuthOptions = {
           Promise.allSettled([
             // track lead if dub_id cookie is present
             trackDubLead(user),
-            // trigger welcome workflow 15 minutes after the user signed up
+            // trigger welcome workflow 45 minutes after the user signed up
             qstash.publishJSON({
               url: `${APP_DOMAIN_WITH_NGROK}/api/cron/welcome-user`,
-              delay: 15 * 60,
+              delay: 45 * 60,
               body: { userId: user.id },
             }),
           ]),

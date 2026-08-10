@@ -1,16 +1,15 @@
-import { uploadEmailImageAction } from "@/lib/actions/partners/upload-email-image";
+import { uploadCampaignImageAction } from "@/lib/actions/partners/upload-campaign-image";
 import { CAMPAIGN_READONLY_STATUSES } from "@/lib/api/campaigns/constants";
 import { useApiMutation } from "@/lib/swr/use-api-mutation";
 import { useEmailDomains } from "@/lib/swr/use-email-domains";
-import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { Campaign, UpdateCampaignFormData } from "@/lib/types";
 import { EMAIL_TEMPLATE_VARIABLES } from "@/lib/zod/schemas/campaigns";
 import { PageContentWithSidePanel } from "@/ui/layout/page-content/page-content-with-side-panel";
 import { PageWidthWrapper } from "@/ui/layout/page-width-wrapper";
-import { CampaignStatus } from "@dub/prisma/client";
 import {
   ChevronRight,
+  DEFAULT_RICH_TEXT_FEATURES,
   Lock,
   PaperPlane,
   RichTextArea,
@@ -23,6 +22,7 @@ import {
   useKeyboardShortcut,
 } from "@dub/ui";
 import { capitalize, cn } from "@dub/utils";
+import { CampaignStatus } from "@prisma/client";
 import { motion } from "motion/react";
 import { useAction } from "next-safe-action/hooks";
 import Link from "next/link";
@@ -42,6 +42,7 @@ import { CampaignControls } from "./campaign-controls";
 import { CampaignEvents } from "./campaign-events";
 import { CampaignGroupsSelector } from "./campaign-groups-selector";
 import { CampaignMetrics } from "./campaign-metrics";
+import { DuplicateLogicWarning } from "./duplicate-logic-warning";
 import { TransactionalCampaignLogic } from "./transactional-campaign-logic";
 import { isValidTriggerCondition } from "./utils";
 
@@ -86,12 +87,8 @@ const statusMessages = {
 };
 
 export function CampaignEditor({ campaign }: { campaign: Campaign }) {
-  const { program } = useProgram();
   const { id: workspaceId, slug: workspaceSlug } = useWorkspace();
-  const { emailDomains } = useEmailDomains();
-  const firstVerifiedEmailDomain = emailDomains?.find(
-    (domain) => domain.status === "verified",
-  );
+  const { verifiedEmailDomain } = useEmailDomains();
 
   const isActive = campaign.status === CampaignStatus.active;
   const isReadOnly = CAMPAIGN_READONLY_STATUSES.includes(campaign.status);
@@ -238,7 +235,7 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
   );
 
   const { executeAsync: executeImageUpload } = useAction(
-    uploadEmailImageAction,
+    uploadCampaignImageAction,
   );
 
   const statusBadge = CAMPAIGN_STATUS_BADGES[campaign.status];
@@ -309,7 +306,7 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
         contentWrapperClassName="flex flex-col"
       >
         <PageWidthWrapper className="mb-8 max-w-[600px]">
-          <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-6 [&>*:nth-child(n+2)]:mt-2">
+          <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-6 [&>*:nth-child(n+3)]:mt-2">
             <span className={labelClassName}>Name</span>
             <DisabledInputWrapper
               tooltip={isReadOnly ? statusMessages[campaign.status] : ""}
@@ -325,24 +322,24 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
               />
             </DisabledInputWrapper>
 
-            <label className="contents">
+            <label className="contents [&>*]:mt-2">
               <span className={labelClassName}>From</span>
               <Controller
                 control={control}
                 name="from"
                 render={({ field }) => {
                   const localPart = field.value?.split("@")[0] || "";
-                  const domainSuffix = firstVerifiedEmailDomain?.slug
-                    ? `@${firstVerifiedEmailDomain.slug}`
+                  const domainSuffix = verifiedEmailDomain?.slug
+                    ? `@${verifiedEmailDomain.slug}`
                     : "";
-                  const isDisabled = isReadOnly || !firstVerifiedEmailDomain;
+                  const isDisabled = isReadOnly || !verifiedEmailDomain;
 
                   return (
                     <DisabledInputWrapper
                       tooltip={
                         isReadOnly ? (
                           statusMessages[campaign.status]
-                        ) : !firstVerifiedEmailDomain ? (
+                        ) : !verifiedEmailDomain ? (
                           <TooltipContent
                             title="You haven't configured an email domain yet. Please configure an email domain to enable campaign sending."
                             cta="Configure email domain"
@@ -365,9 +362,9 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
                           value={localPart}
                           onChange={(e) => {
                             const newLocalPart = e.target.value;
-                            if (firstVerifiedEmailDomain?.slug) {
+                            if (verifiedEmailDomain?.slug) {
                               field.onChange(
-                                `${newLocalPart}@${firstVerifiedEmailDomain.slug}`,
+                                `${newLocalPart}@${verifiedEmailDomain.slug}`,
                               );
                             }
                           }}
@@ -422,7 +419,7 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
                         value={field.value}
                         onChange={field.onChange}
                         placeholder='E.g. "tomorrow at 5pm" or "in 2 hours"'
-                        className="[&>div]:hover:border-border-subtle [&>div]:mt-0 [&>div]:h-8 [&>div]:min-h-8 [&>div]:border-transparent [&>div]:shadow-none [&>div]:focus-within:border-black/75 [&>div]:focus-within:ring-black/75 [&>div]:hover:cursor-pointer [&>div]:hover:bg-neutral-100"
+                        className="hover:border-border-subtle mt-0 h-8 min-h-8 border-transparent shadow-none focus-within:border-black/75 focus-within:ring-black/75 hover:cursor-pointer hover:bg-neutral-100"
                       />
                     </DisabledInputWrapper>
                   )}
@@ -502,7 +499,9 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
             )}
           </div>
 
-          <div className="mt-6">
+          {!isReadOnly && <DuplicateLogicWarning />}
+
+          <div className="mt-4">
             <Controller
               control={control}
               name="bodyJson"
@@ -511,6 +510,7 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
                   ref={editorRef}
                   editorClassName="-m-2 min-h-[200px] p-2"
                   style="relaxed"
+                  features={[...DEFAULT_RICH_TEXT_FEATURES, "imageControls"]}
                   initialValue={field.value}
                   onChange={(editor) => field.onChange(editor.getJSON())}
                   variables={[...EMAIL_TEMPLATE_VARIABLES]}
@@ -551,8 +551,13 @@ export function CampaignEditor({ campaign }: { campaign: Campaign }) {
                     return null;
                   }}
                 >
-                  <div className="flex flex-col gap-4">
-                    <RichTextToolbar />
+                  <div className="relative z-0 flex flex-col gap-1">
+                    <div className="sticky -top-4 z-10 sm:-top-6">
+                      <div className="bg-white pb-1 pt-2">
+                        <RichTextToolbar />
+                      </div>
+                      <div className="h-2 bg-gradient-to-b from-white" />
+                    </div>
                     <RichTextArea />
                   </div>
                 </RichTextProvider>

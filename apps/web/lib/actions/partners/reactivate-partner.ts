@@ -1,20 +1,26 @@
 "use server";
 
-import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
+import { trackActivityLog } from "@/lib/api/activity-log/track-activity-log";
 import { getGroupOrThrow } from "@/lib/api/groups/get-group-or-throw";
 import { linkCache } from "@/lib/api/links/cache";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { prisma } from "@/lib/prisma";
 import { deactivatePartnerSchema } from "@/lib/zod/schemas/partners";
-import { prisma } from "@dub/prisma";
 import { waitUntil } from "@vercel/functions";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 // Reactivate a partner
 export const reactivatePartnerAction = authActionClient
-  .schema(deactivatePartnerSchema)
+  .inputSchema(deactivatePartnerSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
     const { partnerId } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -37,9 +43,10 @@ export const reactivatePartnerAction = authActionClient
       throw new Error("This partner is not deactivated.");
     }
 
-    const defaultGroup = await getGroupOrThrow({
+    const partnerGroup = await getGroupOrThrow({
       programId,
-      groupId: programEnrollment.program.defaultGroupId,
+      groupId:
+        programEnrollment.groupId || programEnrollment.program.defaultGroupId,
     });
 
     await prisma.$transaction([
@@ -56,11 +63,11 @@ export const reactivatePartnerAction = authActionClient
         },
         data: {
           status: "approved",
-          groupId: defaultGroup.id,
-          clickRewardId: defaultGroup.clickRewardId,
-          leadRewardId: defaultGroup.leadRewardId,
-          saleRewardId: defaultGroup.saleRewardId,
-          discountId: defaultGroup.discountId,
+          groupId: partnerGroup.id,
+          clickRewardId: partnerGroup.clickRewardId,
+          leadRewardId: partnerGroup.leadRewardId,
+          saleRewardId: partnerGroup.saleRewardId,
+          discountId: partnerGroup.discountId,
         },
       }),
     ]);
@@ -78,19 +85,20 @@ export const reactivatePartnerAction = authActionClient
         await Promise.allSettled([
           // TODO send email to partner
           linkCache.expireMany(links),
-          recordAuditLog({
+
+          trackActivityLog({
             workspaceId: workspace.id,
             programId,
+            resourceType: "partner",
+            resourceId: partnerId,
+            userId: user.id,
             action: "partner.reactivated",
-            description: `Partner ${partnerId} reactivated`,
-            actor: user,
-            targets: [
-              {
-                type: "partner",
-                id: partnerId,
-                metadata: programEnrollment.partner,
+            changeSet: {
+              status: {
+                old: "deactivated",
+                new: "approved",
               },
-            ],
+            },
           }),
         ]);
       })(),

@@ -1,14 +1,15 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
-import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
 import { CUTOFF_PERIOD_ENUM } from "@/lib/partners/cutoff-period";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { log } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
+import { logAndRespond } from "../../utils";
 import { processPayouts } from "./process-payouts";
 import { splitPayouts } from "./split-payouts";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 600; // This function can run for a maximum of 10 minutes
 
 const processPayoutsCronSchema = z.object({
   workspaceId: z.string(),
@@ -16,7 +17,7 @@ const processPayoutsCronSchema = z.object({
   invoiceId: z.string(),
   paymentMethodId: z.string(),
   cutoffPeriod: CUTOFF_PERIOD_ENUM,
-  selectedPayoutId: z.string().optional(),
+  selectedPayoutIds: z.array(z.string()).optional(),
   excludedPayoutIds: z.array(z.string()).optional(),
 });
 
@@ -35,7 +36,7 @@ export async function POST(req: Request) {
       invoiceId,
       paymentMethodId,
       cutoffPeriod,
-      selectedPayoutId,
+      selectedPayoutIds,
       excludedPayoutIds,
     } = processPayoutsCronSchema.parse(JSON.parse(rawBody));
 
@@ -43,39 +44,67 @@ export async function POST(req: Request) {
       where: {
         id: workspaceId,
       },
-    });
-
-    const program = await prisma.program.findUniqueOrThrow({
-      where: {
-        id: getDefaultProgramIdOrThrow(workspace),
+      include: {
+        programs: true,
+        invoices: {
+          where: {
+            id: invoiceId,
+          },
+        },
       },
     });
+
+    // should never happen, but just in case
+    if (workspace.programs.length === 0) {
+      return logAndRespond(
+        `Workspace ${workspaceId} has no programs. Skipping...`,
+      );
+    }
+
+    const program = workspace.programs[0];
+
+    // should never happen, but just in case
+    if (workspace.invoices.length === 0) {
+      return logAndRespond(
+        `Invoice ${invoiceId} not found for workspace ${workspaceId}. Skipping...`,
+      );
+    }
+
+    const invoice = workspace.invoices[0];
+
+    // avoid race condition where Stripe's charge.failed webhook is processed before this cron job
+    if (invoice.status === "failed") {
+      return logAndRespond(
+        `Invoice ${invoiceId} has already been marked as failed. Skipping...`,
+      );
+    }
 
     if (cutoffPeriod) {
       await splitPayouts({
         program,
         cutoffPeriod,
-        selectedPayoutId,
+        selectedPayoutIds,
         excludedPayoutIds,
       });
     }
 
     await processPayouts({
-      workspace,
       program,
+      workspace,
+      invoice,
       userId,
-      invoiceId,
       paymentMethodId,
       cutoffPeriod,
-      selectedPayoutId,
+      selectedPayoutIds,
       excludedPayoutIds,
     });
 
-    return new Response(`Payouts confirmed for program ${program.name}.`);
+    return logAndRespond(`Processed payouts for program ${program.name}.`);
   } catch (error) {
     await log({
       message: `Error confirming payouts for program: ${error.message}`,
       type: "errors",
+      mention: true,
     });
 
     return handleAndReturnErrorResponse(error);

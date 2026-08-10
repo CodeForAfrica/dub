@@ -1,12 +1,14 @@
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { withWorkspace } from "@/lib/auth";
-import { prisma } from "@dub/prisma";
-import { BountySubmissionStatus } from "@dub/prisma/client";
+import { prisma } from "@/lib/prisma";
+import { BountySubmissionStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const bountiesSubmissionsCountQuerySchema = z.object({
   bountyId: z.string().optional(),
+  groupId: z.string().optional(),
+  partnerId: z.string().optional(),
 });
 
 const statuses = Object.values(BountySubmissionStatus);
@@ -15,7 +17,7 @@ const statuses = Object.values(BountySubmissionStatus);
 export const GET = withWorkspace(
   async ({ workspace, searchParams }) => {
     const programId = getDefaultProgramIdOrThrow(workspace);
-    const { bountyId } =
+    const { bountyId, groupId, partnerId } =
       bountiesSubmissionsCountQuerySchema.parse(searchParams);
 
     const count = await prisma.bountySubmission.groupBy({
@@ -23,6 +25,14 @@ export const GET = withWorkspace(
       where: {
         programId,
         bountyId,
+        ...(groupId && {
+          programEnrollment: {
+            groupId,
+          },
+        }),
+        ...(partnerId && {
+          partnerId,
+        }),
       },
       _count: true,
     });
@@ -44,13 +54,6 @@ export const GET = withWorkspace(
     return NextResponse.json(counts);
   },
   {
-    requiredPlan: [
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

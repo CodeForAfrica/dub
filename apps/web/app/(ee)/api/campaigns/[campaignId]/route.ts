@@ -10,12 +10,12 @@ import { parseRequestBody } from "@/lib/api/utils";
 import { parseWorkflowConfig } from "@/lib/api/workflows/parse-workflow-config";
 import { withWorkspace } from "@/lib/auth";
 import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
 import {
   CampaignSchema,
   updateCampaignSchema,
 } from "@/lib/zod/schemas/campaigns";
 import { WORKFLOW_ATTRIBUTE_TRIGGER } from "@/lib/zod/schemas/workflows";
-import { prisma } from "@dub/prisma";
 import { arrayEqual } from "@dub/utils";
 import { PartnerGroup } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
@@ -44,6 +44,7 @@ export const GET = withWorkspace(
   },
   {
     requiredPlan: ["advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );
 
@@ -171,6 +172,7 @@ export const PATCH = withWorkspace(
   },
   {
     requiredPlan: ["advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );
 
@@ -205,7 +207,7 @@ export const DELETE = withWorkspace(
     waitUntil(
       (async () => {
         if (campaign.type === "marketing" && campaign.qstashMessageId) {
-          await qstash.messages.delete(campaign.qstashMessageId);
+          await qstash.messages.cancel(campaign.qstashMessageId);
         } else if (campaign.type === "transactional" && campaign.workflow) {
           const { condition } = parseWorkflowConfig(campaign.workflow);
 
@@ -222,5 +224,6 @@ export const DELETE = withWorkspace(
   },
   {
     requiredPlan: ["advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );

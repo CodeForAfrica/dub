@@ -1,12 +1,15 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { log } from "@dub/utils";
-import { z } from "zod";
+import { PartnerPayoutMethod } from "@prisma/client";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 import { queueExternalPayouts } from "./queue-external-payouts";
 import { queueStripePayouts } from "./queue-stripe-payouts";
+import { queueTremendousPayouts } from "./queue-tremendous-payouts";
 import { sendPaypalPayouts } from "./send-paypal-payouts";
+import { getFundSettlementTiming, scheduleDelayedPayouts } from "./utils";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600; // This function can run for a maximum of 10 minutes
@@ -52,12 +55,70 @@ export async function POST(req: Request) {
       );
     }
 
+    // Set the method for each payout in the invoice to the corresponding partner's default payout method
+    await prisma.$executeRaw`
+      UPDATE Payout p
+      INNER JOIN Partner pn ON p.partnerId = pn.id
+      SET p.method = pn.defaultPayoutMethod
+      WHERE p.invoiceId = ${invoice.id}
+      AND pn.defaultPayoutMethod IS NOT NULL
+      AND p.status = 'processing'
+    `;
+
+    let fundsAvailable = true;
+
+    // if invoice payment method is card, we need to check if the funds have settled yet
+    if (invoice.paymentMethod === "card") {
+      const fundSettlementTiming = await getFundSettlementTiming(invoice);
+      if (!fundSettlementTiming.fundsAvailable) {
+        // set fundsAvailable to false so we don't queue any payouts that require funds to be available
+        fundsAvailable = false;
+
+        const postSettlementPayoutMethods = [
+          PartnerPayoutMethod.stablecoin,
+          PartnerPayoutMethod.paypal,
+          PartnerPayoutMethod.tremendous,
+        ];
+
+        const postSettlementPayoutsCount = await prisma.payout.count({
+          where: {
+            invoiceId: invoice.id,
+            status: "processing",
+            method: {
+              in: postSettlementPayoutMethods,
+            },
+          },
+        });
+
+        if (postSettlementPayoutsCount > 0) {
+          await scheduleDelayedPayouts({
+            invoice,
+            executeAt: fundSettlementTiming.scheduledAt,
+          });
+        }
+      }
+    }
+
     await Promise.allSettled([
-      // Queue Stripe payouts
-      queueStripePayouts(invoice),
-      // Send PayPal payouts
-      sendPaypalPayouts(invoice),
-      // Queue external payouts
+      // Queue Stripe payouts (need to pass along fundsAvailable to handle stablecoin payouts)
+      queueStripePayouts({
+        invoice,
+        fundsAvailable,
+      }),
+
+      // only send PayPal and Tremendous payouts if funds are available
+      ...(fundsAvailable
+        ? [
+            sendPaypalPayouts({
+              invoice,
+            }),
+            queueTremendousPayouts({
+              invoice,
+            }),
+          ]
+        : []),
+
+      // Queue external payouts (doesn't rely on fundsAvailable)
       queueExternalPayouts(invoice),
     ]);
 

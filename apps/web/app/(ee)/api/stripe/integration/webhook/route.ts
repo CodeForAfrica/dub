@@ -1,30 +1,38 @@
+import { captureWebhookLog } from "@/lib/api-logs/capture-webhook-log";
 import { withAxiom } from "@/lib/axiom/server";
+import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
 import { StripeMode } from "@/lib/types";
-import { logAndRespond } from "app/(ee)/api/cron/utils";
+import { waitUntil } from "@vercel/functions";
+import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { accountApplicationDeauthorized } from "./account-application-deauthorized";
 import { chargeRefunded } from "./charge-refunded";
 import { checkoutSessionCompleted } from "./checkout-session-completed";
 import { couponDeleted } from "./coupon-deleted";
 import { customerCreated } from "./customer-created";
+import { customerSubscriptionCreated } from "./customer-subscription-created";
+import { customerSubscriptionDeleted } from "./customer-subscription-deleted";
 import { customerUpdated } from "./customer-updated";
 import { invoicePaid } from "./invoice-paid";
 import { promotionCodeUpdated } from "./promotion-code-updated";
 
 const relevantEvents = new Set([
+  "account.application.deauthorized",
+  "charge.refunded",
+  "checkout.session.completed",
+  "coupon.deleted",
   "customer.created",
   "customer.updated",
-  "checkout.session.completed",
+  "customer.subscription.created",
+  "customer.subscription.deleted",
   "invoice.paid",
-  "charge.refunded",
-  "account.application.deauthorized",
-  "coupon.deleted",
   "promotion_code.updated",
 ]);
 
 // POST /api/stripe/integration/webhook – listen to Stripe webhooks (for Stripe Integration)
 export const POST = withAxiom(async (req: Request) => {
+  const startTime = Date.now();
   const pathname = new URL(req.url).pathname;
   const buf = await req.text();
   const sig = req.headers.get("Stripe-Signature");
@@ -72,39 +80,99 @@ export const POST = withAxiom(async (req: Request) => {
   // and live mode events are sent to the live mode endpoint.
   // See: https://docs.stripe.com/stripe-apps/build-backend#event-behavior-depends-on-install-mode
   if (!event.livemode && mode === "live") {
-    return logAndRespond(
-      `Received a test webhook event (${event.type}) on our live webhook receiver endpoint, skipping...`,
+    const response =
+      "Received a test webhook event on our live webhook receiver endpoint, skipping...";
+    console.log(`[${event.type}]: ${response}`);
+    return NextResponse.json({
+      eventType: event.type,
+      response,
+    });
+  }
+
+  let result: {
+    response: string;
+    workspaceId?: string;
+  } = {
+    response: "OK",
+  };
+
+  switch (event.type) {
+    case "account.application.deauthorized":
+      result = await accountApplicationDeauthorized(event, mode);
+      break;
+    case "charge.refunded":
+      result = await chargeRefunded(event, mode);
+      break;
+    case "checkout.session.completed":
+      result = await checkoutSessionCompleted(event, mode);
+      break;
+    case "coupon.deleted":
+      result = await couponDeleted(event);
+      break;
+    case "customer.created":
+      result = await customerCreated(event);
+      break;
+    case "customer.updated":
+      result = await customerUpdated(event);
+      break;
+    case "customer.subscription.created":
+      result = await customerSubscriptionCreated(event, mode);
+      break;
+    case "customer.subscription.deleted":
+      result = await customerSubscriptionDeleted(event);
+      break;
+    case "invoice.paid":
+      result = await invoicePaid(event, mode);
+      break;
+    case "promotion_code.updated":
+      result = await promotionCodeUpdated(event);
+      break;
+  }
+
+  const responseBody = {
+    eventType: event.type,
+    response: result.response,
+  };
+
+  // if workspaceId is returned as undefined
+  // AND the response does not contain "Workspace not found" (indicating the workspace doesn't exist)
+  // we try to find the workspace ID from the Stripe account ID
+  if (
+    !result.workspaceId &&
+    !result.response.startsWith("Workspace not found") &&
+    event.account
+  ) {
+    const stripeWebhookWorkspace = await prisma.project.findUnique({
+      where: {
+        stripeConnectId: event.account,
+      },
+      select: {
+        id: true,
+      },
+    });
+    if (stripeWebhookWorkspace) {
+      // if workspace exists, we set the workspace ID
+      result.workspaceId = stripeWebhookWorkspace.id;
+    }
+  }
+
+  // if workspace ID exists, we capture the webhook log
+  if (result.workspaceId) {
+    waitUntil(
+      captureWebhookLog({
+        workspaceId: result.workspaceId,
+        method: req.method,
+        path: "/stripe/integration/webhook",
+        statusCode: 200,
+        duration: Date.now() - startTime,
+        requestBody: event,
+        responseBody,
+        userAgent: req.headers.get("user-agent"),
+      }),
     );
   }
 
-  let response = "OK";
+  console.log(`[${event.type}]: ${result.response}`);
 
-  switch (event.type) {
-    case "customer.created":
-      response = await customerCreated(event);
-      break;
-    case "customer.updated":
-      response = await customerUpdated(event);
-      break;
-    case "checkout.session.completed":
-      response = await checkoutSessionCompleted(event, mode);
-      break;
-    case "invoice.paid":
-      response = await invoicePaid(event, mode);
-      break;
-    case "charge.refunded":
-      response = await chargeRefunded(event, mode);
-      break;
-    case "account.application.deauthorized":
-      response = await accountApplicationDeauthorized(event);
-      break;
-    case "coupon.deleted":
-      response = await couponDeleted(event);
-      break;
-    case "promotion_code.updated":
-      response = await promotionCodeUpdated(event);
-      break;
-  }
-
-  return logAndRespond(`[${event.type}]: ${response}`);
+  return NextResponse.json(responseBody);
 });

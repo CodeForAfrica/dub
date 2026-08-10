@@ -54,7 +54,7 @@ export default function CampaignEmail({
             <Section className="my-8">
               <div className="flex items-center">
                 <Img
-                  src={program.logo || "https://assets.dub.co/logo.png"}
+                  src={program.logo || "https://assets.dub.co/wordmark.png"}
                   width="32"
                   height="32"
                   alt={program.name}
@@ -75,7 +75,10 @@ export default function CampaignEmail({
             </Section>
 
             <Section>
-              <div dangerouslySetInnerHTML={{ __html: styledHtml }} />
+              <div
+                style={{ fontSize: "14px", lineHeight: 1.7142857 }}
+                dangerouslySetInnerHTML={{ __html: styledHtml }}
+              />
             </Section>
 
             {program?.messagingEnabledAt &&

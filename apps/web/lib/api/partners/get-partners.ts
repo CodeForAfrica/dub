@@ -1,59 +1,58 @@
+import { prisma } from "@/lib/prisma";
 import { getPartnersQuerySchemaExtended } from "@/lib/zod/schemas/partners";
-import { prisma, sanitizeFullTextSearch } from "@dub/prisma";
-import { z } from "zod";
+import { toCentsNumber } from "@dub/utils";
+import * as z from "zod/v4";
+import { buildProgramEnrollmentWhereForList } from "./program-enrollment-query";
 
 type PartnerFilters = z.infer<typeof getPartnersQuerySchemaExtended> & {
   programId: string;
+  includeGroup?: boolean;
+  partnerTagIdOperator?: "IN" | "NOT IN";
+  groupIdOperator?: "IN" | "NOT IN";
+  countryOperator?: "IN" | "NOT IN";
 };
 
 export async function getPartners(filters: PartnerFilters) {
   const {
-    status,
-    country,
-    search,
-    email,
-    tenantId,
-    partnerIds,
-    page,
+    page = 1,
     pageSize,
     sortBy,
     sortOrder,
     programId,
-    groupId,
+    includePartnerPlatforms: _includePartnerPlatforms,
+    includeGroup = false,
+    ...enrollmentRest
   } = filters;
 
   const partners = await prisma.programEnrollment.findMany({
-    where: {
-      tenantId,
+    where: buildProgramEnrollmentWhereForList({
+      ...enrollmentRest,
       programId,
-      ...(partnerIds && {
-        partnerId: {
-          in: partnerIds,
+    }),
+    include: {
+      partner: {
+        include: {
+          programPartnerTags: {
+            where: {
+              programId,
+            },
+            include: {
+              partnerTag: true,
+            },
+          },
+          platforms: true,
         },
-      }),
-      status,
-      groupId,
-      ...(country || search || email
+      },
+      links: true,
+      ...(includeGroup
         ? {
-            partner: {
-              country,
-              ...(email
-                ? { email }
-                : search
-                  ? search.includes("@")
-                    ? { email: search }
-                    : {
-                        email: { search: sanitizeFullTextSearch(search) },
-                        name: { search: sanitizeFullTextSearch(search) },
-                      }
-                  : {}),
+            partnerGroup: {
+              select: {
+                name: true,
+              },
             },
           }
         : {}),
-    },
-    include: {
-      partner: true,
-      links: true,
     },
     take: pageSize,
     skip: (page - 1) * pageSize,
@@ -62,13 +61,20 @@ export async function getPartners(filters: PartnerFilters) {
     },
   });
 
-  return partners.map(({ partner, links, ...programEnrollment }) => ({
-    ...partner,
-    ...programEnrollment,
-    id: partner.id,
-    createdAt: new Date(programEnrollment.createdAt),
-    links,
-    netRevenue:
-      programEnrollment.totalSaleAmount - programEnrollment.totalCommissions,
-  }));
+  return partners.map(
+    ({ partner, links, partnerGroup, ...programEnrollment }) => ({
+      ...partner,
+      ...programEnrollment,
+      id: partner.id,
+      createdAt: new Date(programEnrollment.createdAt),
+      ...(includeGroup && { group: partnerGroup }),
+      tags: partner.programPartnerTags
+        .map(({ partnerTag }) => partnerTag)
+        .filter((t) => t.programId != null && t.programId === programId),
+      links,
+      netRevenue:
+        toCentsNumber(programEnrollment.totalSaleAmount ?? 0) -
+        toCentsNumber(programEnrollment.totalCommissions ?? 0),
+    }),
+  );
 }

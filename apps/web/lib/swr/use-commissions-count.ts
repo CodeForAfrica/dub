@@ -12,10 +12,12 @@ export default function useCommissionsCount(opts?: Record<string, any>) {
     `/api/commissions/count${getQueryString(
       {
         workspaceId,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...opts,
       },
       {
-        ...opts,
-        exclude: opts?.exclude || [],
+        ...(opts?.include ? { include: opts.include } : {}),
+        ...(opts?.exclude ? { exclude: opts.exclude } : {}),
       },
     )}`,
     fetcher,

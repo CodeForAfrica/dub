@@ -1,6 +1,6 @@
 import { AnimatedEmptyState } from "@/ui/shared/animated-empty-state";
 import { Button } from "@dub/ui";
-import { Star, StarFill } from "@dub/ui/icons";
+import { Star } from "@dub/ui/icons";
 import { SVGProps, useId } from "react";
 
 export function NetworkEmptyState({
@@ -15,26 +15,14 @@ export function NetworkEmptyState({
   return (
     <AnimatedEmptyState
       title="No partners found"
-      description={
-        isFiltered || isStarred ? (
-          <>
-            Press{" "}
-            <span className="text-content-default bg-bg-emphasis rounded-md px-1 py-0.5 text-xs font-semibold">
-              Esc
-            </span>{" "}
-            to clear all filters.
-          </>
-        ) : (
-          "There are no partners for you to discover yet."
-        )
-      }
+      description="Adjust your filters to refine your search results."
       className="border-none md:min-h-[400px]"
       cardClassName="py-3"
       cardCount={2}
       cardContent={(idx) => (
         <div className="flex grow items-center gap-4">
           {idx % 2 === 0 || isStarred ? (
-            <StarFill className="size-3 shrink-0 text-amber-500" />
+            <Star variant="fill" className="size-3 shrink-0 text-amber-500" />
           ) : (
             <Star className="text-content-muted size-3 shrink-0" />
           )}

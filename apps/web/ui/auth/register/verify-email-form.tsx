@@ -1,24 +1,27 @@
 "use client";
 
 import { createUserAccountAction } from "@/lib/actions/create-user-account";
+import { getValidInternalRedirectPath } from "@/lib/middleware/utils/is-valid-internal-redirect";
 import { AnimatedSizeContainer, Button, useMediaQuery } from "@dub/ui";
 import { cn } from "@dub/utils";
 import { OTPInput } from "input-otp";
 import { signIn } from "next-auth/react";
 import { useAction } from "next-safe-action/hooks";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useRegisterContext } from "./context";
 import { ResendOtp } from "./resend-otp";
 
 export const VerifyEmailForm = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { isMobile } = useMediaQuery();
   const [code, setCode] = useState("");
   const { email, password } = useRegisterContext();
   const [isInvalidCode, setIsInvalidCode] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   const { executeAsync, isPending } = useAction(createUserAccountAction, {
     async onSuccess() {
@@ -31,20 +34,45 @@ export const VerifyEmailForm = () => {
         redirect: false,
       });
 
+      // preserve the next query param if present (and valid)
+      const next = getValidInternalRedirectPath({
+        redirectPath: searchParams.get("next"),
+        currentUrl: window.location.href,
+      });
+
       if (response?.ok) {
-        router.push("/onboarding");
+        router.push(
+          `/onboarding${next ? `?next=${encodeURIComponent(next)}` : ""}`,
+        );
       } else {
+        isSubmittingRef.current = false;
+        setIsRedirecting(false);
         toast.error(
           "Failed to sign in with credentials. Please try again or contact support.",
         );
       }
     },
     onError({ error }) {
+      isSubmittingRef.current = false;
       toast.error(error.serverError);
       setCode("");
       setIsInvalidCode(true);
     },
   });
+
+  const submitVerification = useCallback(() => {
+    if (
+      isSubmittingRef.current ||
+      isPending ||
+      isRedirecting ||
+      code.length < 6
+    ) {
+      return;
+    }
+
+    isSubmittingRef.current = true;
+    executeAsync({ email, password, code });
+  }, [code, email, password, executeAsync, isPending, isRedirecting]);
 
   if (!email || !password) {
     router.push("/register");
@@ -56,7 +84,7 @@ export const VerifyEmailForm = () => {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          executeAsync({ email, password, code });
+          submitVerification();
         }}
       >
         <div>
@@ -91,9 +119,7 @@ export const VerifyEmailForm = () => {
                 ))}
               </div>
             )}
-            onComplete={() => {
-              executeAsync({ email, password, code });
-            }}
+            onComplete={submitVerification}
           />
           <AnimatedSizeContainer height>
             {isInvalidCode && (

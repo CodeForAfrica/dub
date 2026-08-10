@@ -4,20 +4,30 @@ import { DUB_PARTNERS_ANALYTICS_INTERVAL } from "@/lib/analytics/constants";
 import { formatDateTooltip } from "@/lib/analytics/format-date-tooltip";
 import { IntervalOptions } from "@/lib/analytics/types";
 import { useSyncedLocalStorage } from "@/lib/hooks/use-synced-local-storage";
+import { constructPartnerReferralLink } from "@/lib/partner-referrals/utils";
 import { constructPartnerLink } from "@/lib/partners/construct-partner-link";
+import { getRewardAmount } from "@/lib/partners/get-reward-amount";
 import { QueryLinkStructureHelpText } from "@/lib/partners/query-link-structure-help-text";
 import usePartnerAnalytics from "@/lib/swr/use-partner-analytics";
 import { usePartnerEarningsTimeseries } from "@/lib/swr/use-partner-earnings-timeseries";
+import usePartnerProfile from "@/lib/swr/use-partner-profile";
 import useProgramEnrollment from "@/lib/swr/use-program-enrollment";
 import { PageWidthWrapper } from "@/ui/layout/page-width-wrapper";
-import { HeroBackground } from "@/ui/partners/hero-background";
+import { formatDiscountDescription } from "@/ui/partners/format-discount-description";
+import { formatRewardDescription } from "@/ui/partners/format-reward-description";
 import { PartnerStatusBadges } from "@/ui/partners/partner-status-badges";
-import { ProgramRewardList } from "@/ui/partners/program-reward-list";
+import { ProgramRewardModifiersTooltip } from "@/ui/partners/program-reward-modifiers-tooltip";
+import { REWARD_EVENT_ICON } from "@/ui/partners/rewards/reward-event-icon";
 import SimpleDateRangePicker from "@/ui/shared/simple-date-range-picker";
 import {
   Button,
   buttonVariants,
+  CopyText,
+  Gift,
+  Icon,
+  LinkLogo,
   StatusBadge,
+  Tooltip,
   useCopyToClipboard,
   useRouterStuff,
 } from "@dub/ui";
@@ -34,9 +44,16 @@ import {
   CursorRays,
   InvoiceDollar,
   LoadingSpinner,
+  ReferredVia,
   UserPlus,
 } from "@dub/ui/icons";
-import { cn, currencyFormatter, getPrettyUrl, nFormatter } from "@dub/utils";
+import {
+  cn,
+  currencyFormatter,
+  getApexDomain,
+  getPrettyUrl,
+  nFormatter,
+} from "@dub/utils";
 import NumberFlow, { NumberFlowGroup } from "@number-flow/react";
 import { LinearGradient } from "@visx/gradient";
 import { endOfDay, startOfDay } from "date-fns";
@@ -46,12 +63,15 @@ import { useParams } from "next/navigation";
 import {
   createContext,
   CSSProperties,
+  ReactNode,
   useContext,
   useId,
   useMemo,
+  useState,
 } from "react";
 import { EarningsTablePartner } from "./earnings/earnings-table";
 import { PayoutsCard } from "./payouts-card";
+import { ShareEarningsModal } from "./share-earnings-modal";
 
 const ProgramOverviewContext = createContext<{
   start?: Date;
@@ -62,7 +82,7 @@ const ProgramOverviewContext = createContext<{
   interval: DUB_PARTNERS_ANALYTICS_INTERVAL,
 });
 
-export default function ProgramPageClient() {
+export function PartnerProgramOverviewPageClient() {
   const { getQueryString, searchParamsObj } = useRouterStuff();
   const { programSlug } = useParams();
 
@@ -72,7 +92,6 @@ export default function ProgramPageClient() {
   );
 
   const { programEnrollment, showDetailedAnalytics } = useProgramEnrollment();
-  const [copied, copyToClipboard] = useCopyToClipboard();
 
   const {
     start,
@@ -85,22 +104,14 @@ export default function ProgramPageClient() {
   };
 
   const program = programEnrollment?.program;
-  const defaultProgramLink = programEnrollment?.links?.[0];
 
   if (!program) {
     return null;
   }
 
-  const partnerLink = constructPartnerLink({
-    group: programEnrollment.group,
-    link: defaultProgramLink,
-  });
-
-  const isDeactivated = programEnrollment?.status === "deactivated";
-
   return (
     <PageWidthWrapper className="pb-10">
-      {partnerLink && (
+      {program && (
         <AnimatePresence mode="wait" initial={false}>
           {!hideDetails && (
             <motion.div
@@ -115,107 +126,8 @@ export default function ProgramPageClient() {
               }}
               className="overflow-hidden"
             >
-              <div
-                className={cn(
-                  "relative z-0 mb-4 flex flex-col overflow-hidden rounded-lg border border-neutral-300 p-4 sm:mb-10 md:p-6",
-                  isDeactivated && "opacity-80",
-                )}
-              >
-                {program && (
-                  <HeroBackground
-                    logo={program.logo}
-                    color={program.brandColor}
-                  />
-                )}
-
-                <span className="text-base font-semibold text-neutral-800">
-                  Referral link
-                </span>
-                <div className="xs:flex-row xs:items-center relative mt-3 flex flex-col gap-2 md:max-w-[50%]">
-                  {partnerLink ? (
-                    <input
-                      type="text"
-                      readOnly
-                      value={getPrettyUrl(partnerLink)}
-                      disabled={isDeactivated}
-                      className={cn(
-                        "border-border-default text-content-default focus:border-border-emphasis bg-bg-default h-10 min-w-0 shrink grow rounded-md border px-3 text-sm focus:outline-none focus:ring-neutral-500",
-                        isDeactivated && "text-content-subtle cursor-default",
-                      )}
-                    />
-                  ) : (
-                    <div className="h-10 w-16 animate-pulse rounded-md bg-neutral-200 lg:w-72" />
-                  )}
-                  {isDeactivated
-                    ? (() => {
-                        const deactivatedBadge =
-                          PartnerStatusBadges.deactivated;
-                        return (
-                          <StatusBadge
-                            variant={deactivatedBadge.variant}
-                            icon={deactivatedBadge.icon}
-                            className="xs:w-fit absolute right-4 top-1/2 -translate-y-1/2 px-1.5 py-0.5"
-                          >
-                            {deactivatedBadge.label}
-                          </StatusBadge>
-                        );
-                      })()
-                    : !isDeactivated && (
-                        <Button
-                          icon={
-                            <div className="relative size-4">
-                              <div
-                                className={cn(
-                                  "absolute inset-0 transition-[transform,opacity]",
-                                  copied && "translate-y-1 opacity-0",
-                                )}
-                              >
-                                <Copy className="size-4" />
-                              </div>
-                              <div
-                                className={cn(
-                                  "absolute inset-0 transition-[transform,opacity]",
-                                  !copied && "translate-y-1 opacity-0",
-                                )}
-                              >
-                                <Check className="size-4" />
-                              </div>
-                            </div>
-                          }
-                          text={copied ? "Copied link" : "Copy link"}
-                          className="xs:w-fit"
-                          onClick={() => {
-                            if (partnerLink) {
-                              copyToClipboard(partnerLink);
-                            }
-                          }}
-                        />
-                      )}
-                </div>
-
-                {programEnrollment.group?.linkStructure === "query" && (
-                  <QueryLinkStructureHelpText link={defaultProgramLink} />
-                )}
-
-                {((programEnrollment?.rewards &&
-                  programEnrollment?.rewards.length > 0) ||
-                  programEnrollment?.discount) && (
-                  <>
-                    <span className="mt-12 text-base font-semibold text-neutral-800">
-                      Rewards
-                    </span>
-                    <div className="relative mt-2 text-lg text-neutral-900 md:max-w-[50%]">
-                      {program && programEnrollment?.rewards ? (
-                        <ProgramRewardList
-                          rewards={programEnrollment?.rewards}
-                          discount={programEnrollment?.discount}
-                        />
-                      ) : (
-                        <div className="h-7 w-5/6 animate-pulse rounded-md bg-neutral-200" />
-                      )}
-                    </div>
-                  </>
-                )}
+              <div className="mb-10">
+                <RewardList />
               </div>
             </motion.div>
           )}
@@ -226,12 +138,12 @@ export default function ProgramPageClient() {
           start: start ? startOfDay(new Date(start)) : undefined,
           end: end ? endOfDay(new Date(end)) : undefined,
           interval,
-          color: program?.brandColor ?? undefined,
+          color: programEnrollment.group?.brandColor ?? undefined,
         }}
       >
         <ChartTooltipSync>
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <div className="group rounded-lg border border-neutral-300 p-5 pb-3 lg:col-span-2">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <div className="group rounded-xl border border-neutral-200 p-5 pb-3 pt-4 lg:col-span-2">
               <EarningsChart />
             </div>
 
@@ -253,7 +165,7 @@ export default function ProgramPageClient() {
             </NumberFlowGroup>
           </div>
         </ChartTooltipSync>
-        <div className="mt-6">
+        <div className="mt-5">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-neutral-900">
               Recent earnings
@@ -281,8 +193,19 @@ function EarningsChart() {
   const { programSlug } = useParams();
   const { getQueryString } = useRouterStuff();
   const { start, end, interval } = useContext(ProgramOverviewContext);
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  const { programEnrollment } = useProgramEnrollment();
 
   const { data: timeseries, error } = usePartnerEarningsTimeseries({
+    interval,
+    start,
+    end,
+  });
+
+  const { data: analyticsData } = usePartnerAnalytics({
+    event: "composite",
+    groupBy: "count",
     interval,
     start,
     end,
@@ -292,6 +215,16 @@ function EarningsChart() {
     () => timeseries?.reduce((acc, { earnings }) => acc + earnings, 0),
     [timeseries],
   );
+
+  const totalClicks = useMemo(
+    () => analyticsData?.clicks ?? 0,
+    [analyticsData],
+  );
+
+  const epc = useMemo(() => {
+    if (!total || !totalClicks || totalClicks === 0) return 0;
+    return total / totalClicks;
+  }, [total, totalClicks]);
 
   const data = useMemo(
     () =>
@@ -304,26 +237,65 @@ function EarningsChart() {
 
   return (
     <div>
+      {programEnrollment?.program && (
+        <ShareEarningsModal
+          showModal={showShareModal}
+          setShowModal={setShowShareModal}
+          programId={programEnrollment.program.id}
+          start={start}
+          end={end}
+          interval={interval}
+          timeseries={timeseries}
+        />
+      )}
       <div className="flex flex-col-reverse items-start justify-between gap-4 md:flex-row">
-        <div>
-          <span className="block text-base font-semibold leading-none text-neutral-800">
-            Earnings
-          </span>
-          <div className="mt-1">
-            {total !== undefined ? (
-              <NumberFlow
-                className="text-lg font-medium leading-none text-neutral-600"
-                value={total / 100}
-                format={{
-                  style: "currency",
-                  currency: "USD",
-                  // @ts-ignore – trailingZeroDisplay is a valid option but TS is outdated
-                  trailingZeroDisplay: "stripIfInteger",
-                }}
-              />
-            ) : (
-              <div className="h-[27px] w-24 animate-pulse rounded-md bg-neutral-200" />
-            )}
+        <div className="flex items-center gap-0">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="block text-base font-semibold leading-none text-neutral-800">
+                Earnings
+              </span>
+              <Tooltip content="Share chart">
+                <button
+                  type="button"
+                  onClick={() => setShowShareModal(true)}
+                  className="flex size-6 items-center justify-center rounded-md border border-transparent text-neutral-500 transition-colors hover:border-neutral-200 hover:bg-neutral-50 hover:text-neutral-700"
+                >
+                  <ReferredVia className="size-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="flex items-baseline gap-2">
+              {total !== undefined ? (
+                <>
+                  <NumberFlow
+                    className="text-lg font-medium leading-none text-neutral-600"
+                    value={total / 100}
+                    format={{
+                      style: "currency",
+                      currency: "USD",
+                      // @ts-ignore – trailingZeroDisplay is a valid option but TS is outdated
+                      trailingZeroDisplay: "stripIfInteger",
+                    }}
+                  />
+                  {total > 0 && analyticsData && (
+                    <NumberFlow
+                      className="text-sm font-medium leading-none text-neutral-500/80"
+                      value={epc / 100}
+                      format={{
+                        style: "currency",
+                        currency: "USD",
+                        // @ts-ignore – trailingZeroDisplay is a valid option but TS is outdated
+                        trailingZeroDisplay: "stripIfInteger",
+                      }}
+                      suffix=" EPC"
+                    />
+                  )}
+                </>
+              ) : (
+                <div className="h-[27px] w-24 animate-pulse rounded-md bg-neutral-200" />
+              )}
+            </div>
           </div>
         </div>
         <div className="flex w-full items-center gap-2 md:w-auto">
@@ -337,17 +309,21 @@ function EarningsChart() {
         </div>
       </div>
       <div className="relative mt-2 h-44 w-full">
-        {data ? (
+        {error ? (
+          <div className="flex size-full items-center justify-center">
+            <span className="text-sm text-neutral-500">
+              Failed to load earnings data.
+            </span>
+          </div>
+        ) : timeseries === undefined ? (
+          <div className="flex size-full items-center justify-center">
+            <LoadingSpinner />
+          </div>
+        ) : data && data.length > 0 ? (
           <BrandedChart data={data} currency />
         ) : (
           <div className="flex size-full items-center justify-center">
-            {error ? (
-              <span className="text-sm text-neutral-500">
-                Failed to load earnings data.
-              </span>
-            ) : (
-              <LoadingSpinner />
-            )}
+            <span className="text-sm text-neutral-500">No data available</span>
           </div>
         )}
       </div>
@@ -388,7 +364,7 @@ function StatCard({
   }, [timeseries]);
 
   return (
-    <div className="group block rounded-lg border border-neutral-300 bg-white p-5 pb-3">
+    <div className="group block rounded-xl border border-neutral-200 bg-white p-5 pb-3">
       <div className="flex justify-between">
         <div>
           <span className="mb-1 block text-base font-semibold leading-none text-neutral-800">
@@ -412,7 +388,17 @@ function StatCard({
         />
       </div>
       <div className="mt-2 h-44 w-full">
-        {timeseries ? (
+        {error ? (
+          <div className="flex size-full items-center justify-center">
+            <span className="text-sm text-neutral-500">
+              Failed to load data.
+            </span>
+          </div>
+        ) : timeseries === undefined ? (
+          <div className="flex size-full items-center justify-center">
+            <LoadingSpinner />
+          </div>
+        ) : timeseries.length > 0 ? (
           <BrandedChart
             data={timeseries.map((d) => ({
               date: new Date(d.start),
@@ -421,13 +407,7 @@ function StatCard({
           />
         ) : (
           <div className="flex size-full items-center justify-center">
-            {error ? (
-              <span className="text-sm text-neutral-500">
-                Failed to load data.
-              </span>
-            ) : (
-              <LoadingSpinner />
-            )}
+            <span className="text-sm text-neutral-500">No data available</span>
           </div>
         )}
       </div>
@@ -455,7 +435,7 @@ function StatCardSimple({
   const Icon = iconMap[event];
 
   return (
-    <div className="relative block rounded-lg border border-neutral-300 bg-white px-5 py-4">
+    <div className="relative block rounded-xl border border-neutral-200 bg-white px-5 py-4">
       <div className="flex items-center gap-4">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-neutral-100">
           <Icon className="size-5 text-neutral-700" />
@@ -556,7 +536,12 @@ function BrandedChart({
           )}
         </ChartContext.Consumer>
 
-        <XAxis showAxisLine={false} />
+        <XAxis
+          showAxisLine={false}
+          tickFormat={(date) =>
+            formatDateTooltip(date, { interval, start, end })
+          }
+        />
         <Areas
           seriesStyles={[
             {
@@ -575,7 +560,7 @@ function BrandedChart({
 function ViewMoreButton({ href }: { href: string }) {
   return (
     <div className="-mr-2 overflow-hidden pr-2 [mask-image:linear-gradient(270deg,transparent,black_8px)] [mask-origin:padding-box]">
-      <div className="overflow-visible transition-all duration-200 focus-within:w-[82px] focus-within:opacity-100 group-hover:w-[82px] group-hover:opacity-100 sm:w-0 sm:opacity-0">
+      <div className="overflow-visible transition-all duration-200 focus-within:w-[82px] focus-within:opacity-100 group-hover:w-[82px] group-hover:opacity-100 lg:w-0 lg:opacity-0">
         <Link
           href={href}
           className={cn(
@@ -585,6 +570,334 @@ function ViewMoreButton({ href }: { href: string }) {
         >
           View more
         </Link>
+      </div>
+    </div>
+  );
+}
+
+function RewardsTermsList() {
+  const { programEnrollment } = useProgramEnrollment();
+
+  if (!programEnrollment) {
+    return null;
+  }
+
+  const minPayoutAmount = programEnrollment.program.minPayoutAmount ?? 0;
+  const holdingPeriodDays = programEnrollment.group?.holdingPeriodDays ?? 0;
+
+  const items = [
+    ...(minPayoutAmount > 0
+      ? [
+          {
+            label: "minimum payout",
+            value: currencyFormatter(minPayoutAmount, {
+              trailingZeroDisplay: "stripIfInteger",
+            }),
+            href: "https://dub.co/help/article/commissions-payouts#what-does-minimum-payout-amount-mean",
+          },
+        ]
+      : []),
+    ...(holdingPeriodDays > 0
+      ? [
+          {
+            label: "holding period",
+            value: `${holdingPeriodDays}-day`,
+            href: "https://dub.co/help/article/commissions-payouts#what-does-holding-period-mean",
+          },
+        ]
+      : []),
+  ];
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-1.5 text-xs">
+      {items.map((item, idx) => (
+        <span key={item.label} className="inline-flex items-center gap-1.5">
+          <span>
+            <span className="font-semibold text-neutral-600">{item.value}</span>{" "}
+            <a
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-neutral-500 underline decoration-dotted underline-offset-2"
+            >
+              {item.label}
+            </a>
+          </span>
+          {idx < items.length - 1 && (
+            <span className="font-semibold text-neutral-600">•</span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function RewardList() {
+  const { programEnrollment } = useProgramEnrollment();
+  const { partner } = usePartnerProfile();
+
+  if (!programEnrollment) {
+    return null;
+  }
+
+  const eligibleRewards = (programEnrollment.rewards ?? []).filter(
+    (r) => getRewardAmount(r) >= 0,
+  );
+
+  const standardRewards = eligibleRewards.filter(
+    (reward) =>
+      reward.event === "click" ||
+      reward.event === "lead" ||
+      reward.event === "sale",
+  );
+
+  const referralRewards = eligibleRewards.filter(
+    (reward) => reward.event === "referral",
+  );
+
+  const discount = programEnrollment.discount ?? null;
+  const showReferralRewardCard = referralRewards.length > 0;
+
+  const defaultProgramLink = programEnrollment.links?.[0];
+  const partnerLink = constructPartnerLink({
+    group: programEnrollment.group,
+    link: defaultProgramLink,
+  });
+  const hasPartnerLink = Boolean(partnerLink);
+  const isDeactivated = programEnrollment.status === "deactivated";
+
+  const partnerReferralApplyLink = constructPartnerReferralLink({
+    partner,
+    program: programEnrollment.program,
+  });
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl bg-neutral-100 p-2">
+      <RewardListItem
+        title={showReferralRewardCard ? "Customer referral rewards" : "Rewards"}
+        titleRight={<RewardsTermsList />}
+        isDeactivated={isDeactivated}
+        rewards={[
+          ...standardRewards.map((reward) => ({
+            id: reward.id,
+            icon: REWARD_EVENT_ICON[reward.event],
+            text: (
+              <>
+                {formatRewardDescription(reward, { includeEarnPrefix: false })}
+                {(!!reward.modifiers?.length ||
+                  Boolean(reward.tooltipDescription)) && (
+                  <>
+                    {" "}
+                    <ProgramRewardModifiersTooltip reward={reward} />
+                  </>
+                )}
+              </>
+            ),
+          })),
+          ...(discount
+            ? [
+                {
+                  id: "discount",
+                  icon: Gift,
+                  text: formatDiscountDescription(discount),
+                },
+              ]
+            : []),
+        ]}
+        link={{
+          displayText: hasPartnerLink
+            ? getPrettyUrl(partnerLink)
+            : "No link yet",
+          copyValue: partnerLink,
+          apexDomain: defaultProgramLink
+            ? getApexDomain(defaultProgramLink.url)
+            : null,
+        }}
+        queryLinkHelpTextLink={
+          hasPartnerLink && programEnrollment.group?.linkStructure === "query"
+            ? defaultProgramLink
+            : undefined
+        }
+      />
+
+      {showReferralRewardCard && (
+        <RewardListItem
+          title="Partner referral rewards"
+          isDeactivated={isDeactivated}
+          rewards={referralRewards.map((reward) => ({
+            id: reward.id,
+            icon: REWARD_EVENT_ICON.referral,
+            text: formatRewardDescription(reward),
+            badge: (
+              <span className="inline-flex h-4 shrink-0 items-center justify-center rounded-md bg-blue-100 px-1 text-xs font-semibold leading-4 tracking-tight text-blue-600">
+                New
+              </span>
+            ),
+          }))}
+          link={{
+            displayText: getPrettyUrl(partnerReferralApplyLink),
+            copyValue: partnerReferralApplyLink,
+            apexDomain: "dub.co",
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function RewardListItem({
+  title,
+  titleRight,
+  rewards,
+  link,
+  queryLinkHelpTextLink,
+  isDeactivated,
+}: {
+  title: string;
+  titleRight?: ReactNode;
+  rewards: {
+    id: string;
+    text: ReactNode;
+    icon: Icon;
+    badge?: ReactNode;
+  }[];
+  link: {
+    displayText: string;
+    copyValue: string;
+    apexDomain?: string | null;
+  };
+  queryLinkHelpTextLink?: {
+    key: string;
+    url: string;
+    shortLink: string;
+  };
+  isDeactivated?: boolean;
+}) {
+  const { programSlug } = useParams<{ programSlug: string }>();
+  const [copied, copyToClipboard] = useCopyToClipboard();
+  const copyDisabled =
+    isDeactivated || !link.copyValue || link.copyValue.length === 0;
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-3 rounded-xl border border-neutral-200 bg-white p-4",
+        isDeactivated && "opacity-80",
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold tracking-tight text-neutral-800">
+          {title}
+        </h3>
+        {titleRight}
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
+        <div className="bg-neutral-50 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <div className="shrink-0 rounded-full border border-neutral-200 bg-white p-1">
+                <LinkLogo
+                  apexDomain={link.apexDomain}
+                  className="size-4.5 sm:size-4.5 shrink-0 rounded-full"
+                  imageProps={{ width: 18, height: 18 }}
+                />
+              </div>
+
+              <CopyText
+                value={link.copyValue}
+                className="min-w-0 truncate text-sm font-medium -tracking-wider text-neutral-600"
+              >
+                {link.displayText}
+              </CopyText>
+              {queryLinkHelpTextLink && (
+                <>
+                  <span className="hidden text-sm text-neutral-500 sm:block">
+                    →
+                  </span>
+                  <QueryLinkStructureHelpText
+                    link={queryLinkHelpTextLink}
+                    className="hidden sm:block"
+                  />
+                </>
+              )}
+            </div>
+            {isDeactivated ? (
+              <StatusBadge variant={PartnerStatusBadges.deactivated.variant}>
+                {PartnerStatusBadges.deactivated.label}
+              </StatusBadge>
+            ) : (
+              <Button
+                variant="primary"
+                disabled={copyDisabled}
+                onClick={() => {
+                  copyToClipboard(link.copyValue);
+                }}
+                className={cn(
+                  "h-8 w-auto shrink-0 px-3 transition-opacity",
+                  !copyDisabled && "hover:opacity-90",
+                )}
+                icon={
+                  <span className="relative size-4">
+                    <Copy
+                      className={cn(
+                        "absolute inset-0 size-4 transition-[transform,opacity]",
+                        copied && "translate-y-1 opacity-0",
+                      )}
+                    />
+                    <Check
+                      className={cn(
+                        "absolute inset-0 size-4 transition-[transform,opacity]",
+                        !copied && "translate-y-1 opacity-0",
+                      )}
+                    />
+                  </span>
+                }
+                text={copied ? "Copied" : "Copy"}
+              />
+            )}
+          </div>
+        </div>
+
+        {rewards.length > 0 ? (
+          <div className="space-y-2 rounded-t-xl border-t border-neutral-200 bg-white p-3">
+            {rewards.map((reward) => {
+              const RewardIcon = reward.icon;
+
+              return (
+                <div key={reward.id} className="flex items-center gap-2.5">
+                  <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-neutral-100">
+                    <RewardIcon className="size-4 text-neutral-800" />
+                  </div>
+                  <div className="text-content-default flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0 text-sm font-semibold leading-5 tracking-tight">
+                    {reward.text}
+                    {reward.badge}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between rounded-t-xl border-t border-neutral-200 bg-white px-4 py-3">
+            <p className="text-content-subtle text-sm">
+              You are not eligible for any rewards at this time.
+            </p>
+
+            {programSlug && (
+              <Link href={`/messages/${programSlug}`}>
+                <Button
+                  variant="secondary"
+                  text="Contact program"
+                  className="h-8 rounded-lg px-3"
+                />
+              </Link>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

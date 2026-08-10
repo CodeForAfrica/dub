@@ -1,6 +1,6 @@
 import { openApiErrorResponses } from "@/lib/openapi/responses";
-import z from "@/lib/zod";
 import { ZodOpenApiOperationObject } from "zod-openapi";
+import * as z from "zod/v4";
 import {
   CustomerEnrichedSchema,
   getCustomersQuerySchema,
@@ -9,8 +9,22 @@ import {
 export const getCustomers: ZodOpenApiOperationObject = {
   operationId: "getCustomers",
   "x-speakeasy-name-override": "list",
-  summary: "Retrieve a list of customers",
-  description: "Retrieve a list of customers for the authenticated workspace.",
+  "x-speakeasy-pagination": {
+    type: "cursor",
+    inputs: [
+      {
+        name: "startingAfter",
+        in: "parameters",
+        type: "cursor",
+      },
+    ],
+    outputs: {
+      nextCursor: "$[-1].id",
+    },
+  },
+  summary: "List all customers",
+  description:
+    "Retrieve a paginated list of customers for the authenticated workspace.",
   requestParams: {
     query: getCustomersQuerySchema,
   },

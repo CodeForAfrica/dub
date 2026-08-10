@@ -1,16 +1,19 @@
+import { BountySubmissionStatusBadges } from "@/lib/bounty/bounty-submission-status-badges";
 import {
   SubmissionsCountByStatus,
   useBountySubmissionsCount,
 } from "@/lib/swr/use-bounty-submissions-count";
 import useGroups from "@/lib/swr/use-groups";
+import usePartners from "@/lib/swr/use-partners";
 import useWorkspace from "@/lib/swr/use-workspace";
-import { BountyProps } from "@/lib/types";
+import { BountyProps, EnrolledPartnerProps } from "@/lib/types";
 import { GroupColorCircle } from "@/ui/partners/groups/group-color-circle";
+import { PartnerAvatar } from "@/ui/partners/partner-avatar";
 import { CircleDotted, useRouterStuff } from "@dub/ui";
-import { Users6 } from "@dub/ui/icons";
+import { Users, Users6 } from "@dub/ui/icons";
 import { cn, nFormatter } from "@dub/utils";
-import { useCallback, useMemo } from "react";
-import { BOUNTY_SUBMISSION_STATUS_BADGES } from "./bounty-submission-status-badges";
+import { useCallback, useMemo, useState } from "react";
+import { useDebounce } from "use-debounce";
 
 export function useBountySubmissionFilters({
   bounty,
@@ -25,8 +28,35 @@ export function useBountySubmissionFilters({
   const { submissionsCount } =
     useBountySubmissionsCount<SubmissionsCountByStatus[]>();
 
+  const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch] = useDebounce(search, 500);
+
+  const { partners } = usePartnerFilterOptions(
+    selectedFilter === "partnerId" ? debouncedSearch : "",
+  );
+
   const filters = useMemo(
     () => [
+      {
+        key: "partnerId",
+        icon: Users,
+        label: "Partner",
+        shouldFilter: false,
+        options:
+          partners?.map(({ id, name, image }) => {
+            return {
+              value: id,
+              label: name,
+              icon: (
+                <PartnerAvatar
+                  partner={{ id, name, image }}
+                  className="size-4"
+                />
+              ),
+            };
+          }) ?? null,
+      },
       {
         key: "groupId",
         icon: Users6,
@@ -43,7 +73,6 @@ export function useBountySubmissionFilters({
                 value: group.id,
                 label: group.name,
                 icon: <GroupColorCircle group={group} />,
-                permalink: `/${slug}/program/groups/${group.slug}/rewards`,
               };
             }) ?? null,
       },
@@ -53,40 +82,43 @@ export function useBountySubmissionFilters({
         label: "Status",
         options: submissionsCount
           ? submissionsCount.map(({ status, count }) => {
-              {
-                const {
-                  label,
-                  icon: Icon,
-                  iconClassName,
-                } = BOUNTY_SUBMISSION_STATUS_BADGES[status];
-                return {
-                  value: status,
-                  label,
-                  icon: (
-                    <Icon
-                      className={cn("size-4 bg-transparent", iconClassName)}
-                    />
-                  ),
-                  right: nFormatter(count, {
-                    full: true,
-                  }),
-                };
-              }
+              const {
+                label,
+                icon: Icon,
+                iconClassName,
+              } = BountySubmissionStatusBadges[status];
+              return {
+                value: status,
+                label,
+                icon: (
+                  <Icon
+                    className={cn("size-4 bg-transparent", iconClassName)}
+                  />
+                ),
+                right: nFormatter(count, {
+                  full: true,
+                }),
+              };
             })
           : null,
       },
     ],
-    [groups, bounty, submissionsCount, slug],
+    [groups, bounty, submissionsCount, slug, partners],
   );
 
   const activeFilters = useMemo(() => {
-    const { status, groupId } = searchParamsObj;
+    const { status, groupId, partnerId } = searchParamsObj;
 
     return [
       ...(status ? [{ key: "status", value: status }] : []),
       ...(groupId ? [{ key: "groupId", value: groupId }] : []),
+      ...(partnerId ? [{ key: "partnerId", value: partnerId }] : []),
     ];
-  }, [searchParamsObj.status, searchParamsObj.groupId]);
+  }, [
+    searchParamsObj.status,
+    searchParamsObj.groupId,
+    searchParamsObj.partnerId,
+  ]);
 
   const onSelect = useCallback(
     (key: string, value: any) =>
@@ -110,7 +142,7 @@ export function useBountySubmissionFilters({
   const onRemoveAll = useCallback(
     () =>
       queryParams({
-        del: ["status", "groupId"],
+        del: ["status", "groupId", "partnerId"],
       }),
     [queryParams],
   );
@@ -127,5 +159,42 @@ export function useBountySubmissionFilters({
     onRemove,
     onRemoveAll,
     isFiltered,
+    setSearch,
+    setSelectedFilter,
   };
+}
+
+function usePartnerFilterOptions(search: string) {
+  const { searchParamsObj } = useRouterStuff();
+
+  const { partners, loading: partnersLoading } = usePartners({
+    query: { search },
+  });
+
+  const { partners: selectedPartners } = usePartners({
+    query: {
+      partnerIds: searchParamsObj.partnerId
+        ? [searchParamsObj.partnerId]
+        : undefined,
+    },
+  });
+
+  const result = useMemo(() => {
+    return partnersLoading ||
+      // Consider partners loading if we can't find the currently filtered partner
+      (searchParamsObj.partnerId &&
+        ![...(selectedPartners ?? []), ...(partners ?? [])].some(
+          (p) => p.id === searchParamsObj.partnerId,
+        ))
+      ? null
+      : ([
+          ...(partners ?? []),
+          // Add selected partner to list if not already in partners
+          ...(selectedPartners
+            ?.filter((st) => !partners?.some((t) => t.id === st.id))
+            ?.map((st) => ({ ...st, hideDuringSearch: true })) ?? []),
+        ] as (EnrolledPartnerProps & { hideDuringSearch?: boolean })[]);
+  }, [partnersLoading, partners, selectedPartners, searchParamsObj.partnerId]);
+
+  return { partners: result };
 }

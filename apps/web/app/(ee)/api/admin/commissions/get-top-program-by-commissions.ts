@@ -1,10 +1,12 @@
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { ACME_PROGRAM_ID } from "@dub/utils";
 
 export async function getTopProgramsByCommissions({
+  programId,
   startDate,
   endDate,
 }: {
+  programId?: string;
   startDate: Date;
   endDate: Date;
 }) {
@@ -14,9 +16,6 @@ export async function getTopProgramsByCommissions({
       earnings: true,
     },
     where: {
-      programId: {
-        not: ACME_PROGRAM_ID,
-      },
       createdAt: {
         gte: startDate,
         lte: endDate,
@@ -24,19 +23,27 @@ export async function getTopProgramsByCommissions({
       status: {
         in: ["pending", "processed", "paid"],
       },
+      programId: programId || {
+        not: ACME_PROGRAM_ID,
+      },
     },
     orderBy: {
       _sum: {
         earnings: "desc",
       },
     },
-    take: 50,
+    take: 150,
   });
 
   const topPrograms = await prisma.program.findMany({
     where: {
       id: {
         in: programCommissions.map(({ programId }) => programId),
+      },
+      NOT: {
+        slug: {
+          endsWith: "-staging",
+        },
       },
     },
     include: {
@@ -64,7 +71,8 @@ export async function getTopProgramsByCommissions({
         fees: commissions * payoutFee,
       };
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 100);
 
   return topProgramsWithCommissions;
 }

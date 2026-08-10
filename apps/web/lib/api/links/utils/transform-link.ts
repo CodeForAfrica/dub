@@ -3,7 +3,8 @@ import {
   PartnerProps,
   ProgramEnrollmentProps,
 } from "@/lib/types";
-import { Dashboard, Link, Tag } from "@dub/prisma/client";
+import { toCentsNumber } from "@dub/utils";
+import { Dashboard, Link, Tag } from "@prisma/client";
 import { prefixWorkspaceId } from "../../workspaces/workspace-id";
 import { decodeLinkIfCaseSensitive } from "../case-sensitivity";
 
@@ -13,12 +14,21 @@ export type ExpandedLink = Link & {
   tags?: { tag: Pick<Tag, "id" | "name" | "color"> }[];
   webhooks?: { webhookId: string }[];
   dashboard?: Dashboard | null;
-  partner?: Pick<PartnerProps, "id" | "name" | "image"> | null;
+  partner?:
+    | (Pick<PartnerProps, "id" | "name" | "image"> & {
+        groupId?: string | null;
+        tenantId?: string | null;
+      })
+    | null;
   discount?: Pick<
     DiscountProps,
     "id" | "amount" | "type" | "maxDuration" | "couponId" | "couponTestId"
   > | null;
-  programEnrollment?: Pick<ProgramEnrollmentProps, "groupId"> | null;
+  programEnrollment?:
+    | (Pick<ProgramEnrollmentProps, "groupId"> & {
+        programPartnerTags?: { partnerTagId: string }[] | null;
+      })
+    | null;
 };
 
 // Transform link with additional properties
@@ -47,6 +57,7 @@ export const transformLink = (
 
   return {
     ...rest,
+    saleAmount: toCentsNumber(rest.saleAmount),
     identifier: null, // backwards compatibility
     tagId: tags?.[0]?.id ?? null, // backwards compatibility
     tags,

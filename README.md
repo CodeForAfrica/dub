@@ -52,7 +52,19 @@ Our platform powers 100M+ clicks and 2M+ links monthly, and is used by world-cla
 
 ## Self-Hosting
 
-You can self-host Dub for greater control over your data and design. [Read this guide](https://dub.co/docs/self-hosting/guide) to learn more.
+You can self-host Dub for greater control over your data and design.
+
+**📖 [Read the comprehensive self-hosting guide](./docs/SELF-HOSTING.md)**
+
+This guide includes:
+- Quick start with Docker for local development
+- Production deployment options (Vercel, Docker, Railway, etc.)
+- Step-by-step configuration for all required services
+- Environment variables reference
+- Cron job setup for self-hosted deployments
+- Troubleshooting and common issues
+
+For the latest updates, also check the [official documentation](https://dub.co/docs/self-hosting/guide).
 
 ## Contributing
 
@@ -73,6 +85,26 @@ We love our contributors! Here's how you can contribute:
 
 - `The table <table-name> does not exist in the current database.` - Run `pnpm prisma:push` push the state of the Prisma schema file to the database without using migrations files.
 - The project is not building correctly locally - verify your versions of `node` and `pnpm` match the recommended versions above. Delete all `node_modules`, `.next`, and `.turbo` directories in the `apps` and `packages` directory. You may now reinstall `node_modules` by running `pnpm install` and attempt to rebuild the project with `pnpm build`.
+
+### Dev Seed Script
+
+This script seeds the database with development data for testing and development purposes.
+
+**Basic seeding (adds data without deleting existing data):**
+
+```bash
+cd apps/web
+pnpm run script dev/seed
+```
+
+**Truncate database before seeding (deletes all existing data first):**
+
+```bash
+cd apps/web
+pnpm run script dev/seed --truncate
+```
+
+When using `--truncate`, the script will ask for confirmation before deleting any data.
 
 ## Repo Activity
 

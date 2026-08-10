@@ -16,7 +16,16 @@ export const GET = withPartnerProfile(async ({ partner, params }) => {
       clickReward: true,
       leadReward: true,
       saleReward: true,
+      referralReward: true,
+      discount: true,
       partnerGroup: true,
+      application: {
+        select: {
+          rejectionReason: true,
+          rejectionNote: true,
+          reviewedAt: true,
+        },
+      },
     },
   });
 
@@ -24,6 +33,7 @@ export const GET = withPartnerProfile(async ({ partner, params }) => {
     programEnrollment.clickReward,
     programEnrollment.leadReward,
     programEnrollment.saleReward,
+    programEnrollment.referralReward,
   ].filter((r): r is Reward => r !== null);
 
   return NextResponse.json(
@@ -31,6 +41,13 @@ export const GET = withPartnerProfile(async ({ partner, params }) => {
       ...programEnrollment,
       rewards,
       group: programEnrollment.partnerGroup,
+      application: programEnrollment.application
+        ? {
+            rejectionReason: programEnrollment.application.rejectionReason,
+            rejectionNote: programEnrollment.application.rejectionNote,
+            reviewedAt: programEnrollment.application.reviewedAt,
+          }
+        : null,
     }),
   );
 });

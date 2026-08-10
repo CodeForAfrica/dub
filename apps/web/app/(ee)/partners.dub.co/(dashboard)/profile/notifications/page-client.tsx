@@ -3,15 +3,17 @@
 import { updatePartnerNotificationPreference } from "@/lib/actions/partners/update-partner-notification-preference";
 import { partnerNotificationTypes } from "@/lib/zod/schemas/partner-profile";
 import {
+  CalendarDays,
   CircleCheck,
   Flag6,
   InvoiceDollar,
+  MoneyBills2,
   Msgs,
   Switch,
   useOptimisticUpdate,
 } from "@dub/ui";
 import { useAction } from "next-safe-action/hooks";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 type PreferenceType = z.infer<typeof partnerNotificationTypes>;
 type Preferences = Record<PreferenceType, boolean>;
@@ -40,6 +42,20 @@ const notifications = [
     icon: Flag6,
     title: "Marketing campaigns",
     description: "Receive marketing emails from your programs.",
+  },
+  {
+    type: "connectPayoutReminder",
+    icon: MoneyBills2,
+    title: "Connect payout reminder",
+    description:
+      "Reminder email to connect your payout details for receiving earnings from your programs.",
+  },
+  {
+    type: "monthlyProgramSummary",
+    icon: CalendarDays,
+    title: "Monthly program summary",
+    description:
+      "Monthly performance email for each program you promote (earnings, clicks, leads, and sales).",
   },
 ] as const;
 

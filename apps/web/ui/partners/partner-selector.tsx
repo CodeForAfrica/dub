@@ -2,15 +2,23 @@ import usePartners from "@/lib/swr/use-partners";
 import { PartnerProps } from "@/lib/types";
 import { PARTNERS_MAX_PAGE_SIZE } from "@/lib/zod/schemas/partners";
 import { Combobox, ComboboxProps } from "@dub/ui";
-import { cn, OG_AVATAR_URL } from "@dub/utils";
+import { cn } from "@dub/utils";
 import { useEffect, useMemo, useState } from "react";
 import { useDebounce } from "use-debounce";
+import { PartnerAvatar } from "./partner-avatar";
 
-export type Partner = Pick<PartnerProps, "id" | "name">;
+export type SelectedPartner = Pick<
+  PartnerProps,
+  "id" | "name" | "email" | "image"
+>;
+
+// TODO:
+// Make this return the full partner object instead of just the id by default
 
 type PartnerSelectorProps = {
   selectedPartnerId: string | null;
   setSelectedPartnerId: (partnerId: string) => void;
+  onSelectedPartner?: (selectedPartner: SelectedPartner) => void;
   disabled?: boolean;
   variant?: "default" | "header";
 } & Partial<ComboboxProps<false, any>>;
@@ -18,6 +26,7 @@ type PartnerSelectorProps = {
 export function PartnerSelector({
   selectedPartnerId,
   setSelectedPartnerId,
+  onSelectedPartner,
   disabled,
   variant = "default",
   ...rest
@@ -48,12 +57,7 @@ export function PartnerSelector({
     return partners?.map((partner) => ({
       value: partner.id,
       label: partner.name,
-      icon: (
-        <img
-          src={partner.image || `${OG_AVATAR_URL}${partner.name}`}
-          className="size-4 rounded-full"
-        />
-      ),
+      icon: <PartnerAvatar partner={partner} className="size-4" />,
     }));
   }, [partners]);
 
@@ -69,12 +73,7 @@ export function PartnerSelector({
     return {
       value: partner.id,
       label: partner.name,
-      icon: (
-        <img
-          src={partner.image || `${OG_AVATAR_URL}${partner.name}`}
-          className="size-4 rounded-full"
-        />
-      ),
+      icon: <PartnerAvatar partner={partner} className="size-4" />,
     };
   }, [partners, selectedPartners, selectedPartnerId]);
 
@@ -84,6 +83,13 @@ export function PartnerSelector({
       setSelected={(option) => {
         if (!option) return;
         setSelectedPartnerId(option.value);
+        const partner = [...(partners || []), ...(selectedPartners || [])].find(
+          (p) => p.id === option.value,
+        );
+
+        if (partner) {
+          onSelectedPartner?.(partner);
+        }
       }}
       selected={selectedOption}
       icon={

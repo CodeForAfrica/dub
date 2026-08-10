@@ -1,9 +1,9 @@
+import { ACME_PROGRAM_ID } from "@dub/utils";
+
 export const PROGRAM_ONBOARDING_PARTNERS_LIMIT = 5;
-export const LARGE_PROGRAM_IDS = [
-  "prog_CYCu7IMAapjkRpTnr8F1azjN",
-  "prog_1K0QHV7MP3PR05CJSCF5VN93X",
-];
-export const LARGE_PROGRAM_MIN_TOTAL_COMMISSIONS_CENTS = 500000; // $5000
+export const MAX_PARTNERS_INVITES_PER_REQUEST = 50;
+
+export const MAX_PROGRAM_CATEGORIES = 3;
 export const PROGRAM_SIMILARITY_SCORE_THRESHOLD = 0.3;
 
 export const PROGRAM_IMPORT_SOURCES = [
@@ -31,4 +31,25 @@ export const PROGRAM_IMPORT_SOURCES = [
     image: "https://assets.dub.co/misc/icons/firstpromoter.svg",
     helpUrl: "https://dub.co/help/article/migrating-from-firstpromoter",
   },
+  {
+    id: "tapfiliate",
+    value: "Tapfiliate",
+    image: "https://assets.dub.co/misc/icons/tapfiliate.svg",
+    helpUrl: "https://dub.co/help/article/migrating-from-tapfiliate",
+  },
 ] as const;
+
+export const PROGRAM_APPLICATION_IMAGE_MAX_FILE_SIZE_MB = 5;
+
+export const PROGRAM_APPLICATION_IMAGE_ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+
+export const PROGRAM_APPLICATION_IMAGE_ALLOWED_TYPES_LABEL = "JPG, PNG, WebP";
+
+export const EXTERNAL_PAYOUTS_PROGRAM_IDS = [
+  ACME_PROGRAM_ID, // Acme
+  "prog_1JWVR53QX1NM7NDEK62E3J19H", // Polymarket
+];

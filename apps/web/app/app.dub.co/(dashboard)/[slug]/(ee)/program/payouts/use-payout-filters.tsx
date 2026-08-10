@@ -1,27 +1,32 @@
+import useGroups from "@/lib/swr/use-groups";
 import usePartners from "@/lib/swr/use-partners";
-import usePartnersCount from "@/lib/swr/use-partners-count";
-import usePayoutsCount from "@/lib/swr/use-payouts-count";
-import { EnrolledPartnerProps, PayoutsCount } from "@/lib/types";
-import { PARTNERS_MAX_PAGE_SIZE } from "@/lib/zod/schemas/partners";
+import { usePayoutsCount } from "@/lib/swr/use-payouts-count";
+import useWorkspace from "@/lib/swr/use-workspace";
+import { EnrolledPartnerProps } from "@/lib/types";
+import { GroupColorCircle } from "@/ui/partners/groups/group-color-circle";
+import { PartnerAvatar } from "@/ui/partners/partner-avatar";
 import { PayoutStatusBadges } from "@/ui/partners/payout-status-badges";
 import { useRouterStuff } from "@dub/ui";
-import { CircleDotted, InvoiceDollar, Users } from "@dub/ui/icons";
-import { cn, nFormatter, OG_AVATAR_URL } from "@dub/utils";
+import { CircleDotted, InvoiceDollar, Users, Users6 } from "@dub/ui/icons";
+import { cn, nFormatter } from "@dub/utils";
 import { useCallback, useMemo, useState } from "react";
 import { useDebounce } from "use-debounce";
 
 export function usePayoutFilters() {
+  const { slug } = useWorkspace();
   const { searchParamsObj, queryParams } = useRouterStuff();
 
-  const { payoutsCount } = usePayoutsCount<PayoutsCount[]>({
+  const { payoutsCount } = usePayoutsCount({
     groupBy: "status",
   });
+
+  const { groups } = useGroups();
 
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch] = useDebounce(search, 500);
 
-  const { partners, partnersAsync } = usePartnerFilterOptions(
+  const { partners } = usePartnerFilterOptions(
     selectedFilter === "partnerId" ? debouncedSearch : "",
   );
 
@@ -31,19 +36,26 @@ export function usePayoutFilters() {
         key: "partnerId",
         icon: Users,
         label: "Partner",
-        shouldFilter: !partnersAsync,
+        shouldFilter: false,
         options:
-          partners?.map(({ id, name, image }) => {
+          partners?.map((partner) => {
             return {
-              value: id,
-              label: name,
-              icon: (
-                <img
-                  src={image || `${OG_AVATAR_URL}${name}`}
-                  alt={`${name} image`}
-                  className="size-4 rounded-full"
-                />
-              ),
+              value: partner.id,
+              label: partner.name,
+              icon: <PartnerAvatar partner={partner} className="size-4" />,
+            };
+          }) ?? null,
+      },
+      {
+        key: "groupId",
+        icon: Users6,
+        label: "Partner Group",
+        options:
+          groups?.map((group) => {
+            return {
+              value: group.id,
+              label: group.name,
+              icon: <GroupColorCircle group={group} />,
             };
           }) ?? null,
       },
@@ -79,19 +91,21 @@ export function usePayoutFilters() {
         options: [],
       },
     ],
-    [payoutsCount, partners, partnersAsync],
+    [payoutsCount, partners, groups, slug],
   );
 
   const activeFilters = useMemo(() => {
-    const { status, partnerId, invoiceId } = searchParamsObj;
+    const { status, partnerId, groupId, invoiceId } = searchParamsObj;
     return [
       ...(status ? [{ key: "status", value: status }] : []),
       ...(partnerId ? [{ key: "partnerId", value: partnerId }] : []),
+      ...(groupId ? [{ key: "groupId", value: groupId }] : []),
       ...(invoiceId ? [{ key: "invoiceId", value: invoiceId }] : []),
     ];
   }, [
     searchParamsObj.status,
     searchParamsObj.partnerId,
+    searchParamsObj.groupId,
     searchParamsObj.invoiceId,
   ]);
 
@@ -117,12 +131,10 @@ export function usePayoutFilters() {
   const onRemoveAll = useCallback(
     () =>
       queryParams({
-        del: ["status", "search", "partnerId", "invoiceId"],
+        del: ["status", "search", "partnerId", "invoiceId", "groupId"],
       }),
     [queryParams],
   );
-
-  const isFiltered = useMemo(() => activeFilters.length > 0, [activeFilters]);
 
   return {
     filters,
@@ -130,7 +142,6 @@ export function usePayoutFilters() {
     onSelect,
     onRemove,
     onRemoveAll,
-    isFiltered,
     setSearch,
     setSelectedFilter,
   };
@@ -139,16 +150,8 @@ export function usePayoutFilters() {
 function usePartnerFilterOptions(search: string) {
   const { searchParamsObj } = useRouterStuff();
 
-  const { partnersCount } = usePartnersCount<number>({
-    ignoreParams: true,
-  });
-
-  const partnersAsync = Boolean(
-    partnersCount && partnersCount > PARTNERS_MAX_PAGE_SIZE,
-  );
-
   const { partners, loading: partnersLoading } = usePartners({
-    query: { search: partnersAsync ? search : "" },
+    query: { search },
   });
 
   const { partners: selectedPartners } = usePartners({
@@ -157,7 +160,6 @@ function usePartnerFilterOptions(search: string) {
         ? [searchParamsObj.partnerId]
         : undefined,
     },
-    enabled: partnersAsync,
   });
 
   const result = useMemo(() => {
@@ -177,5 +179,5 @@ function usePartnerFilterOptions(search: string) {
         ] as (EnrolledPartnerProps & { hideDuringSearch?: boolean })[]);
   }, [partnersLoading, partners, selectedPartners, searchParamsObj.partnerId]);
 
-  return { partners: result, partnersAsync };
+  return { partners: result };
 }

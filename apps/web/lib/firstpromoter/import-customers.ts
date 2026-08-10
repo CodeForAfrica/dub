@@ -1,6 +1,6 @@
-import { prisma } from "@dub/prisma";
-import { nanoid } from "@dub/utils";
-import { Link, Project } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { chunk, nanoid } from "@dub/utils";
+import { Customer, Link, Project } from "@prisma/client";
 import { createId } from "../api/create-id";
 import { updateLinkStatsForImporter } from "../api/links/update-link-stats-for-importer";
 import { syncPartnerLinksStats } from "../api/partners/sync-partner-links-stats";
@@ -120,24 +120,44 @@ export async function importCustomers(payload: FirstPromoterImportPayload) {
         {} as Record<string, Date>,
       );
 
-      await Promise.allSettled(
-        customers.map((customer) => {
-          const links =
-            partnerEmailToLinks[customer.promoter_campaign.promoter.email] ??
-            [];
+      const existingCustomers = await prisma.customer.findMany({
+        where: {
+          projectId: workspace.id,
+          OR: [
+            { email: { in: customers.map(({ email }) => email) } },
+            {
+              externalId: {
+                in: customers
+                  .map(({ uid }) => uid)
+                  .filter((c): c is NonNullable<typeof c> => c !== null),
+              },
+            },
+          ],
+        },
+      });
 
-          return createCustomer({
-            workspace,
-            links,
-            customer,
-            latestLeadAt:
-              partnerEmailToLatestLeadAt[
-                customer.promoter_campaign.promoter.email
-              ],
-            importId,
-          });
-        }),
-      );
+      const customerChunks = chunk(customers, 10);
+      for (const customerChunk of customerChunks) {
+        await Promise.allSettled(
+          customerChunk.map((customer) => {
+            const links =
+              partnerEmailToLinks[customer.promoter_campaign.promoter.email] ??
+              [];
+
+            return createCustomer({
+              workspace,
+              links,
+              customer,
+              existingCustomers,
+              latestLeadAt:
+                partnerEmailToLatestLeadAt[
+                  customer.promoter_campaign.promoter.email
+                ],
+              importId,
+            });
+          }),
+        );
+      }
     }
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -146,17 +166,21 @@ export async function importCustomers(payload: FirstPromoterImportPayload) {
     processedBatches++;
   }
 
-  await firstPromoterImporter.queue({
-    ...payload,
-    action: hasMore ? "import-customers" : "import-commissions",
-    page: hasMore ? currentPage : undefined,
-  });
+  await firstPromoterImporter.queue(
+    {
+      ...payload,
+      action: hasMore ? "import-customers" : "import-commissions",
+      page: hasMore ? currentPage : undefined,
+    },
+    !hasMore ? { delay: 5 * 60 } : undefined,
+  );
 }
 
 async function createCustomer({
   workspace,
   links,
   customer,
+  existingCustomers,
   latestLeadAt,
   importId,
 }: {
@@ -166,6 +190,7 @@ async function createCustomer({
     "id" | "key" | "domain" | "url" | "partnerId" | "programId" | "lastLeadAt"
   >[];
   customer: FirstPromoterCustomer;
+  existingCustomers: Customer[];
   latestLeadAt: Date;
   importId: string;
 }) {
@@ -198,15 +223,11 @@ async function createCustomer({
   }
 
   // Find the customer by email address
-  const customerFound = await prisma.customer.findFirst({
-    where: {
-      projectId: workspace.id,
-      OR: [{ externalId: customer.uid }, { email: customer.email }],
-    },
-  });
+  const customerFound = existingCustomers.find(
+    (c) => c.email === customer.email || c.externalId === customer.uid,
+  );
 
   if (customerFound) {
-    console.log(`A customer already exists with email ${customer.email}`);
     return;
   }
 
@@ -256,6 +277,8 @@ async function createCustomer({
         projectConnectId: workspace.stripeConnectId,
         clickId: clickEvent.click_id,
         linkId: link.id,
+        programId: link.programId,
+        partnerId: link.partnerId,
         country: clickEvent.country,
         clickedAt: new Date(customer.created_at),
         createdAt: new Date(customer.created_at),

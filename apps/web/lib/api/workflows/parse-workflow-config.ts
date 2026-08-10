@@ -2,8 +2,8 @@ import {
   workflowActionSchema,
   workflowConditionSchema,
 } from "@/lib/zod/schemas/workflows";
-import { Workflow } from "@dub/prisma/client";
-import { z } from "zod";
+import { Workflow } from "@prisma/client";
+import * as z from "zod/v4";
 
 export function parseWorkflowConfig(
   workflow: Pick<Workflow, "id" | "triggerConditions" | "actions">,
@@ -22,8 +22,8 @@ export function parseWorkflowConfig(
     throw new Error("No actions found in workflow.");
   }
 
-  // We only support one trigger and one action for now
   return {
+    conditions,
     condition: conditions[0],
     action: actions[0],
   };

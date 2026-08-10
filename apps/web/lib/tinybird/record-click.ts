@@ -9,23 +9,14 @@ import { EU_COUNTRY_CODES } from "@dub/utils/src/constants/countries";
 import { geolocation, ipAddress, waitUntil } from "@vercel/functions";
 import { userAgent } from "next/server";
 import { recordClickCache } from "../api/links/record-click-cache";
-import { ExpandedLink, transformLink } from "../api/links/utils/transform-link";
-import {
-  detectBot,
-  detectQr,
-  getFinalUrlForRecordClick,
-  getIdentityHash,
-} from "../middleware/utils";
+import { detectBot } from "../middleware/utils/detect-bot";
+import { detectQr } from "../middleware/utils/detect-qr";
+import { getIdentityHash } from "../middleware/utils/get-identity-hash";
 import { conn } from "../planetscale";
-import { WorkspaceProps } from "../types";
 import { redis } from "../upstash";
-import {
-  publishClickEvent,
-  publishPartnerActivityEvent,
-} from "../upstash/redis-streams";
-import { webhookCache } from "../webhook/cache";
-import { sendWebhooks } from "../webhook/qstash";
-import { transformClickEventData } from "../webhook/transform";
+import { publishPartnerActivityEvent } from "../upstash/redis-streams/partner-activity";
+import { publishWorkspaceClickEvent } from "../upstash/redis-streams/workspace-click-events";
+import { publishWorkspaceClicksUsageEvent } from "../upstash/redis-streams/workspace-clicks-usage";
 
 /**
  * Recording clicks with geo, ua, referer and timestamp data
@@ -40,7 +31,6 @@ export async function recordClick({
   url,
   programId,
   partnerId,
-  webhookIds,
   skipRatelimit,
   timestamp,
   referrer,
@@ -56,7 +46,6 @@ export async function recordClick({
   url?: string;
   programId?: string;
   partnerId?: string;
-  webhookIds?: string[];
   skipRatelimit?: boolean;
   timestamp?: string;
   referrer?: string;
@@ -74,21 +63,20 @@ export async function recordClick({
     return null;
   }
 
-  // don't track HEAD requests to avoid non-user traffic from inflating click count
-  if (req.method === "HEAD") {
-    return null;
-  }
-
   const ua = userAgent(req);
-  const isBot = detectBot(req);
 
-  // don't record clicks from bots
-  if (isBot) {
-    console.log(`Click not recorded ❌ – Bot detected.`, {
-      ua,
-      isBot,
-    });
-    return null;
+  // only do bot checks for non deep link requests (link clicks/qr code scans)
+  if (trigger !== "deeplink") {
+    const isBot = detectBot(req);
+
+    // don't record clicks from bots
+    if (isBot) {
+      console.log(`Click not recorded ❌ – Bot detected.`, {
+        ua,
+        isBot,
+      });
+      return null;
+    }
   }
 
   const identityHash = await getIdentityHash(req);
@@ -96,13 +84,19 @@ export async function recordClick({
   // by default, we deduplicate clicks for a domain + key pair from the same IP address – only record 1 click per hour
   // we only need to do these if skipRatelimit is not true (we skip it in /api/track/:path endpoints)
   if (!skipRatelimit) {
-    // here, we check if the clickId is cached in Redis within the last hour
-    const cachedClickId = await recordClickCache.get({
-      domain,
-      key,
-      identityHash,
-    });
-    if (cachedClickId) {
+    try {
+      // here, we check if the clickId is cached in Redis within the last hour
+      const cachedClickId = await recordClickCache.get({
+        domain,
+        key,
+        identityHash,
+      });
+      if (cachedClickId) {
+        return null;
+      }
+    } catch (error) {
+      console.error(`[recordClickCache error]: ${error}`);
+      // if redis fails, return null so we don't overwhelm TB/MySQL
       return null;
     }
   }
@@ -131,8 +125,6 @@ export async function recordClick({
 
   const referer = referrer || req.headers.get("referer");
 
-  const finalUrl = url ? getFinalUrlForRecordClick({ req, url }) : "";
-
   const clickData = {
     timestamp: timestamp || new Date(Date.now()).toISOString(),
     identity_hash: identityHash,
@@ -141,7 +133,7 @@ export async function recordClick({
     link_id: linkId,
     domain,
     key,
-    url: finalUrl,
+    url: url || "",
     ip:
       // only record IP if it's a valid IP and not from a EU country
       typeof ip === "string" && ip.trim().length > 0 && !isEuCountry ? ip : "",
@@ -171,11 +163,9 @@ export async function recordClick({
   };
 
   if (shouldCacheClickId) {
-    // cache the click ID and its corresponding click data in Redis for 1 day
+    // cache the click ID and its corresponding click data in Redis for 5 minutes
     // we're doing this because ingested click events are not available immediately in Tinybird
-    await redis.set(`clickIdCache:${clickId}`, clickData, {
-      ex: 60 * 60 * 24, // cache for 1 day
-    });
+    await redis.set(`clickIdCache:${clickId}`, clickData, { ex: 60 * 5 });
   }
 
   waitUntil(
@@ -205,7 +195,7 @@ export async function recordClick({
         // increment the usage count for the workspace
         workspaceId &&
           url &&
-          publishClickEvent({
+          publishWorkspaceClicksUsageEvent({
             linkId,
             workspaceId,
             timestamp: clickData.timestamp,
@@ -232,17 +222,8 @@ export async function recordClick({
             );
           }),
 
-        // TODO: Remove after Tinybird migration
-        fetchWithRetry(
-          `${process.env.TINYBIRD_API_URL}/v0/events?name=dub_click_events&wait=true`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${process.env.TINYBIRD_API_KEY_OLD}`,
-            },
-            body: JSON.stringify(clickData),
-          },
-        ).then((res) => res.json()),
+        // Publish the click event
+        publishWorkspaceClickEvent(clickData),
       ]);
 
       // Find the rejected promises and log them
@@ -256,6 +237,7 @@ export async function recordClick({
                 "Link clicks increment",
                 "Workspace usage increment",
                 "Program enrollment totalClicks increment",
+                "Workspace click event publish",
               ];
               return {
                 operation: operations[index] || `Operation ${index}`,
@@ -276,100 +258,8 @@ export async function recordClick({
           })),
         });
       }
-
-      // if the link has webhooks enabled, we need to check if the workspace usage has exceeded the limit
-      const hasWebhooks = webhookIds && webhookIds.length > 0;
-      if (workspaceId && hasWebhooks) {
-        const workspaceRows = await conn.execute(
-          "SELECT usage, usageLimit FROM Project WHERE id = ? LIMIT 1",
-          [workspaceId],
-        );
-
-        const workspaceData =
-          workspaceRows.rows.length > 0
-            ? (workspaceRows.rows[0] as Pick<
-                WorkspaceProps,
-                "usage" | "usageLimit"
-              >)
-            : null;
-
-        const hasExceededUsageLimit =
-          workspaceData && workspaceData.usage >= workspaceData.usageLimit;
-
-        // Send webhook events if link has webhooks enabled and the workspace usage has not exceeded the limit
-        if (!hasExceededUsageLimit) {
-          await sendLinkClickWebhooks({ webhookIds, linkId, clickData });
-        }
-      }
     })(),
   );
 
   return clickData;
-}
-
-async function sendLinkClickWebhooks({
-  webhookIds,
-  linkId,
-  clickData,
-}: {
-  webhookIds: string[];
-  linkId: string;
-  clickData: any;
-}) {
-  const webhooks = await webhookCache.mget(webhookIds);
-
-  // Couldn't find webhooks in the cache
-  // TODO: Should we look them up in the database?
-  if (!webhooks || webhooks.length === 0) {
-    return;
-  }
-
-  const activeLinkWebhooks = webhooks.filter((webhook) => {
-    return (
-      !webhook.disabledAt &&
-      webhook.triggers &&
-      Array.isArray(webhook.triggers) &&
-      webhook.triggers.includes("link.clicked")
-    );
-  });
-
-  if (activeLinkWebhooks.length === 0) {
-    return;
-  }
-
-  const link = await conn
-    .execute(
-      `
-    SELECT 
-      l.*,
-      JSON_ARRAYAGG(
-        IF(t.id IS NOT NULL,
-          JSON_OBJECT('tag', JSON_OBJECT('id', t.id, 'name', t.name, 'color', t.color)),
-          NULL
-        )
-      ) as tags
-    FROM Link l
-    LEFT JOIN LinkTag lt ON l.id = lt.linkId
-    LEFT JOIN Tag t ON lt.tagId = t.id
-    WHERE l.id = ?
-    GROUP BY l.id
-  `,
-      [linkId],
-    )
-    .then((res) => {
-      const row = res.rows[0] as any;
-      // Handle case where there are no tags (JSON_ARRAYAGG returns [null])
-      row.tags = row.tags?.[0] === null ? [] : row.tags;
-      return row;
-    });
-
-  await sendWebhooks({
-    trigger: "link.clicked",
-    webhooks: activeLinkWebhooks,
-    // @ts-ignore – bot & qr should be boolean
-    data: transformClickEventData({
-      ...clickData,
-      link: transformLink(link as ExpandedLink),
-    }),
-  });
 }

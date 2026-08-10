@@ -38,7 +38,7 @@ import {
 } from "react";
 import { useForm, useFormContext } from "react-hook-form";
 import { toast } from "sonner";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const parseTests = (testVariants: LinkFormData["testVariants"]) =>
   Array.isArray(testVariants) ? ABTestVariantsSchema.parse(testVariants) : null;
@@ -289,7 +289,7 @@ function ABTestingModal({
                         placeholder={
                           domains?.find(({ slug }) => slug === domain)
                             ?.placeholder ||
-                          "https://dub.co/help/article/what-is-dub"
+                          "https://dub.co/help/article/dub-links"
                         }
                         className="block h-9 grow border-none px-2 text-neutral-900 placeholder-neutral-400 focus:ring-0 sm:text-sm"
                         {...register(`testVariants.${index}.url`, {
@@ -422,7 +422,7 @@ function ABTestingModal({
 
         {testVariantsParent && (
           <div className="mt-6 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4">
-            <TriangleWarning className="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <TriangleWarning className="mt-0.5 size-4 shrink-0 text-amber-600" />
             <p className="text-sm font-medium text-amber-900">
               Changing the original A/B test settings will impact your future
               analytics and event tracking.

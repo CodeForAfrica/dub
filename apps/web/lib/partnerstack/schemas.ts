@@ -1,4 +1,4 @@
-import { z } from "zod";
+import * as z from "zod/v4";
 
 export const partnerStackImportSteps = z.enum([
   "import-groups",
@@ -6,6 +6,7 @@ export const partnerStackImportSteps = z.enum([
   "import-links",
   "import-customers",
   "import-commissions",
+  "import-scheduled-commissions",
   "update-stripe-customers",
 ]);
 
@@ -42,6 +43,8 @@ export const partnerStackPartner = z.object({
   stats: z.object({
     CUSTOMER_COUNT: z
       .number()
+      .optional()
+      .default(0)
       .describe("Only import if CUSTOMER_COUNT is greater than 0."),
   }),
   group: z
@@ -59,7 +62,7 @@ export const partnerStackLink = z.object({
 
 export const partnerStackCustomer = z.object({
   key: z.string(),
-  name: z.string(),
+  name: z.string().nullable(),
   email: z.string(),
   provider_key: z
     .string()
@@ -92,5 +95,15 @@ export const partnerStackCommission = z.object({
       currency: z.string(),
     })
     .nullable(),
-  reward_status: z.enum(["hold", "pending", "approved", "declined", "paid"]),
+  reward_status: z.enum([
+    "hold",
+    "pending",
+    "approved",
+    "declined",
+    "paid",
+    "scheduled",
+  ]),
+  partnership: z.object({
+    email: z.string().nullable(),
+  }),
 });

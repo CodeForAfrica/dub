@@ -1,15 +1,16 @@
 "use server";
 
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
-import { queueDiscountCodeDeletion } from "@/lib/api/discounts/queue-discount-code-deletion";
 import { getDiscountOrThrow } from "@/lib/api/partners/get-discount-or-throw";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { qstash } from "@/lib/cron";
-import { prisma } from "@dub/prisma";
+import { deleteDiscountCodes } from "@/lib/discounts/delete-discount-code";
+import { prisma } from "@/lib/prisma";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 const deleteDiscountSchema = z.object({
   workspaceId: z.string(),
@@ -17,10 +18,15 @@ const deleteDiscountSchema = z.object({
 });
 
 export const deleteDiscountAction = authActionClient
-  .schema(deleteDiscountSchema)
+  .inputSchema(deleteDiscountSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
     const { discountId } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -33,6 +39,16 @@ export const deleteDiscountAction = authActionClient
     const discountCodes = await prisma.discountCode.findMany({
       where: {
         discountId: discount.id,
+      },
+      select: {
+        id: true,
+        code: true,
+        programId: true,
+        discount: {
+          select: {
+            provider: true,
+          },
+        },
       },
     });
 
@@ -82,7 +98,7 @@ export const deleteDiscountAction = authActionClient
           },
         }),
 
-        queueDiscountCodeDeletion(discountCodes.map(({ id }) => id)),
+        deleteDiscountCodes(discountCodes),
 
         recordAuditLog({
           workspaceId: workspace.id,

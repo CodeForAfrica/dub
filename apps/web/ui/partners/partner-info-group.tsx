@@ -1,6 +1,6 @@
 import useGroups from "@/lib/swr/use-groups";
 import useWorkspace from "@/lib/swr/use-workspace";
-import { EnrolledPartnerProps } from "@/lib/types";
+import { EnrolledPartnerExtendedProps } from "@/lib/types";
 import { DEFAULT_PARTNER_GROUP } from "@/lib/zod/schemas/groups";
 import { Button } from "@dub/ui";
 import { cn } from "@dub/utils";
@@ -11,16 +11,20 @@ import { GroupColorCircle } from "./groups/group-color-circle";
 export function PartnerInfoGroup({
   partner,
   changeButtonText = "Change group",
+  hideChangeButton = false,
   className,
-
   selectedGroupId,
   setSelectedGroupId,
 }: {
-  partner: Pick<EnrolledPartnerProps, "id" | "groupId" | "name" | "image"> &
-    Partial<Pick<EnrolledPartnerProps, "email">>;
+  partner: Partial<
+    Pick<
+      EnrolledPartnerExtendedProps,
+      "id" | "groupId" | "name" | "image" | "email" | "groupMoveDisabledAt"
+    >
+  >;
   changeButtonText?: string;
+  hideChangeButton?: boolean;
   className?: string;
-
   // Only used for a controlled group selector that doesn't persist the selection itself
   selectedGroupId?: string | null;
   setSelectedGroupId?: (groupId: string) => void;
@@ -71,7 +75,7 @@ export function PartnerInfoGroup({
           <div className="h-5 w-16 animate-pulse rounded-md bg-neutral-200" />
         )}
       </div>
-      {group ? (
+      {hideChangeButton ? null : group ? (
         <Button
           variant="secondary"
           text={changeButtonText}

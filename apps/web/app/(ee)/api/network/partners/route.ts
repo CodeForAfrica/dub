@@ -1,17 +1,17 @@
-import { getConversionScore } from "@/lib/actions/partners/get-conversion-score";
 import { DubApiError } from "@/lib/api/errors";
 import { calculatePartnerRanking } from "@/lib/api/network/calculate-partner-ranking";
+import { partnerNetworkListingWhere } from "@/lib/api/network/partner-network-listing-where";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { withWorkspace } from "@/lib/auth";
 import { PROGRAM_SIMILARITY_SCORE_THRESHOLD } from "@/lib/constants/program";
+import { prisma } from "@/lib/prisma";
 import {
   NetworkPartnerSchema,
   getNetworkPartnersQuerySchema,
 } from "@/lib/zod/schemas/partner-network";
-import { prisma } from "@dub/prisma";
-import { PreferredEarningStructure, SalesChannel } from "@dub/prisma/client";
+import { PreferredEarningStructure, SalesChannel } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/network/partners - get all available partners in the network
 export const GET = withWorkspace(
@@ -44,8 +44,72 @@ export const GET = withWorkspace(
       });
     }
 
-    const { partnerIds, status, page, pageSize, country, starred } =
-      getNetworkPartnersQuerySchema.parse(searchParams);
+    const {
+      partnerIds,
+      status,
+      page,
+      pageSize,
+      country,
+      starred,
+      sortBy,
+      platform,
+    } = getNetworkPartnersQuerySchema.parse(searchParams);
+
+    if (status !== "discover") {
+      const partnerWhere = partnerNetworkListingWhere({
+        partnerIds,
+        country,
+        platform,
+      });
+
+      const partners = await prisma.discoveredPartner.findMany({
+        where: {
+          programId,
+          partner: partnerWhere,
+          ...(status === "ignored" && { ignoredAt: { not: null } }),
+          ...(status === "invited" && {
+            invitedAt: { not: null },
+            ignoredAt: null,
+            programEnrollment: { status: "invited" },
+          }),
+          ...(status === "recruited" && {
+            invitedAt: { not: null },
+            programEnrollment: { status: "approved" },
+          }),
+        },
+        orderBy: {
+          ...(status === "ignored" && { ignoredAt: "desc" }),
+          ...(status === "invited" && { invitedAt: "desc" }),
+          ...(status === "recruited" && {
+            programEnrollment: { createdAt: "desc" },
+          }),
+        },
+        include: {
+          partner: {
+            include: {
+              platforms: true,
+            },
+          },
+          programEnrollment: true,
+        },
+        take: pageSize,
+        skip: ((page ?? 1) - 1) * pageSize,
+      });
+
+      return NextResponse.json(
+        partners.map(({ partner, ...rest }) =>
+          NetworkPartnerSchema.parse({
+            ...rest,
+            ...partner,
+            categories: [],
+            recruitedAt:
+              rest.programEnrollment?.status === "approved"
+                ? new Date(rest.programEnrollment.createdAt)
+                : null,
+          }),
+        ),
+      );
+    }
 
     const similarPrograms = program.similarPrograms.map((sp) => ({
       programId: sp.similarProgramId,
@@ -61,6 +125,8 @@ export const GET = withWorkspace(
       page,
       pageSize,
       starred: starred ?? undefined,
+      sortBy,
+      platform: platform ?? undefined,
       similarPrograms,
     });
     console.timeEnd("calculatePartnerRanking");
@@ -69,10 +135,14 @@ export const GET = withWorkspace(
       z.array(NetworkPartnerSchema).parse(
         partners.map((partner) => ({
           ...partner,
-          conversionScore: getConversionScore(partner.conversionRate || 0),
           starredAt: partner.starredAt ? new Date(partner.starredAt) : null,
           ignoredAt: partner.ignoredAt ? new Date(partner.ignoredAt) : null,
           invitedAt: partner.invitedAt ? new Date(partner.invitedAt) : null,
+          identityVerificationStatus:
+            partner.identityVerificationStatus ?? null,
+          identityVerifiedAt: partner.identityVerifiedAt
+            ? new Date(partner.identityVerifiedAt)
+            : null,
           categories: partner.categories
             ? partner.categories.split(",").map((c: string) => c.trim())
             : [],

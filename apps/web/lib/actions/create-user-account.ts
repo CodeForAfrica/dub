@@ -1,12 +1,13 @@
 "use server";
 
+import { prisma } from "@/lib/prisma";
 import { ratelimit } from "@/lib/upstash";
-import { prisma } from "@dub/prisma";
 import { waitUntil } from "@vercel/functions";
 import { flattenValidationErrors } from "next-safe-action";
+import * as z from "zod/v4";
 import { createId } from "../api/create-id";
+import { shouldApplyRateLimit } from "../api/environment";
 import { hashPassword } from "../auth/password";
-import z from "../zod";
 import { signUpSchema } from "../zod/schemas/auth";
 import { throwIfAuthenticated } from "./auth/throw-if-authenticated";
 import { actionClient } from "./safe-action";
@@ -20,7 +21,7 @@ const OTP_LOCKOUT_DURATION = "24 h"; // Block for 24 hours
 
 // Sign up a new user using email and password
 export const createUserAccountAction = actionClient
-  .schema(schema, {
+  .inputSchema(schema, {
     handleValidationErrorsShape: async (ve) =>
       flattenValidationErrors(ve).fieldErrors,
   })
@@ -30,13 +31,17 @@ export const createUserAccountAction = actionClient
 
     const signupAttemptKey = `signup:attempts:${email}`;
 
-    const { remaining: attemptsRemaining } = await ratelimit(
-      MAX_OTP_ATTEMPTS,
-      OTP_LOCKOUT_DURATION,
-    ).getRemaining(signupAttemptKey);
+    if (shouldApplyRateLimit) {
+      const { remaining: attemptsRemaining } = await ratelimit(
+        MAX_OTP_ATTEMPTS,
+        OTP_LOCKOUT_DURATION,
+      ).getRemaining(signupAttemptKey);
 
-    if (attemptsRemaining <= 0) {
-      throw new Error("Too many failed attempts. You have to try again later.");
+      if (attemptsRemaining <= 0) {
+        throw new Error(
+          "Too many failed attempts. You have to try again later.",
+        );
+      }
     }
 
     const verificationToken = await prisma.emailVerificationToken.findUnique({
@@ -87,6 +92,9 @@ export const createUserAccountAction = actionClient
           email,
           passwordHash: await hashPassword(password),
           emailVerified: new Date(),
+          notificationPreferences: {
+            create: {},
+          },
         },
       });
     }

@@ -1,9 +1,9 @@
 import { withWorkspace } from "@/lib/auth";
 import {
-  findUserFolderRole,
+  findFolderUserRole,
   verifyFolderAccess,
 } from "@/lib/folder/permissions";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
 // GET /api/folders/[folderId]/users – get users with access to a folder
@@ -52,13 +52,15 @@ export const GET = withWorkspace(
       }),
     ]);
 
-    const users = workspaceUsers.map(({ user }) => {
-      const folderUser =
-        folderUsers.find((folderUser) => folderUser.userId === user.id) || null;
+    const users = workspaceUsers.map(({ user, role: workspaceRole }) => {
+      const folderUser = folderUsers.find(
+        (folderUser) => folderUser.userId === user.id,
+      );
 
-      const role = findUserFolderRole({
+      const role = findFolderUserRole({
         folder,
-        user: folderUser,
+        user: folderUser || null,
+        workspaceRole,
       });
 
       return {
@@ -67,6 +69,7 @@ export const GET = withWorkspace(
         email: user.email,
         image: user.image,
         role,
+        workspaceRole,
       };
     });
 
@@ -74,13 +77,6 @@ export const GET = withWorkspace(
   },
   {
     requiredPermissions: ["folders.read"],
-    requiredPlan: [
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

@@ -4,8 +4,8 @@ import { parseRequestBody } from "@/lib/api/utils";
 import { withWorkspace } from "@/lib/auth";
 import { verifyFolderAccess } from "@/lib/folder/permissions";
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
+import { prisma } from "@/lib/prisma";
 import { FolderSchema, updateFolderSchema } from "@/lib/zod/schemas/folders";
-import { prisma } from "@dub/prisma";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
@@ -25,15 +25,7 @@ export const GET = withWorkspace(
   },
   {
     requiredPermissions: ["folders.read"],
-    requiredPlan: [
-      "pro",
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["pro", "business", "advanced", "enterprise"],
   },
 );
 
@@ -95,15 +87,7 @@ export const PATCH = withWorkspace(
   },
   {
     requiredPermissions: ["folders.write"],
-    requiredPlan: [
-      "pro",
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["pro", "business", "advanced", "enterprise"],
   },
 );
 
@@ -118,6 +102,26 @@ export const DELETE = withWorkspace(
       folderId,
       requiredPermission: "folders.write",
     });
+
+    // check if the folder is the default folder of a program
+    if (workspace.defaultProgramId) {
+      const program = await prisma.program.findUniqueOrThrow({
+        where: {
+          id: workspace.defaultProgramId,
+        },
+        select: {
+          defaultFolderId: true,
+        },
+      });
+
+      if (program.defaultFolderId === folderId) {
+        throw new DubApiError({
+          code: "forbidden",
+          message:
+            "You cannot delete the default folder for your partner program.",
+        });
+      }
+    }
 
     const linksCount = await prisma.link.count({
       where: {
@@ -176,14 +180,6 @@ export const DELETE = withWorkspace(
   },
   {
     requiredPermissions: ["folders.write"],
-    requiredPlan: [
-      "pro",
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["pro", "business", "advanced", "enterprise"],
   },
 );

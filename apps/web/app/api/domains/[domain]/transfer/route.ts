@@ -3,9 +3,9 @@ import { transformDomain } from "@/lib/api/domains/transform-domain";
 import { DubApiError } from "@/lib/api/errors";
 import { withWorkspace } from "@/lib/auth";
 import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
 import { ratelimit } from "@/lib/upstash";
 import { transferDomainBodySchema } from "@/lib/zod/schemas/domains";
-import { prisma } from "@dub/prisma";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { NextResponse } from "next/server";
 
@@ -34,8 +34,8 @@ export const POST = withWorkspace(
       });
     }
 
-    // Allow only 1 domain transfer per workspace per hour
-    const { success } = await ratelimit(1, "1 h").limit(
+    // Allow up to 5 domain transfer per workspace per hour
+    const { success } = await ratelimit(5, "1 h").limit(
       `domain-transfer:${workspace.id}`,
     );
 

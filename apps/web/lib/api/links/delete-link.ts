@@ -1,25 +1,52 @@
+import { enqueueDeleteDiscountCode } from "@/lib/discounts/delete-discount-code";
+import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import { recordLink } from "@/lib/tinybird";
-import { prisma } from "@dub/prisma";
 import { R2_URL } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
-import { queueDiscountCodeDeletion } from "../discounts/queue-discount-code-deletion";
 import { linkCache } from "./cache";
 import { includeProgramEnrollment } from "./include-program-enrollment";
 import { includeTags } from "./include-tags";
 import { transformLink } from "./utils";
 
 export async function deleteLink(linkId: string) {
-  const link = await prisma.link.delete({
+  const link = await prisma.link.findUniqueOrThrow({
     where: {
       id: linkId,
     },
     include: {
       ...includeTags,
       ...includeProgramEnrollment,
-      discountCode: true,
+      discountCode: {
+        include: {
+          discount: {
+            select: {
+              provider: true,
+            },
+          },
+        },
+      },
     },
   });
+
+  // Delete the discount code and link in a transaction
+  await prisma.$transaction([
+    ...(link.discountCode
+      ? [
+          prisma.discountCode.delete({
+            where: {
+              id: link.discountCode.id,
+            },
+          }),
+        ]
+      : []),
+
+    prisma.link.delete({
+      where: {
+        id: linkId,
+      },
+    }),
+  ]);
 
   waitUntil(
     Promise.allSettled([
@@ -40,11 +67,13 @@ export async function deleteLink(linkId: string) {
             id: link.projectId,
           },
           data: {
-            totalLinks: { decrement: 1 },
+            totalLinks: {
+              decrement: 1,
+            },
           },
         }),
 
-      link.discountCode && queueDiscountCodeDeletion(link.discountCode.id),
+      link.discountCode && enqueueDeleteDiscountCode([link.discountCode]),
     ]),
   );
 

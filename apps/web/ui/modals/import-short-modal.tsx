@@ -105,8 +105,8 @@ function ImportShortModal({
         </div>
         <h3 className="text-lg font-medium">Import Your Short.io Links</h3>
         <p className="text-center text-sm text-neutral-500">
-          Easily import all your existing Short.io links into{" "}
-          {process.env.NEXT_PUBLIC_APP_NAME} with just a few clicks.
+          Easily import all your existing Short.io links into Dub with just a
+          few clicks.
         </p>
       </div>
 
@@ -211,7 +211,7 @@ function ImportShortModal({
                 import your links.
               </p>
               <a
-                href="mailto:support@dub.co?subject=I%20need%20help%20with%20importing%20my%20Short.io%20links"
+                href="https://dub.co/support"
                 className={cn(
                   buttonVariants({ variant: "secondary" }),
                   "flex h-8 items-center justify-center rounded-md border px-4 text-sm",

@@ -1,3 +1,4 @@
+import { Icon } from "@dub/ui";
 import { cn } from "@dub/utils";
 import { Crown } from "lucide-react";
 import { PropsWithChildren, ReactNode } from "react";
@@ -7,25 +8,32 @@ export function StepPage({
   title,
   description,
   paidPlanRequired,
+  badge,
   className,
 }: PropsWithChildren<{
   title: ReactNode;
   description: ReactNode;
   paidPlanRequired?: boolean;
+  badge?: {
+    icon: Icon;
+    label: string;
+  };
   className?: string;
 }>) {
+  const BadgeIcon = badge?.icon ?? Crown;
+
   return (
     <div
       className={cn(
-        "mx-auto flex w-full max-w-sm flex-col items-center",
+        "mx-auto flex w-full max-w-[430px] flex-col items-center",
         "animate-slide-up-fade [--offset:10px] [animation-duration:1s] [animation-fill-mode:both]",
         className,
       )}
     >
-      {paidPlanRequired && (
+      {Boolean(badge || paidPlanRequired) && (
         <div className="mb-3 flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-600">
-          <Crown className="size-3" />
-          Paid plan required
+          <BadgeIcon className="size-3" />
+          {badge?.label ?? "Paid plan required"}
         </div>
       )}
       <h1 className="text-center text-xl font-semibold">{title}</h1>

@@ -1,8 +1,9 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { INVOICE_MIN_PAYOUT_AMOUNT_CENTS } from "@/lib/constants/payouts";
 import { verifyVercelSignature } from "@/lib/cron/verify-vercel";
+import { prisma } from "@/lib/prisma";
 import { sendBatchEmail } from "@dub/email";
 import ProgramPayoutReminder from "@dub/email/templates/program-payout-reminder";
-import { prisma } from "@dub/prisma";
 import { chunk, pluralize } from "@dub/utils";
 import { NextResponse } from "next/server";
 
@@ -31,6 +32,7 @@ export async function GET(req: Request) {
         minPayoutAmount: {
           gt: 0,
         },
+        deactivatedAt: null,
       },
     });
 
@@ -41,8 +43,11 @@ export async function GET(req: Request) {
         amount: {
           gt: 0,
         },
-        programId: {
-          notIn: programsWithCustomMinPayouts.map((p) => p.id),
+        program: {
+          id: {
+            notIn: programsWithCustomMinPayouts.map((p) => p.id),
+          },
+          deactivatedAt: null,
         },
         partner: {
           payoutsEnabledAt: {
@@ -112,12 +117,18 @@ export async function GET(req: Request) {
       },
     });
 
-    // only send notifications for programs that have not paid out any invoices in the last week
+    // only send notifications for programs that:
+    // - have a total payout amount greater than or equal to $10 (INVOICE_MIN_PAYOUT_AMOUNT_CENTS)
+    // - have not paid out any invoices in the last 2 weeks
     const payoutsToNotify = pendingPayouts.filter((p) => {
+      const invoiceTotal = p._sum?.amount ?? 0;
       const recentPaidInvoicesForProgram = recentPaidInvoices.filter(
         (i) => i.programId === p.programId,
       );
-      return recentPaidInvoicesForProgram.length === 0;
+      return (
+        invoiceTotal >= INVOICE_MIN_PAYOUT_AMOUNT_CENTS ||
+        recentPaidInvoicesForProgram.length === 0
+      );
     });
 
     const programs = await prisma.program.findMany({

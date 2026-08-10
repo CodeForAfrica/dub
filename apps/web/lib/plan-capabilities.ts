@@ -14,8 +14,18 @@ export const getPlanCapabilities = (
     canExportAuditLogs: !!plan && ["enterprise"].includes(plan),
     canUseAdvancedRewardLogic:
       !!plan && ["enterprise", "advanced"].includes(plan),
+    canSetRewardSpendLimit: !!plan && ["enterprise"].includes(plan),
     canMessagePartners: !!plan && ["enterprise", "advanced"].includes(plan),
     canSendEmailCampaigns: !!plan && ["enterprise", "advanced"].includes(plan),
     canDiscoverPartners: !!plan && ["enterprise", "advanced"].includes(plan),
+    canManageFraudEvents: !!plan && ["enterprise", "advanced"].includes(plan),
+    canUseGroupMoveRule: !!plan && ["enterprise", "advanced"].includes(plan),
+    canUseBountySocialMetrics:
+      !!plan && ["enterprise", "advanced"].includes(plan),
+    canInstallAdvancedIntegrations:
+      !!plan && ["enterprise", "advanced"].includes(plan),
+    canRequestSlackSupportInvite: !!plan && ["enterprise"].includes(plan),
+    canCreateReferralReward:
+      !!plan && ["enterprise", "advanced"].includes(plan),
   };
 };

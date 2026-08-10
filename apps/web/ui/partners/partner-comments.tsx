@@ -14,14 +14,16 @@ import {
   AnimatedSizeContainer,
   Button,
   LoadingSpinner,
+  PROSE_STYLES,
   PenWriting,
   Popover,
   Trash,
 } from "@dub/ui";
 import { OG_AVATAR_URL, cn, formatDate } from "@dub/utils";
-import Linkify from "linkify-react";
 import { useAction } from "next-safe-action/hooks";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 import { KeyedMutator } from "swr";
 import { v4 as uuid } from "uuid";
@@ -70,7 +72,6 @@ export function PartnerComments({ partnerId }: { partnerId: string }) {
                 workspaceId: workspaceId!,
                 partnerId,
                 text,
-                createdAt,
               });
 
               if (!result?.data?.comment)
@@ -353,18 +354,35 @@ function CommentCard({
                   sendButtonText="Save"
                 />
               ) : (
-                <Linkify
-                  as="p"
-                  className="text-content-subtle whitespace-pre-wrap text-sm font-medium"
-                  options={{
-                    target: "_blank",
-                    rel: "noopener noreferrer nofollow",
-                    className:
-                      "underline underline-offset-4 hover:text-content-default",
+                <ReactMarkdown
+                  className={cn(
+                    "prose prose-sm text-content-default break-words font-normal",
+                    PROSE_STYLES.condensed,
+                    "prose-a:font-medium prose-a:underline-offset-4",
+                  )}
+                  allowedElements={[
+                    "p",
+                    "a",
+                    "code",
+                    "strong",
+                    "em",
+                    "ul",
+                    "ol",
+                    "li",
+                  ]}
+                  components={{
+                    a: ({ node, ...props }) => (
+                      <a
+                        {...props}
+                        target="_blank"
+                        rel="noopener noreferrer nofollow"
+                      />
+                    ),
                   }}
+                  remarkPlugins={[remarkGfm]}
                 >
                   {comment?.text}
-                </Linkify>
+                </ReactMarkdown>
               )}
             </div>
           </AnimatedSizeContainer>
@@ -372,6 +390,61 @@ function CommentCard({
           <div className="h-5 w-48 animate-pulse rounded bg-neutral-200" />
         )}
       </div>
+    </div>
+  );
+}
+
+export function CommentCardDisplay({
+  user,
+  timestamp,
+  text,
+  className,
+}: {
+  user?: { name: string | null; image: string | null } | null;
+  timestamp: Date | string;
+  text: string;
+  className?: string;
+}) {
+  const ts = new Date(timestamp);
+
+  return (
+    <div
+      className={cn(
+        "border-border-subtle rounded-lg border pl-4 pr-3.5",
+        user ? "pb-4 pt-2.5" : "px-3 py-2",
+        className,
+      )}
+    >
+      {user && (
+        <div className="mb-2 flex items-center gap-1.5">
+          <img
+            src={user.image || `${OG_AVATAR_URL}${user.name}`}
+            alt={`${user.name} avatar`}
+            className="size-4 shrink-0 rounded-full"
+          />
+          <span className="text-content-emphasis text-xs font-semibold">
+            {user.name}
+          </span>
+          <div className="bg-content-muted size-0.5 shrink-0 rounded-full" />
+          <span className="text-content-subtle text-xs">
+            {new Date().getTime() - ts.getTime() < 1000 * 60 * 60 * 24
+              ? ts.toLocaleTimeString("en-US", {
+                  hour: "numeric",
+                  minute: "numeric",
+                })
+              : formatDate(ts, {
+                  month: "short",
+                  year:
+                    ts.getFullYear() !== new Date().getFullYear()
+                      ? "numeric"
+                      : undefined,
+                })}
+          </span>
+        </div>
+      )}
+      <p className="prose prose-sm text-content-default break-words font-normal">
+        {text}
+      </p>
     </div>
   );
 }

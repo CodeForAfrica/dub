@@ -28,6 +28,7 @@ import {
   getApexDomain,
   getPrettyUrl,
   nFormatter,
+  PARTNERS_DOMAIN,
 } from "@dub/utils";
 import NumberFlow from "@number-flow/react";
 import Link from "next/link";
@@ -75,6 +76,19 @@ export function PartnerLinkCard({ link }: { link: PartnerProfileLinkProps }) {
 
   const isDeactivated = programEnrollment?.status === "deactivated";
 
+  const discountCodeSection = link.discountCode ? (
+    <div className="hidden items-center gap-1.5 rounded-xl border border-neutral-200 py-1 pl-2 pr-1 sm:flex">
+      <span className="text-sm leading-none text-neutral-500">
+        Discount code
+      </span>
+      <DiscountCodeBadge
+        code={link.discountCode}
+        disabledAt={link.discountCodeDisabledAt}
+        disabledTooltip={`This discount code was disabled by the program. [Contact the program owner](${PARTNERS_DOMAIN}/messages/${programEnrollment?.program.slug}) if you need a new code.`}
+      />
+    </div>
+  ) : null;
+
   return (
     <CardList.Card
       innerClassName={cn("px-0 py-0 group/card", isDeactivated && "opacity-80")}
@@ -97,60 +111,37 @@ export function PartnerLinkCard({ link }: { link: PartnerProfileLinkProps }) {
             <div className="flex min-w-0 flex-col">
               <div className="flex flex-col">
                 <div className="flex items-center gap-1">
-                  <div
+                  <a
+                    href={isDeactivated ? undefined : partnerLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={cn(
-                      "group/shortlink relative flex w-fit items-center gap-1 py-0 pl-1 pr-1.5 transition-colors duration-150",
-                      !isDeactivated && "hover:rounded-lg hover:bg-neutral-100",
+                      "truncate text-sm font-semibold leading-6 transition-colors",
+                      isDeactivated
+                        ? "cursor-default text-neutral-400"
+                        : "text-neutral-700 hover:text-black",
                     )}
+                    onClick={
+                      isDeactivated ? (e) => e.preventDefault() : undefined
+                    }
                   >
-                    <a
-                      href={isDeactivated ? undefined : partnerLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={cn(
-                        "truncate text-sm font-semibold leading-6 transition-colors",
-                        isDeactivated
-                          ? "cursor-default text-neutral-400"
-                          : "text-neutral-700 hover:text-black",
-                      )}
-                      onClick={
-                        isDeactivated ? (e) => e.preventDefault() : undefined
-                      }
-                    >
-                      {getPrettyUrl(partnerLink)}
-                    </a>
-                    {!isDeactivated && (
-                      <span className="flex items-center">
-                        <CopyButton
-                          value={partnerLink}
-                          variant="neutral"
-                          className="p-0.5 opacity-0 transition-opacity duration-150 group-hover/shortlink:opacity-100"
-                        />
-                      </span>
-                    )}
-                  </div>
+                    {getPrettyUrl(partnerLink)}
+                  </a>
+                  {!isDeactivated && (
+                    <CopyButton value={partnerLink} variant="neutral" />
+                  )}
 
                   {link.comments && <CommentsBadge comments={link.comments} />}
                 </div>
 
                 {/* The max width implementation here is a bit hacky, we should improve in the future */}
-                <div
-                  className={cn(
-                    "group/desturl flex max-w-[100px] items-center gap-1 py-0 pl-1 pr-1.5 transition-colors duration-150 sm:w-fit sm:max-w-[400px]",
-                    !isDeactivated && "hover:rounded-lg hover:bg-neutral-100",
-                  )}
-                >
+                <div className="flex max-w-[100px] items-center gap-1 py-0 pl-1 pr-1.5 sm:w-fit sm:max-w-[400px]">
                   <ArrowTurnRight2 className="h-3 w-3 shrink-0 text-neutral-400" />
                   <a
                     href={isDeactivated ? undefined : link.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={cn(
-                      "truncate text-sm transition-colors",
-                      isDeactivated
-                        ? "cursor-default text-neutral-400"
-                        : "text-neutral-500 hover:text-neutral-700",
-                    )}
+                    className="cursor-alias truncate text-sm text-neutral-500 decoration-dotted transition-colors hover:text-neutral-700 hover:underline hover:underline-offset-2"
                     title={getPrettyUrl(link.url)}
                     onClick={
                       isDeactivated ? (e) => e.preventDefault() : undefined
@@ -158,15 +149,6 @@ export function PartnerLinkCard({ link }: { link: PartnerProfileLinkProps }) {
                   >
                     {getPrettyUrl(link.url)}
                   </a>
-                  {!isDeactivated && (
-                    <span className="flex items-center">
-                      <CopyButton
-                        value={link.url}
-                        variant="neutral"
-                        className="p-0.5 opacity-0 transition-opacity duration-150 group-hover/desturl:opacity-100"
-                      />
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
@@ -185,20 +167,14 @@ export function PartnerLinkCard({ link }: { link: PartnerProfileLinkProps }) {
                   </StatusBadge>
                 );
               })()}
-            {link.discountCode && (
-              <Tooltip
-                content={
-                  "This program supports discount code tracking. Copy the code to use it in podcasts, videos, etc. [Learn more](https://dub.co/help/article/dual-sided-incentives)"
-                }
-              >
-                <div className="flex items-center gap-1.5 rounded-xl border border-neutral-200 py-1 pl-2 pr-1">
-                  <span className="text-sm leading-none text-neutral-500">
-                    Discount code
-                  </span>
-                  <DiscountCodeBadge code={link.discountCode} />
-                </div>
-              </Tooltip>
-            )}
+            {discountCodeSection &&
+              (link.discountCodeDisabledAt ? (
+                discountCodeSection
+              ) : (
+                <Tooltip content="This program supports discount code tracking. Copy the code to use it in podcasts, videos, etc. [Learn more](https://dub.co/help/article/dual-sided-incentives)">
+                  {discountCodeSection}
+                </Tooltip>
+              ))}
             {displayOption === "cards" && <StatsBadge link={link} />}
             <Controls link={link} />
           </div>
@@ -214,7 +190,7 @@ const StatsBadge = memo(({ link }: { link: PartnerProfileLinkProps }) => {
   const As = showDetailedAnalytics ? Link : "div";
   return (
     <As
-      href={`/programs/${programEnrollment?.program.slug}/analytics?domain=${link.domain}&key=${link.key}`}
+      href={`/programs/${programEnrollment?.program.slug}/analytics?linkId=${link.id}`}
       className="flex items-center gap-0.5 rounded-md border border-neutral-200 bg-neutral-50 p-0.5 text-sm text-neutral-600"
     >
       {[
@@ -323,8 +299,7 @@ const StatsCharts = memo(({ link }: { link: PartnerProfileLinkProps }) => {
           key={chart.key}
           href={`/programs/${programEnrollment?.program.slug}/analytics${getQueryString(
             {
-              domain: link.domain,
-              key: link.key,
+              linkId: link.id,
               event: chart.key === "saleAmount" ? "sales" : chart.key,
             },
           )}`}
@@ -459,7 +434,7 @@ function LinkEventsChart({
                 <p className="text-right text-neutral-500">
                   {currency ? (
                     <NumberFlow
-                      value={series.valueAccessor(d)}
+                      value={series.valueAccessor(d) / 100}
                       format={{ style: "currency", currency: "USD" }}
                     />
                   ) : (

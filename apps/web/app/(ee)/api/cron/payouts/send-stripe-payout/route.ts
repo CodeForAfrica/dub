@@ -1,18 +1,17 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { createStablecoinPayout } from "@/lib/partners/create-stablecoin-payout";
 import { createStripeTransfer } from "@/lib/partners/create-stripe-transfer";
-import { sendEmail } from "@dub/email";
-import PartnerPayoutProcessed from "@dub/email/templates/partner-payout-processed";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { log } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 
 export const dynamic = "force-dynamic";
 
 const payloadSchema = z.object({
-  invoiceId: z.string(),
   partnerId: z.string(),
+  invoiceId: z.string().optional(),
   chargeId: z.string().optional(),
 });
 
@@ -26,66 +25,43 @@ export async function POST(req: Request) {
       rawBody,
     });
 
-    const { invoiceId, partnerId, chargeId } = payloadSchema.parse(
+    const { partnerId, invoiceId, chargeId } = payloadSchema.parse(
       JSON.parse(rawBody),
     );
 
-    // there should only be one payout per partner in a given invoice, but just in case there are multiple
-    const currentInvoicePayouts = await prisma.payout.findMany({
+    const payout = await prisma.payout.findFirst({
       where: {
-        invoiceId,
         partnerId,
+        invoiceId,
         status: "processing",
+        mode: "internal",
+        method: {
+          in: ["connect", "stablecoin"],
+        },
       },
-      include: {
-        partner: true,
-        program: true,
+      select: {
+        method: true,
       },
     });
 
-    if (currentInvoicePayouts.length === 0) {
+    if (!payout) {
       return logAndRespond(
-        `No "processing" payouts found for partner ${partnerId} and invoice ${invoiceId}`,
+        `No payout found for partner ${partnerId} and invoice ${invoiceId}`,
       );
     }
 
-    // get all previously processed payouts for the partners in this invoice
-    // but haven't been transferred to their Stripe Express account yet
-    const previouslyProcessedPayouts = await prisma.payout.findMany({
-      where: {
-        status: "processed",
-        stripeTransferId: null,
+    // Run the appropriate payout creation function based on the payout method
+    if (payout.method === "connect") {
+      await createStripeTransfer({
         partnerId,
-      },
-      include: {
-        partner: true,
-        program: true,
-      },
-    });
-
-    await createStripeTransfer({
-      partner: currentInvoicePayouts[0].partner,
-      previouslyProcessedPayouts,
-      currentInvoicePayouts,
-      chargeId,
-    });
-
-    // again, there should only be one payout per partner in a given invoice
-    const payout = currentInvoicePayouts[0];
-    if (payout.partner.email) {
-      const emailRes = await sendEmail({
-        variant: "notifications",
-        to: payout.partner.email!,
-        subject: "You've been paid!",
-        react: PartnerPayoutProcessed({
-          email: payout.partner.email!,
-          program: payout.program,
-          payout,
-          variant: "stripe",
-        }),
+        invoiceId,
+        chargeId,
       });
-
-      console.log(`Resend email sent: ${JSON.stringify(emailRes, null, 2)}`);
+    } else if (payout.method === "stablecoin") {
+      await createStablecoinPayout({
+        partnerId,
+        invoiceId,
+      });
     }
 
     return logAndRespond(

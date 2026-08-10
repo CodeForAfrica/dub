@@ -1,15 +1,45 @@
+import { ACME_WORKSPACE_ID } from "@dub/utils";
+import { PayoutStatus } from "@prisma/client";
 import Stripe from "stripe";
+import { normalizeWorkspaceId } from "../api/workspaces/workspace-id";
 import { PaymentMethodOption } from "../types";
-
-export const PAYOUTS_SHEET_ITEMS_LIMIT = 10;
-export const PAYOUT_FAILURE_FEE_CENTS = 1000; // 10 USD
-export const FAST_ACH_FEE_CENTS = 2500; // $25
-export const FOREX_MARKUP_RATE = 0.005; // 0.5%
 
 export const PAYOUT_HOLDING_PERIOD_DAYS = [0, 7, 14, 30, 60, 90];
 export const ALLOWED_MIN_PAYOUT_AMOUNTS = [0, 1000, 2000, 5000, 10000];
+
+const EXTENDED_MIN_PAYOUT_AMOUNT_CENTS = 20000; // $200
+const EXTENDED_MIN_PAYOUT_WORKSPACE_IDS = new Set<string>([
+  "clsvopiw0000ejy0grp821me0",
+  ACME_WORKSPACE_ID,
+]);
+
+export function getAllowedMinPayoutAmounts(workspaceId: string): number[] {
+  if (
+    EXTENDED_MIN_PAYOUT_WORKSPACE_IDS.has(normalizeWorkspaceId(workspaceId))
+  ) {
+    return [...ALLOWED_MIN_PAYOUT_AMOUNTS, EXTENDED_MIN_PAYOUT_AMOUNT_CENTS];
+  }
+
+  return ALLOWED_MIN_PAYOUT_AMOUNTS;
+}
+
+export const PAYOUTS_SHEET_ITEMS_LIMIT = 10;
+export const ELIGIBLE_PAYOUTS_MAX_PAGE_SIZE = 500;
+export const CUTOFF_PERIOD_MAX_PAYOUTS = 1000;
+
+export const CARD_PAYOUT_HARD_COST_RATE = 0.03; // 3% Stripe card processing cost (non-waivable)
+export const STABLECOIN_PAYOUT_FEE_RATE = 0.005; // 0.5%
+export const STABLECOIN_PAYOUT_FIXED_FEE_CENTS = 50; // $0.50
+export const FAST_ACH_FEE_CENTS = 2500; // $25
+export const PAYOUT_FAILURE_FEE_CENTS = 1000; // 10 USD
+export const FOREX_MARKUP_RATE = 0.005; // 0.5%
+
+export const INVOICE_MIN_PAYOUT_AMOUNT_CENTS = 1000; // $10
 export const MIN_WITHDRAWAL_AMOUNT_CENTS = 1000; // $10
 export const BELOW_MIN_WITHDRAWAL_FEE_CENTS = 50; // $0.50
+export const MIN_FORCE_WITHDRAWAL_AMOUNT_CENTS = 100; // $1 (doesn't make sense to force a withdrawal for less than $1)
+
+export const MUTABLE_PAYOUT_STATUSES: PayoutStatus[] = ["pending", "canceled"];
 
 // Direct debit payment types for Partner payout
 export const DIRECT_DEBIT_PAYMENT_TYPES_INFO: {
@@ -100,3 +130,37 @@ export const INVOICE_AVAILABLE_PAYOUT_STATUSES = [
   "sent",
   "completed",
 ];
+
+const VERIFIED_BANK_ACCOUNT_DESCRIPTION = {
+  title: "Verified bank account",
+  description:
+    "This bank account is successfully verified and ready to receive payouts.",
+  variant: "valid" as const,
+};
+
+export const BANK_ACCOUNT_STATUS_DESCRIPTIONS: Record<
+  string,
+  { title: string; description: string; variant: "valid" | "invalid" }
+> = {
+  verified: VERIFIED_BANK_ACCOUNT_DESCRIPTION,
+  new: VERIFIED_BANK_ACCOUNT_DESCRIPTION,
+  validated: VERIFIED_BANK_ACCOUNT_DESCRIPTION,
+  verification_failed: {
+    title: "Verification failed",
+    description:
+      "Bank account verification failed (e.g., microdeposit failure). Please update your bank account details to continue receiving payouts.",
+    variant: "invalid",
+  },
+  tokenized_account_number_deactivated: {
+    title: "Tokenized account deactivated",
+    description:
+      "The account uses a tokenized account number that has been deactivated due to expiration or revocation. Please reverify your bank account to continue receiving payouts.",
+    variant: "invalid",
+  },
+  errored: {
+    title: "Bank account error",
+    description:
+      "A payout sent to this bank account failed. Please update your bank account details to continue receiving payouts.",
+    variant: "invalid",
+  },
+};

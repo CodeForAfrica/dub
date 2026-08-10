@@ -1,4 +1,4 @@
-import { capitalize, currencyFormatter, DUB_WORDMARK } from "@dub/utils";
+import { currencyFormatter, DUB_WORDMARK } from "@dub/utils";
 import {
   Body,
   Column,
@@ -28,12 +28,19 @@ export default function NewSaleAlertProgramOwner({
   program = {
     name: "Acme",
     logo: DUB_WORDMARK,
+  },
+  group = {
     holdingPeriodDays: 30,
   },
   partner = {
     id: "pn_OfewI1Faaf5pV8QH3mha8L7S",
     name: "Steven",
     email: "steven@dub.co",
+  },
+  customer = {
+    id: "cus_1234567890",
+    name: "Jane Smith",
+    email: "jane@example.com",
   },
   commission = {
     amount: 1330,
@@ -51,6 +58,8 @@ export default function NewSaleAlertProgramOwner({
   program: {
     name: string;
     logo: string | null;
+  };
+  group: {
     holdingPeriodDays: number;
   };
   partner: {
@@ -58,6 +67,11 @@ export default function NewSaleAlertProgramOwner({
     name: string | null;
     email: string | null;
   };
+  customer?: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+  } | null;
   commission: {
     amount: number;
     earnings: number;
@@ -71,14 +85,14 @@ export default function NewSaleAlertProgramOwner({
   const earningsInDollars = currencyFormatter(commission.earnings);
 
   const profitInDollars = currencyFormatter(
-    (commission.amount - commission.earnings),
+    commission.amount - commission.earnings,
   );
 
   let formattedDueDate = "";
 
-  if (program.holdingPeriodDays > 0) {
+  if (group.holdingPeriodDays > 0) {
     const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + program.holdingPeriodDays);
+    dueDate.setDate(dueDate.getDate() + group.holdingPeriodDays);
 
     formattedDueDate = dueDate.toLocaleDateString("en-US", {
       month: "long",
@@ -87,46 +101,63 @@ export default function NewSaleAlertProgramOwner({
     });
   }
 
-  const finalName = user.name
-    ? user.name.split(" ")[0]
-    : capitalize(user.email.split("@")[0]);
+  const customerLabel = customer?.name || customer?.email;
 
   return (
     <Html>
       <Head />
-      <Preview>You received a sale from a customer referred! 💰</Preview>
+      <Preview>
+        You received a {saleAmountInDollars} sale from a new customer! 💰
+      </Preview>
       <Tailwind>
         <Body className="mx-auto my-auto bg-white font-sans">
           <Container className="mx-auto my-10 max-w-[600px] rounded border border-solid border-neutral-200 px-10 py-5">
             <Section className="mt-8">
               <Img
-                src={program.logo || "https://assets.dub.co/logo.png"}
+                src={program.logo || "https://assets.dub.co/wordmark.png"}
                 height="32"
                 alt={program.name}
               />
             </Section>
 
             <Heading className="mx-0 my-7 p-0 text-lg font-medium text-black">
-              Hi {finalName},
+              New customer referred by {partner.name}
             </Heading>
 
             <Text className="text-sm leading-6 text-neutral-600">
-              <strong>{program.name}</strong> earned a sale from a customer
-              referred by{" "}
-              <strong>
+              <strong className="font-medium text-black">{program.name}</strong>{" "}
+              earned a sale from a new customer referred by{" "}
+              <Link
+                href={`https://app.dub.co/${workspace.slug}/program/partners/${partner.id}`}
+                className="font-medium text-black underline"
+              >
                 {partner.name
                   ? `${partner.name} (${partner.email})`
                   : partner.email}
-              </strong>
-              .
+              </Link>
+              :
             </Text>
 
             <Section className="my-8 w-full">
-              <div className="rounded-lg border border-neutral-200">
+              <div className="rounded-lg">
                 <Row>
                   <Column>
                     <Text className="m-0 text-sm leading-6 text-neutral-600">
-                      Sale amount
+                      {customerLabel ? (
+                        <>
+                          Payment from{" "}
+                          <Link
+                            href={`https://app.dub.co/${workspace.slug}/program/customers/${customer.id}`}
+                            className="font-medium text-black underline"
+                          >
+                            <strong className="font-medium text-black">
+                              {customerLabel}
+                            </strong>
+                          </Link>
+                        </>
+                      ) : (
+                        "Sale amount"
+                      )}
                     </Text>
                   </Column>
                   <Column align="right">
@@ -169,14 +200,26 @@ export default function NewSaleAlertProgramOwner({
             {formattedDueDate && (
               <Text className="text-sm leading-6 text-neutral-600">
                 Payment for this commission will be due on{" "}
-                <strong>{formattedDueDate}</strong>, based on your campaign
-                settings.
+                <strong className="font-medium text-black">
+                  {formattedDueDate}
+                </strong>
+                , as per this partner group's{" "}
+                <Link
+                  href="https://dub.co/help/article/partner-payouts#payout-holding-period"
+                  className="font-semibold text-black underline"
+                >
+                  holding period
+                </Link>
+                .
               </Text>
             )}
 
             <Text className="text-sm leading-6 text-neutral-600">
               You can view sales and commissions in the{" "}
-              <Link href={salesLink} className="text-blue-600 underline">
+              <Link
+                href={salesLink}
+                className="font-semibold text-black underline"
+              >
                 program dashboard
               </Link>
               .

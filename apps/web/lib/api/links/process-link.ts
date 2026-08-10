@@ -1,9 +1,9 @@
 import { isBlacklistedDomain } from "@/lib/edge-config";
 import { verifyFolderAccess } from "@/lib/folder/permissions";
 import { checkIfUserExists, getRandomKey } from "@/lib/planetscale";
+import { prisma } from "@/lib/prisma";
 import { isNotHostedImage } from "@/lib/storage";
-import { NewLinkProps, ProcessedLinkProps, WorkspaceProps } from "@/lib/types";
-import { prisma } from "@dub/prisma";
+import { NewLinkProps, ProcessedLinkProps } from "@/lib/types";
 import {
   DUB_DOMAINS,
   UTMTags,
@@ -16,6 +16,7 @@ import {
   parseDateTime,
   pluralize,
 } from "@dub/utils";
+import { Project, WorkspaceRole } from "@prisma/client";
 import { combineTagIds } from "../tags/combine-tag-ids";
 import { businessFeaturesCheck, proFeaturesCheck } from "./plan-features-check";
 import { keyChecks, processKey } from "./utils";
@@ -31,7 +32,9 @@ export async function processLink<T extends Record<string, any>>({
   skipProgramChecks = false, // only skip for when program is already validated
 }: {
   payload: NewLinkProps & T;
-  workspace?: Pick<WorkspaceProps, "id" | "plan">;
+  workspace?: Pick<Project, "id" | "plan"> & {
+    users: { role: WorkspaceRole }[];
+  };
   userId?: string;
   bulk?: boolean;
   skipKeyChecks?: boolean;
@@ -88,9 +91,11 @@ export async function processLink<T extends Record<string, any>>({
         code: "unprocessable_entity",
       };
     }
-    if (UTMTags.some((tag) => payload[tag])) {
+
+    // Process UTM params only if the key exists, allowing null/empty to clear them.
+    if (UTMTags.some((tag) => tag in payload)) {
       const utmParams = UTMTags.reduce((acc, tag) => {
-        if (payload[tag]) {
+        if (tag in payload) {
           acc[tag] = payload[tag];
         }
         return acc;

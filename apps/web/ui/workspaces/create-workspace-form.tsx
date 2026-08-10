@@ -7,7 +7,6 @@ import { cn } from "@dub/utils";
 import slugify from "@sindresorhus/slugify";
 import { useSession } from "next-auth/react";
 import { usePlausible } from "next-plausible";
-import posthog from "posthog-js";
 import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -82,14 +81,8 @@ export function CreateWorkspaceForm({
           });
 
           if (res.ok) {
-            const { id: workspaceId } = await res.json();
-            plausible("Created Workspace");
             // track workspace creation event
-            posthog.capture("workspace_created", {
-              workspace_id: workspaceId,
-              workspace_name: data.name,
-              workspace_slug: data.slug,
-            });
+            plausible("Created Workspace");
             await Promise.all([mutate("/api/workspaces"), update()]);
             onSuccess?.(data);
           } else {
@@ -133,6 +126,9 @@ export function CreateWorkspaceForm({
             })}
           />
         </div>
+        <p className="text-content-subtle mt-1.5 text-xs">
+          This is the name of your company or product.
+        </p>
       </div>
 
       <div>
@@ -142,8 +138,8 @@ export function CreateWorkspaceForm({
           </p>
         </label>
         <div className="relative mt-2 flex rounded-md shadow-sm">
-          <span className="inline-flex items-center rounded-l-md border border-r-0 border-neutral-300 bg-neutral-50 px-5 text-neutral-500 sm:text-sm">
-            app.{process.env.NEXT_PUBLIC_APP_DOMAIN}
+          <span className="inline-flex items-center rounded-l-md border border-r-0 border-neutral-300 bg-neutral-50 px-3 text-neutral-500 sm:text-sm">
+            app.dub.co
           </span>
           <input
             id="slug"
@@ -195,8 +191,8 @@ export function CreateWorkspaceForm({
             {errors.slug.message}
           </p>
         ) : (
-          <p className="mt-1.5 text-xs text-neutral-500">
-            You can change this later in your workspace settings.
+          <p className="text-content-subtle mt-1.5 text-xs">
+            This is used for both your workspace and your partner program.
           </p>
         )}
       </div>
@@ -218,7 +214,7 @@ export function CreateWorkspaceForm({
                     errors.logo && "border-0 ring-2 ring-red-500",
                   )}
                   iconClassName="size-5"
-                  previewClassName="size-10 rounded-full"
+                  previewClassName="size-12 rounded-full"
                   variant="plain"
                   imageSrc={field.value}
                   readFile

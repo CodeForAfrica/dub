@@ -1,22 +1,29 @@
 import useCommissionsCount from "@/lib/swr/use-commissions-count";
 import useCustomers from "@/lib/swr/use-customers";
 import useGroups from "@/lib/swr/use-groups";
+import { usePartnerTags } from "@/lib/swr/use-partner-tags";
 import usePartners from "@/lib/swr/use-partners";
-import useWorkspace from "@/lib/swr/use-workspace";
 import { CustomerProps, EnrolledPartnerProps } from "@/lib/types";
+import { CustomerAvatar } from "@/ui/customers/customer-avatar";
 import { CommissionTypeIcon } from "@/ui/partners/comission-type-icon";
 import { CommissionStatusBadges } from "@/ui/partners/commission-status-badges";
 import { GroupColorCircle } from "@/ui/partners/groups/group-color-circle";
+import { PartnerAvatar } from "@/ui/partners/partner-avatar";
 import { CircleDotted, useRouterStuff } from "@dub/ui";
-import { Sliders, User, Users, Users6 } from "@dub/ui/icons";
-import { capitalize, cn, nFormatter, OG_AVATAR_URL } from "@dub/utils";
+import { Sliders, Tag, User, Users, Users6 } from "@dub/ui/icons";
+import {
+  capitalize,
+  cn,
+  FilterOperator,
+  nFormatter,
+  parseFilterValue,
+} from "@dub/utils";
 import { CommissionType } from "@prisma/client";
 import { useCallback, useMemo, useState } from "react";
 import { useDebounce } from "use-debounce";
 
 export function useCommissionFilters() {
-  const { slug } = useWorkspace();
-  const { commissionsCount } = useCommissionsCount();
+  const { commissionsCount } = useCommissionsCount({ exclude: ["status"] });
   const { searchParamsObj, queryParams } = useRouterStuff();
 
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
@@ -33,6 +40,32 @@ export function useCommissionFilters() {
 
   const { groups } = useGroups();
 
+  const activePartnerTagIds = useMemo(
+    () =>
+      searchParamsObj.partnerTagId
+        ? searchParamsObj.partnerTagId
+            .replace(/^-/, "")
+            .split(",")
+            .filter(Boolean)
+        : undefined,
+    [searchParamsObj.partnerTagId],
+  );
+
+  const { partnerTags } = usePartnerTags();
+  const { partnerTags: selectedPartnerTags } = usePartnerTags({
+    query: { ids: activePartnerTagIds },
+    enabled: !!activePartnerTagIds?.length,
+  });
+
+  const mergedPartnerTags = useMemo(() => {
+    if (!partnerTags) return null;
+    const baseIds = new Set(partnerTags.map((t) => t.id));
+    return [
+      ...partnerTags,
+      ...(selectedPartnerTags ?? []).filter((t) => !baseIds.has(t.id)),
+    ];
+  }, [partnerTags, selectedPartnerTags]);
+
   const filters = useMemo(
     () => [
       {
@@ -41,17 +74,11 @@ export function useCommissionFilters() {
         label: "Customer",
         shouldFilter: false,
         options:
-          customers?.map(({ id, email, name, avatar }) => {
+          customers?.map((customer) => {
             return {
-              value: id,
-              label: email ?? name,
-              icon: (
-                <img
-                  src={avatar || `${OG_AVATAR_URL}${id}`}
-                  alt={`${email} avatar`}
-                  className="size-4 rounded-full"
-                />
-              ),
+              value: customer.id,
+              label: customer.email ?? customer.name ?? customer.id,
+              icon: <CustomerAvatar customer={customer} className="size-4" />,
             };
           }) ?? null,
       },
@@ -61,17 +88,11 @@ export function useCommissionFilters() {
         label: "Partner",
         shouldFilter: false,
         options:
-          partners?.map(({ id, name, image }) => {
+          partners?.map((partner) => {
             return {
-              value: id,
-              label: name,
-              icon: (
-                <img
-                  src={image || `${OG_AVATAR_URL}${name}`}
-                  alt={`${name} image`}
-                  className="size-4 rounded-full"
-                />
-              ),
+              value: partner.id,
+              label: partner.name,
+              icon: <PartnerAvatar partner={partner} className="size-4" />,
             };
           }) ?? null,
       },
@@ -85,9 +106,18 @@ export function useCommissionFilters() {
               value: group.id,
               label: group.name,
               icon: <GroupColorCircle group={group} />,
-              permalink: `/${slug}/program/groups/${group.slug}/rewards`,
             };
           }) ?? null,
+      },
+      {
+        key: "partnerTagId",
+        icon: Tag,
+        label: "Partner Tag",
+        options:
+          mergedPartnerTags?.map((tag) => ({
+            value: tag.id,
+            label: tag.name,
+          })) ?? null,
       },
       {
         key: "type",
@@ -103,6 +133,7 @@ export function useCommissionFilters() {
         key: "status",
         icon: CircleDotted,
         label: "Status",
+        singleSelect: true,
         options: Object.entries(CommissionStatusBadges).map(
           ([value, { label }]) => {
             const Icon = CommissionStatusBadges[value].icon;
@@ -117,29 +148,42 @@ export function useCommissionFilters() {
                   )}
                 />
               ),
-              right: nFormatter(commissionsCount?.[value]?.count || 0, {
-                full: true,
-              }),
+              right: commissionsCount?.[value]?.count
+                ? nFormatter(commissionsCount[value].count, {
+                    full: true,
+                  })
+                : undefined,
             };
           },
         ),
       },
     ],
-    [commissionsCount, partners, customers, groups],
+    [commissionsCount, partners, customers, groups, mergedPartnerTags],
   );
 
   const activeFilters = useMemo(() => {
-    const { customerId, partnerId, status, type, payoutId, groupId } =
-      searchParamsObj;
-
-    return [
-      ...(customerId ? [{ key: "customerId", value: customerId }] : []),
-      ...(partnerId ? [{ key: "partnerId", value: partnerId }] : []),
-      ...(status ? [{ key: "status", value: status }] : []),
-      ...(type ? [{ key: "type", value: type }] : []),
-      ...(payoutId ? [{ key: "payoutId", value: payoutId }] : []),
-      ...(groupId ? [{ key: "groupId", value: groupId }] : []),
-    ];
+    const result: {
+      key: string;
+      operator: FilterOperator;
+      values: string[];
+    }[] = [];
+    const keys = [
+      "customerId",
+      "partnerId",
+      "status",
+      "type",
+      "payoutId",
+      "groupId",
+      "partnerTagId",
+    ] as const;
+    for (const key of keys) {
+      const raw = searchParamsObj[key];
+      if (!raw) continue;
+      const parsed = parseFilterValue(raw);
+      if (parsed)
+        result.push({ key, operator: parsed.operator, values: parsed.values });
+    }
+    return result;
   }, [
     searchParamsObj.customerId,
     searchParamsObj.partnerId,
@@ -147,38 +191,91 @@ export function useCommissionFilters() {
     searchParamsObj.type,
     searchParamsObj.payoutId,
     searchParamsObj.groupId,
+    searchParamsObj.partnerTagId,
   ]);
 
   const onSelect = useCallback(
-    (key: string, value: any) =>
-      queryParams({
-        set: {
-          [key]: value,
-        },
-        del: "page",
-      }),
-    [queryParams],
+    (key: string, value: string) => {
+      const currentParam = searchParamsObj[key];
+      const filterDef = filters.find((f) => f.key === key);
+      const isSingleSelect = filterDef?.singleSelect;
+
+      if (!currentParam || isSingleSelect) {
+        queryParams({ set: { [key]: value }, del: "page" });
+        return;
+      }
+      const parsed = parseFilterValue(currentParam);
+      if (parsed && !parsed.values.includes(value)) {
+        const newValues = [...parsed.values, value];
+        const newParam = parsed.operator.includes("NOT")
+          ? `-${newValues.join(",")}`
+          : newValues.join(",");
+        queryParams({ set: { [key]: newParam }, del: "page" });
+      }
+    },
+    [searchParamsObj, queryParams, filters],
   );
 
   const onRemove = useCallback(
-    (key: string) =>
-      queryParams({
-        del: [key, "page"],
-      }),
+    (key: string, value: string) => {
+      const currentParam = searchParamsObj[key];
+      if (!currentParam) return;
+      const parsed = parseFilterValue(currentParam);
+      if (!parsed) {
+        queryParams({ del: [key, "page"] });
+        return;
+      }
+      const newValues = parsed.values.filter((v) => v !== value);
+      if (newValues.length === 0) {
+        queryParams({ del: [key, "page"] });
+      } else {
+        const newParam = parsed.operator.includes("NOT")
+          ? `-${newValues.join(",")}`
+          : newValues.join(",");
+        queryParams({ set: { [key]: newParam }, del: "page" });
+      }
+    },
+    [searchParamsObj, queryParams],
+  );
+
+  const onRemoveFilter = useCallback(
+    (key: string) => queryParams({ del: [key, "page"] }),
     [queryParams],
   );
 
   const onRemoveAll = useCallback(
     () =>
       queryParams({
-        del: ["status", "partnerId", "customerId", "payoutId", "groupId"],
+        del: [
+          "status",
+          "partnerId",
+          "customerId",
+          "payoutId",
+          "groupId",
+          "partnerTagId",
+          "type",
+        ],
       }),
     [queryParams],
   );
 
-  const isFiltered = useMemo(
-    () => activeFilters.length > 0 || searchParamsObj.search,
-    [activeFilters, searchParamsObj.search],
+  const onToggleOperator = useCallback(
+    (key: string) => {
+      const currentParam = searchParamsObj[key];
+      if (!currentParam) return;
+      const isNegated = currentParam.startsWith("-");
+      const cleanValue = isNegated ? currentParam.slice(1) : currentParam;
+      queryParams({
+        set: { [key]: isNegated ? cleanValue : `-${cleanValue}` },
+        del: "page",
+      });
+    },
+    [searchParamsObj, queryParams],
+  );
+
+  const onOpenFilter = useCallback(
+    (key: string | null) => setSelectedFilter(key),
+    [],
   );
 
   return {
@@ -186,8 +283,10 @@ export function useCommissionFilters() {
     activeFilters,
     onSelect,
     onRemove,
+    onRemoveFilter,
     onRemoveAll,
-    isFiltered,
+    onToggleOperator,
+    onOpenFilter,
     setSearch,
     setSelectedFilter,
   };
@@ -200,20 +299,26 @@ function usePartnerFilterOptions(search: string) {
     query: { search },
   });
 
-  const { partners: selectedPartners } = usePartners({
-    query: {
-      partnerIds: searchParamsObj.partnerId
-        ? [searchParamsObj.partnerId]
+  const activePartnerIds = useMemo(
+    () =>
+      searchParamsObj.partnerId
+        ? searchParamsObj.partnerId.replace(/^-/, "").split(",").filter(Boolean)
         : undefined,
-    },
+    [searchParamsObj.partnerId],
+  );
+
+  const { partners: selectedPartners } = usePartners({
+    query: { partnerIds: activePartnerIds },
   });
 
   const result = useMemo(() => {
     return partnersLoading ||
-      // Consider partners loading if we can't find the currently filtered partner
-      (searchParamsObj.partnerId &&
-        ![...(selectedPartners ?? []), ...(partners ?? [])].some(
-          (p) => p.id === searchParamsObj.partnerId,
+      // Consider partners loading if we can't find all currently filtered partners
+      (activePartnerIds?.length &&
+        !activePartnerIds.every((id) =>
+          [...(selectedPartners ?? []), ...(partners ?? [])].some(
+            (p) => p.id === id,
+          ),
         ))
       ? null
       : ([

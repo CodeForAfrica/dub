@@ -4,19 +4,25 @@ import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
 import { getDiscountOrThrow } from "@/lib/api/partners/get-discount-or-throw";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
 import { updateDiscountSchema } from "@/lib/zod/schemas/discount";
 import { DEFAULT_PARTNER_GROUP } from "@/lib/zod/schemas/groups";
-import { prisma } from "@dub/prisma";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { revalidatePath } from "next/cache";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 export const updateDiscountAction = authActionClient
-  .schema(updateDiscountSchema)
+  .inputSchema(updateDiscountSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
-    const { discountId, couponTestId } = parsedInput;
+    const { discountId, couponTestId, autoProvision } = parsedInput;
+
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -32,6 +38,11 @@ export const updateDiscountAction = authActionClient
         },
         data: {
           couponTestId: couponTestId || null,
+          ...(autoProvision !== undefined && {
+            autoProvisionEnabledAt: autoProvision
+              ? discount.autoProvisionEnabledAt ?? new Date()
+              : null,
+          }),
         },
         include: {
           program: true,
@@ -59,8 +70,23 @@ export const updateDiscountAction = authActionClient
                   ? [
                       revalidatePath(`/partners.dub.co/${program.slug}`),
                       revalidatePath(`/partners.dub.co/${program.slug}/apply`),
+                      program.addedToMarketplaceAt &&
+                        revalidatePath(
+                          `/partners.dub.co/marketplace/${program.slug}`,
+                        ),
                     ]
                   : []),
+              ]
+            : []),
+
+          ...(updatedDiscount.autoProvisionEnabledAt
+            ? [
+                qstash.publishJSON({
+                  url: `${APP_DOMAIN_WITH_NGROK}/api/cron/discount-codes/create/queue-batches`,
+                  body: {
+                    discountId: discount.id,
+                  },
+                }),
               ]
             : []),
 

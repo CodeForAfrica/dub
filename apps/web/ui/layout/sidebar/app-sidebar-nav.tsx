@@ -1,13 +1,17 @@
 "use client";
 
+import { canAccessProgram } from "@/lib/auth/product-access-guard";
+import { usePartnerMessagesCount } from "@/lib/messages/hooks/use-partner-messages-count";
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
+import { SUBMITTED_LEADS_ENABLED_PROGRAM_IDS } from "@/lib/submitted-leads/constants";
 import {
   SubmissionsCountByStatus,
   useBountySubmissionsCount,
 } from "@/lib/swr/use-bounty-submissions-count";
-import { usePartnerMessagesCount } from "@/lib/swr/use-partner-messages-count";
-import usePayoutsCount from "@/lib/swr/use-payouts-count";
+import { useFraudGroupCount } from "@/lib/swr/use-fraud-groups-count";
+import { usePayoutsCount } from "@/lib/swr/use-payouts-count";
 import useProgram from "@/lib/swr/use-program";
+import { useProgramSubmittedLeadsCount } from "@/lib/swr/use-program-submitted-leads-count";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { useRouterStuff } from "@dub/ui";
 import {
@@ -16,6 +20,7 @@ import {
   ConnectedDots,
   CubeSettings,
   DiamondTurnRight,
+  Flag,
   Folder,
   Gauge6,
   Gear2,
@@ -25,20 +30,23 @@ import {
   Key,
   LifeRing,
   LinesY as LinesYStatic,
+  MarketingTarget,
   MoneyBills2,
   Msgs,
   PaperPlane,
   Receipt2,
   ShieldCheck,
   Sliders,
+  StackY3,
   Tag,
+  Trophy,
   UserCheck,
   UserPlus,
   Users,
   Users6,
   Webhook,
 } from "@dub/ui/icons";
-import { Trophy } from "lucide-react";
+import { isWorkspaceBillingTrialActive } from "@dub/utils";
 import { Session } from "next-auth";
 import { useSession } from "next-auth/react";
 import { useParams, usePathname } from "next/navigation";
@@ -66,133 +74,57 @@ type SidebarNavData = {
   applicationsCount?: number;
   submittedBountiesCount?: number;
   unreadMessagesCount?: number;
+  pendingFraudEventsCount?: number;
+  pendingLeadsCount?: number;
   showConversionGuides?: boolean;
   partnerNetworkEnabled?: boolean;
+  hasProgramAccess?: boolean;
 };
-
-const FIVE_YEARS_SECONDS = 60 * 60 * 24 * 365 * 5;
 
 const NAV_GROUPS: SidebarNavGroups<SidebarNavData> = ({
   slug,
   pathname,
   defaultProgramId,
-}) => [
-  {
-    name: "Short Links",
-    description:
-      "Create, organize, and measure the performance of your short links.",
-    learnMoreHref: "https://dub.co/links",
-    icon: Compass,
-    href: slug ? `/${slug}/links` : "/links",
-    active:
-      !!slug &&
-      pathname.startsWith(`/${slug}`) &&
-      !pathname.startsWith(`/${slug}/program`) &&
-      !pathname.startsWith(`/${slug}/settings`),
-
-    onClick: () => {
-      document.cookie = `dub_product:${slug}=links;path=/;max-age=${FIVE_YEARS_SECONDS}`;
-    },
-  },
-  {
+  hasProgramAccess,
+}) => {
+  const programGroup = {
+    id: "program",
     name: "Partner Program",
     description:
       "Kickstart viral product-led growth with powerful, branded referral and affiliate programs.",
     learnMoreHref: "https://dub.co/partners",
     icon: ConnectedDots4,
     href: slug ? `/${slug}/program` : "/program",
-    active: pathname.startsWith(`/${slug}/program`),
+    active:
+      !!slug &&
+      pathname.startsWith(`/${slug}`) &&
+      !pathname.startsWith(`/${slug}/links`) &&
+      !pathname.startsWith(`/${slug}/settings`),
     popup: DubPartnersPopup,
+  };
+  const linksGroup = {
+    id: "links",
+    name: "Short Links",
+    description:
+      "Create, organize, and measure the performance of your short links.",
+    learnMoreHref: "https://dub.co/links",
+    icon: Compass,
+    href: slug ? `/${slug}/links` : "/links",
+    active: pathname.startsWith(`/${slug}/links`),
+  };
 
-    onClick: defaultProgramId
-      ? () => {
-          document.cookie = `dub_product:${slug}=program;path=/;max-age=${FIVE_YEARS_SECONDS}`;
-        }
-      : undefined,
-  },
-];
+  // TEMPORARY: hide the program tab for restricted workspace users
+  if (hasProgramAccess === false) {
+    return [linksGroup];
+  }
+
+  return defaultProgramId
+    ? [programGroup, linksGroup]
+    : [linksGroup, programGroup];
+};
 
 const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
-  // Top-level
-  default: ({ slug, pathname, queryString, showNews }) => ({
-    title: "Short Links",
-    showNews,
-    direction: "left",
-    content: [
-      {
-        items: [
-          {
-            name: "Links",
-            icon: Hyperlink,
-            href: `/${slug}/links${pathname === `/${slug}/links` ? "" : queryString}`,
-            isActive: (pathname: string, href: string) => {
-              const basePath = href.split("?")[0];
-
-              // Exact match for the base links page
-              if (pathname === basePath) return true;
-
-              // Check if it's a link detail page (path segment after base contains a dot for domain)
-              if (pathname.startsWith(basePath + "/")) {
-                const nextSegment = pathname
-                  .slice(basePath.length + 1)
-                  .split("/")[0];
-                return nextSegment.includes(".");
-              }
-
-              return false;
-            },
-          },
-          {
-            name: "Domains",
-            icon: Globe,
-            href: `/${slug}/links/domains`,
-          },
-        ],
-      },
-      {
-        name: "Insights",
-        items: [
-          {
-            name: "Analytics",
-            icon: LinesY,
-            href: `/${slug}/analytics${pathname === `/${slug}/analytics` ? "" : queryString}`,
-          },
-          {
-            name: "Events",
-            icon: CursorRays,
-            href: `/${slug}/events${pathname === `/${slug}/events` ? "" : queryString}`,
-          },
-          {
-            name: "Customers",
-            icon: User,
-            href: `/${slug}/customers`,
-          },
-        ],
-      },
-      {
-        name: "Library",
-        items: [
-          {
-            name: "Folders",
-            icon: Folder,
-            href: `/${slug}/links/folders`,
-          },
-          {
-            name: "Tags",
-            icon: Tag,
-            href: `/${slug}/links/tags`,
-          },
-          {
-            name: "UTM Templates",
-            icon: DiamondTurnRight,
-            href: `/${slug}/links/utm`,
-          },
-        ],
-      },
-    ],
-  }),
-
-  // Program
+  // partner program
   program: ({
     slug,
     showNews,
@@ -200,6 +132,8 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
     applicationsCount,
     submittedBountiesCount,
     unreadMessagesCount,
+    pendingFraudEventsCount,
+    pendingLeadsCount,
     partnerNetworkEnabled,
   }) => ({
     title: "Partner Program",
@@ -217,7 +151,7 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
           {
             name: "Payouts",
             icon: MoneyBills2,
-            href: `/${slug}/program/payouts?status=pending&sortBy=amount`,
+            href: `/${slug}/program/payouts?status=pending`,
             badge: pendingPayoutsCount
               ? pendingPayoutsCount > 99
                 ? "99+"
@@ -232,7 +166,7 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
               ? unreadMessagesCount > 99
                 ? "99+"
                 : unreadMessagesCount
-              : "New",
+              : undefined,
           },
         ],
       },
@@ -281,17 +215,35 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             name: "Analytics",
             icon: LinesYStatic,
             href: `/${slug}/program/analytics`,
+            isActive: (pathname: string, href: string) =>
+              pathname.startsWith(href) ||
+              pathname.startsWith(href.replace("/analytics", "/events")),
+          },
+          {
+            name: "Customers",
+            icon: User,
+            href: `/${slug}/program/customers`,
+            badge: pendingLeadsCount
+              ? pendingLeadsCount > 99
+                ? "99+"
+                : pendingLeadsCount
+              : undefined,
           },
           {
             name: "Commissions",
             icon: InvoiceDollar,
             href: `/${slug}/program/commissions`,
           },
-          // {
-          //   name: "Fraud & Risk",
-          //   icon: ShieldKeyhole,
-          //   href: `/${slug}/program/fraud`,
-          // },
+          {
+            name: "Risk Center",
+            icon: Flag,
+            href: `/${slug}/program/risks`,
+            badge: pendingFraudEventsCount
+              ? pendingFraudEventsCount > 99
+                ? "99+"
+                : pendingFraudEventsCount
+              : undefined,
+          },
         ],
       },
       {
@@ -311,7 +263,6 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             name: "Email Campaigns",
             icon: PaperPlane,
             href: `/${slug}/program/campaigns` as `/${string}`,
-            badge: "New",
           },
           {
             name: "Resources",
@@ -348,6 +299,84 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
       },
     ],
   }),
+  // short links
+  links: ({ slug, pathname, queryString, showNews }) => ({
+    title: "Short Links",
+    showNews,
+    direction: "left",
+    content: [
+      {
+        items: [
+          {
+            name: "Links",
+            icon: Hyperlink,
+            href: `/${slug}/links${pathname === `/${slug}/links` ? "" : queryString}`,
+            isActive: (pathname: string, href: string) => {
+              const basePath = href.split("?")[0];
+
+              // Exact match for the base links page
+              if (pathname === basePath) return true;
+
+              // Check if it's a link detail page (path segment after base contains a dot for domain)
+              if (pathname.startsWith(basePath + "/")) {
+                const nextSegment = pathname
+                  .slice(basePath.length + 1)
+                  .split("/")[0];
+                return nextSegment.includes(".");
+              }
+
+              return false;
+            },
+          },
+          {
+            name: "Domains",
+            icon: Globe,
+            href: `/${slug}/links/domains`,
+          },
+        ],
+      },
+      {
+        name: "Insights",
+        items: [
+          {
+            name: "Analytics",
+            icon: LinesY,
+            href: `/${slug}/links/analytics${pathname === `/${slug}/links/analytics` ? "" : queryString}`,
+          },
+          {
+            name: "Events",
+            icon: CursorRays,
+            href: `/${slug}/links/events${pathname === `/${slug}/links/events` ? "" : queryString}`,
+          },
+          {
+            name: "Customers",
+            icon: User,
+            href: `/${slug}/links/customers`,
+          },
+        ],
+      },
+      {
+        name: "Library",
+        items: [
+          {
+            name: "Folders",
+            icon: Folder,
+            href: `/${slug}/links/folders`,
+          },
+          {
+            name: "Tags",
+            icon: Tag,
+            href: `/${slug}/links/tags`,
+          },
+          {
+            name: "UTM Templates",
+            icon: DiamondTurnRight,
+            href: `/${slug}/links/utm`,
+          },
+        ],
+      },
+    ],
+  }),
 
   // Workspace settings
   workspaceSettings: ({ slug }) => ({
@@ -374,9 +403,9 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             href: `/${slug}/settings/domains`,
           },
           {
-            name: "People",
+            name: "Members",
             icon: Users6,
-            href: `/${slug}/settings/people`,
+            href: `/${slug}/settings/members`,
           },
           {
             name: "Integrations",
@@ -394,24 +423,29 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
         name: "Developer",
         items: [
           {
-            name: "Analytics",
-            icon: LinesY,
-            href: `/${slug}/settings/analytics`,
-          },
-          {
             name: "API Keys",
             icon: Key,
             href: `/${slug}/settings/tokens`,
           },
           {
-            name: "OAuth Apps",
-            icon: CubeSettings,
-            href: `/${slug}/settings/oauth-apps`,
+            name: "Logs",
+            icon: StackY3,
+            href: `/${slug}/settings/logs`,
+          },
+          {
+            name: "Tracking",
+            icon: MarketingTarget,
+            href: `/${slug}/settings/tracking`,
           },
           {
             name: "Webhooks",
             icon: Webhook,
             href: `/${slug}/settings/webhooks`,
+          },
+          {
+            name: "OAuth Apps",
+            icon: CubeSettings,
+            href: `/${slug}/settings/oauth-apps`,
           },
         ],
       },
@@ -453,6 +487,12 @@ const NAV_AREAS: SidebarNavAreas<SidebarNavData> = {
             icon: Gift,
             href: "/account/settings/referrals",
           },
+          {
+            name: "Notifications",
+            icon: Bell,
+            href: "/settings/notifications",
+            arrow: true,
+          },
         ],
       },
     ],
@@ -469,8 +509,27 @@ export function AppSidebarNav({
   const { slug } = useParams() as { slug?: string };
   const pathname = usePathname();
   const { getQueryString } = useRouterStuff();
-  const { data: session } = useSession();
-  const { plan, defaultProgramId } = useWorkspace();
+  const { data: session, status } = useSession();
+  const {
+    id: workspaceId,
+    plan,
+    defaultProgramId,
+    trialEndsAt,
+    loading: workspaceLoading,
+  } = useWorkspace();
+
+  const canCheckProgramAccess =
+    status !== "loading" &&
+    !workspaceLoading &&
+    workspaceId &&
+    session?.user.id;
+
+  const hasProgramAccess = canCheckProgramAccess
+    ? canAccessProgram({
+        workspaceId,
+        userId: session.user.id,
+      })
+    : false;
 
   const currentArea = useMemo(() => {
     return pathname.startsWith("/account/settings")
@@ -483,18 +542,17 @@ export function AppSidebarNav({
           ? null
           : pathname.startsWith(`/${slug}/program`)
             ? "program"
-            : "default";
+            : "links";
   }, [slug, pathname]);
 
   const { program } = useProgram({
     enabled: Boolean(currentArea === "program" && defaultProgramId),
   });
 
-  const { payoutsCount: pendingPayoutsCount } = usePayoutsCount<
-    number | undefined
-  >({
+  const { payoutsCount: pendingPayoutsCount } = usePayoutsCount({
     eligibility: "eligible",
     status: "pending",
+    ignoreParams: true,
     enabled: Boolean(currentArea === "program" && defaultProgramId),
   });
 
@@ -505,6 +563,7 @@ export function AppSidebarNav({
   const { submissionsCount } = useBountySubmissionsCount<
     SubmissionsCountByStatus[]
   >({
+    ignoreParams: true,
     enabled: Boolean(currentArea === "program" && defaultProgramId),
   });
 
@@ -518,6 +577,24 @@ export function AppSidebarNav({
     },
   });
 
+  const { fraudGroupCount: pendingFraudEventsCount } = useFraudGroupCount<
+    number | undefined
+  >({
+    query: { status: "pending" },
+    enabled: Boolean(currentArea === "program" && defaultProgramId),
+    ignoreParams: true,
+  });
+
+  const { data: pendingLeadsCount } = useProgramSubmittedLeadsCount<number>({
+    query: { status: "pending" },
+    ignoreParams: true,
+    enabled: Boolean(
+      currentArea === "program" &&
+        defaultProgramId &&
+        SUBMITTED_LEADS_ENABLED_PROGRAM_IDS.includes(defaultProgramId),
+    ),
+  });
+
   const { canTrackConversions } = getPlanCapabilities(plan);
 
   return (
@@ -529,21 +606,32 @@ export function AppSidebarNav({
         slug: slug || "",
         pathname,
         queryString: getQueryString(undefined, {
-          include: ["folderId", "tagIds"],
+          include: ["folderId"],
         }),
         session: session || undefined,
-        showNews: pathname.startsWith(`/${slug}/program`) ? false : true,
+        showNews: true,
         defaultProgramId: defaultProgramId || undefined,
-        pendingPayoutsCount,
+        pendingPayoutsCount: pendingPayoutsCount?.[0]?.count ?? 0,
         applicationsCount,
         submittedBountiesCount,
         unreadMessagesCount,
-        showConversionGuides: canTrackConversions,
+        pendingFraudEventsCount,
+        pendingLeadsCount,
+        showConversionGuides:
+          canTrackConversions && pathname.startsWith(`/${slug}/links`),
         partnerNetworkEnabled:
           program && program.partnerNetworkEnabledAt !== null,
+        hasProgramAccess,
       }}
       toolContent={toolContent}
-      newsContent={plan && (plan === "free" ? <SidebarUsage /> : newsContent)}
+      newsContent={
+        plan &&
+        (plan === "free" || isWorkspaceBillingTrialActive(trialEndsAt) ? (
+          <SidebarUsage />
+        ) : (
+          newsContent
+        ))
+      }
       switcher={<WorkspaceDropdown />}
     />
   );

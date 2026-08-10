@@ -2,13 +2,13 @@ import { createId } from "@/lib/api/create-id";
 import { DubApiError } from "@/lib/api/errors";
 import { withWorkspace } from "@/lib/auth";
 import { exceededLimitError } from "@/lib/exceeded-limit-error";
+import { prisma } from "@/lib/prisma";
 import {
   LinkTagSchema,
   createTagBodySchema,
   getTagsQuerySchemaExtended,
 } from "@/lib/zod/schemas/tags";
 import { randomBadgeColor } from "@/ui/links/tag-badge";
-import { prisma } from "@dub/prisma";
 import { NextResponse } from "next/server";
 
 // GET /api/tags - get all tags for a workspace
@@ -19,43 +19,72 @@ export const GET = withWorkspace(
       ids,
       sortBy,
       sortOrder,
-      page,
+      page = 1,
       pageSize,
       includeLinksCount,
     } = getTagsQuerySchemaExtended.parse(searchParams);
 
-    const tags = await prisma.tag.findMany({
-      where: {
-        projectId: workspace.id,
-        ...(search && {
-          name: {
-            contains: search,
-          },
-        }),
-        ...(ids && {
-          id: {
-            in: ids,
-          },
-        }),
-      },
+    const tagWhere = {
+      projectId: workspace.id,
+      ...(search && {
+        name: {
+          contains: search,
+        },
+      }),
+      ...(ids && {
+        id: {
+          in: ids,
+        },
+      }),
+    };
+
+    const listArgs = {
+      where: tagWhere,
       select: {
         id: true,
         name: true,
         color: true,
-        ...(includeLinksCount && {
-          _count: {
-            select: {
-              links: true,
-            },
-          },
-        }),
       },
       orderBy: {
         [sortBy]: sortOrder,
       },
       take: pageSize,
       skip: (page - 1) * pageSize,
-    });
+    };
+
+    let tags;
+
+    if (includeLinksCount) {
+      const rows = await prisma.tag.findMany(listArgs);
+      const tagIds = rows.map((t) => t.id);
+
+      if (tagIds.length === 0) {
+        tags = [];
+      } else {
+        const countsByTag = await prisma.linkTag.groupBy({
+          by: ["tagId"],
+          where: {
+            tagId: { in: tagIds },
+          },
+          _count: {
+            _all: true,
+          },
+        });
+
+        const countMap = new Map(
+          countsByTag.map((c) => [c.tagId, c._count._all]),
+        );
+
+        tags = rows.map((row) => ({
+          ...row,
+          _count: {
+            links: countMap.get(row.id) ?? 0,
+          },
+        }));
+      }
+    } else {
+      tags = await prisma.tag.findMany(listArgs);
+    }
 
     return NextResponse.json(tags, { headers });
   },

@@ -3,30 +3,45 @@
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
 import { createId } from "@/lib/api/create-id";
 import { createAndEnrollPartner } from "@/lib/api/partners/create-and-enroll-partner";
+import { getGroupRewardsAndBounties } from "@/lib/api/partners/get-group-rewards-and-bounties";
 import { getNetworkInvitesUsage } from "@/lib/api/partners/get-network-invites-usage";
-import { getPartnerInviteRewardsAndBounties } from "@/lib/api/partners/get-partner-invite-rewards-and-bounties";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { prisma } from "@/lib/prisma";
 import { invitePartnerFromNetworkSchema } from "@/lib/zod/schemas/partner-network";
 import { sendEmail } from "@dub/email";
-import ProgramNetworkInvite from "@dub/email/templates/program-network-invite";
-import { prisma } from "@dub/prisma";
+import ProgramInvite from "@dub/email/templates/program-invite";
 import { waitUntil } from "@vercel/functions";
 import { getProgramOrThrow } from "../../api/programs/get-program-or-throw";
+import { getProgramNetworkInviteEmailDefaults } from "../../network/get-program-network-invite-email-defaults";
 import { authActionClient } from "../safe-action";
+import { throwIfNoPermission } from "../throw-if-no-permission";
 
 export const invitePartnerFromNetworkAction = authActionClient
-  .schema(invitePartnerFromNetworkSchema)
+  .inputSchema(invitePartnerFromNetworkSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
 
+    throwIfNoPermission({
+      role: workspace.role,
+      requiredRoles: ["owner", "member"],
+    });
+
     const networkInvitesUsage = await getNetworkInvitesUsage(workspace);
 
-    if (networkInvitesUsage >= workspace.networkInvitesLimit)
+    if (networkInvitesUsage >= workspace.networkInvitesLimit) {
       throw new Error(
         "You have reached your partner network invitations limit.",
       );
+    }
 
-    const { partnerId, groupId } = parsedInput;
+    const {
+      partnerId,
+      groupId,
+      username,
+      emailSubject,
+      emailTitle,
+      emailBody,
+    } = parsedInput;
 
     const programId = getDefaultProgramIdOrThrow(workspace);
 
@@ -39,6 +54,9 @@ export const invitePartnerFromNetworkAction = authActionClient
       prisma.partner.findFirst({
         where: {
           id: partnerId,
+          networkStatus: {
+            in: ["approved", "trusted"],
+          },
           programs: {
             none: {
               programId,
@@ -48,17 +66,21 @@ export const invitePartnerFromNetworkAction = authActionClient
       }),
     ]);
 
+    if (!program.partnerNetworkEnabledAt) {
+      throw new Error("Partner network is not enabled for this program.");
+    }
+
     if (!partner || !partner.email)
       throw new Error("Partner not found or already enrolled in this program.");
-
-    if (!groupId && !program.defaultGroupId)
-      throw new Error("No group ID provided and no default group ID found.");
 
     const enrolledPartner = await createAndEnrollPartner({
       workspace,
       program,
       partner: {
         email: partner.email,
+        name: partner.name,
+        image: partner.image,
+        username: username || undefined,
         ...(groupId && { groupId }),
       },
       userId: user.id,
@@ -81,6 +103,7 @@ export const invitePartnerFromNetworkAction = authActionClient
       },
       update: {
         invitedAt: new Date(),
+        ignoredAt: null,
       },
     });
 
@@ -88,22 +111,33 @@ export const invitePartnerFromNetworkAction = authActionClient
       Promise.allSettled([
         (async () => {
           if (!partner.email) return;
+          const { rewards, bounties } = await getGroupRewardsAndBounties({
+            programId,
+            groupId: enrolledPartner.groupId || program.defaultGroupId,
+          });
+          const emailDefaults = getProgramNetworkInviteEmailDefaults({
+            programName: program.name,
+            partnerName: partner.name,
+          });
+
           await sendEmail({
-            subject: `${program.name} invited you to join on Dub Partners`,
+            subject: emailSubject || emailDefaults.subject,
             variant: "notifications",
             to: partner.email,
-            react: ProgramNetworkInvite({
+            react: ProgramInvite({
               email: partner.email,
               name: partner.name,
               program: {
                 name: program.name,
                 slug: program.slug,
                 logo: program.logo,
+                website: program.url,
               },
-              ...(await getPartnerInviteRewardsAndBounties({
-                programId,
-                groupId: enrolledPartner.groupId || program.defaultGroupId,
-              })),
+              rewards,
+              bounties,
+              subject: emailSubject || emailDefaults.subject,
+              title: emailTitle || emailDefaults.title,
+              body: emailBody || emailDefaults.body,
             }),
           });
         })(),

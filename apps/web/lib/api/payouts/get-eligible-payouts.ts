@@ -1,25 +1,27 @@
 import { CUTOFF_PERIOD } from "@/lib/partners/cutoff-period";
+import { prisma } from "@/lib/prisma";
 import {
   eligiblePayoutsQuerySchema,
   PayoutResponseSchema,
 } from "@/lib/zod/schemas/payouts";
-import { prisma } from "@dub/prisma";
-import { Program } from "@dub/prisma/client";
-import { z } from "zod";
+import { Program } from "@prisma/client";
+import * as z from "zod/v4";
 import { getEffectivePayoutMode } from "./get-effective-payout-mode";
 import { getPayoutEligibilityFilter } from "./payout-eligibility-filter";
+import { payoutIdSelectionWhere } from "./payout-id-selection-where";
 
 interface GetEligiblePayoutsProps
-  extends z.infer<typeof eligiblePayoutsQuerySchema> {
-  excludedPayoutIds?: string[];
+  extends z.output<typeof eligiblePayoutsQuerySchema> {
   program: Pick<Program, "id" | "name" | "minPayoutAmount" | "payoutMode">;
 }
 
 export async function getEligiblePayouts({
   program,
   cutoffPeriod,
-  selectedPayoutId,
+  selectedPayoutIds,
   excludedPayoutIds,
+  pageSize,
+  page = 1,
 }: GetEligiblePayoutsProps) {
   const cutoffPeriodValue = CUTOFF_PERIOD.find(
     (c) => c.id === cutoffPeriod,
@@ -27,25 +29,8 @@ export async function getEligiblePayouts({
 
   let payouts = await prisma.payout.findMany({
     where: {
-      ...(selectedPayoutId
-        ? { id: selectedPayoutId }
-        : excludedPayoutIds && excludedPayoutIds.length > 0
-          ? { id: { notIn: excludedPayoutIds } }
-          : {}),
-      ...getPayoutEligibilityFilter(program),
-      ...(cutoffPeriodValue && {
-        OR: [
-          {
-            periodStart: null,
-            periodEnd: null,
-          },
-          {
-            periodEnd: {
-              lte: cutoffPeriodValue,
-            },
-          },
-        ],
-      }),
+      ...payoutIdSelectionWhere({ selectedPayoutIds, excludedPayoutIds }),
+      ...getPayoutEligibilityFilter({ program }),
     },
     include: {
       partner: {
@@ -73,16 +58,15 @@ export async function getEligiblePayouts({
     orderBy: {
       amount: "desc",
     },
+    ...(isFinite(pageSize) && {
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
   });
 
   if (cutoffPeriodValue) {
     payouts = payouts
       .map((payout) => {
-        // custom payouts are included by default
-        if (!payout.periodStart && !payout.periodEnd) {
-          return payout;
-        }
-
         const newPayoutAmount = payout.commissions.reduce((acc, commission) => {
           return acc + commission.earnings;
         }, 0);
@@ -97,6 +81,7 @@ export async function getEligiblePayouts({
 
   const eligiblePayouts = payouts.map(({ partner, ...payout }) => ({
     ...payout,
+    traceId: payout.stripePayoutTraceId,
     partner: {
       ...partner,
       ...partner.programs[0],

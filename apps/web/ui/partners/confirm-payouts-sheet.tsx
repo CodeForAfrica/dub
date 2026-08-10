@@ -1,10 +1,16 @@
 import { confirmPayoutsAction } from "@/lib/actions/partners/confirm-payouts";
 import { clientAccessCheck } from "@/lib/client-access-check";
-import { exceededLimitError } from "@/lib/exceeded-limit-error";
 import {
+  CARD_PAYOUT_HARD_COST_RATE,
+  CUTOFF_PERIOD_MAX_PAYOUTS,
   DIRECT_DEBIT_PAYMENT_METHOD_TYPES,
+  ELIGIBLE_PAYOUTS_MAX_PAGE_SIZE,
   FAST_ACH_FEE_CENTS,
+  INVOICE_MIN_PAYOUT_AMOUNT_CENTS,
+  STRIPE_PAYMENT_METHOD_NORMALIZATION,
 } from "@/lib/constants/payouts";
+import { exceededLimitError } from "@/lib/exceeded-limit-error";
+import { calculatePayoutFeeWithWaiver } from "@/lib/partners/calculate-payout-fee-with-waiver";
 import {
   CUTOFF_PERIOD,
   CUTOFF_PERIOD_TYPES,
@@ -13,6 +19,7 @@ import {
   calculatePayoutFeeForMethod,
   STRIPE_PAYMENT_METHODS,
 } from "@/lib/stripe/payment-methods";
+import useCommissionsCount from "@/lib/swr/use-commissions-count";
 import usePaymentMethods from "@/lib/swr/use-payment-methods";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
@@ -27,12 +34,14 @@ import {
   DynamicTooltipWrapper,
   Gear,
   PaperPlane,
+  Popover,
   Sheet,
   ShimmerDots,
   Table,
   TooltipContent,
   useRouterStuff,
   useTable,
+  useTablePagination,
 } from "@dub/ui";
 import {
   capitalize,
@@ -41,13 +50,21 @@ import {
   fetcher,
   formatDate,
   nFormatter,
+  pluralize,
   truncate,
 } from "@dub/utils";
+import { CommissionStatus } from "@prisma/client";
 import { useAction } from "next-safe-action/hooks";
 import { useRouter } from "next/navigation";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
-import Stripe from "stripe";
 import useSWR from "swr";
 import { UpgradeRequiredToast } from "../shared/upgrade-required-toast";
 import { ExternalPayoutsIndicator } from "./external-payouts-indicator";
@@ -72,6 +89,8 @@ function ConfirmPayoutsSheetContent() {
     payoutsUsage,
     payoutsLimit,
     payoutFee,
+    payoutFeeWaiverLimit,
+    payoutFeeWaiverUsage,
     fastDirectDebitPayouts,
   } = useWorkspace();
 
@@ -86,33 +105,152 @@ function ConfirmPayoutsSheetContent() {
 
   const { queryParams, searchParamsObj } = useRouterStuff();
 
-  const selectedPayoutId = searchParamsObj.selectedPayoutId || undefined;
+  const resolvedSelectedPayoutIds = useMemo(() => {
+    const fromMulti =
+      searchParamsObj.selectedPayoutIds?.split(",").filter(Boolean) ?? [];
+    const fromLegacy = searchParamsObj.selectedPayoutId
+      ? [searchParamsObj.selectedPayoutId]
+      : [];
+    return [...new Set([...fromMulti, ...fromLegacy])];
+  }, [searchParamsObj.selectedPayoutIds, searchParamsObj.selectedPayoutId]);
+
+  const isExplicitSelectionMode = resolvedSelectedPayoutIds.length > 0;
+
+  const excludedPayoutIds =
+    searchParamsObj.excludedPayoutIds?.split(",").filter(Boolean) || [];
+
+  /** Matches the invoice (respects excludedPayoutIds in bulk mode, selectedPayoutIds when explicit). */
+  const summaryQuery = useMemo(
+    () =>
+      ({
+        workspaceId,
+        cutoffPeriod,
+        ...(isExplicitSelectionMode
+          ? { selectedPayoutIds: resolvedSelectedPayoutIds.join(",") }
+          : excludedPayoutIds.length > 0
+            ? { excludedPayoutIds: excludedPayoutIds.join(",") }
+            : {}),
+      }) as Record<string, string>,
+    [
+      workspaceId,
+      cutoffPeriod,
+      isExplicitSelectionMode,
+      resolvedSelectedPayoutIds.join(","),
+      excludedPayoutIds.join(","),
+    ],
+  );
+
+  /** Full eligible list for the table — never applies excludedPayoutIds so excluded rows stay visible. */
+  const tableQuery = useMemo(
+    () =>
+      ({
+        workspaceId,
+        cutoffPeriod,
+        ...(isExplicitSelectionMode
+          ? { selectedPayoutIds: resolvedSelectedPayoutIds.join(",") }
+          : {}),
+      }) as Record<string, string>,
+    [
+      workspaceId,
+      cutoffPeriod,
+      isExplicitSelectionMode,
+      resolvedSelectedPayoutIds.join(","),
+    ],
+  );
+
+  const {
+    data: eligiblePayoutsSummaryCount,
+    isLoading: eligiblePayoutsSummaryLoading,
+  } = useSWR<{
+    count: number;
+    amount: number;
+  }>(
+    defaultProgramId
+      ? `/api/programs/${defaultProgramId}/payouts/eligible/count?${new URLSearchParams(summaryQuery).toString()}`
+      : null,
+    fetcher,
+    {
+      keepPreviousData: true,
+    },
+  );
+
+  /** Total eligible rows for table pagination (no excludedPayoutIds). Same URL as summary when bulk + no exclusions → SWR dedupes. */
+  const { data: eligiblePayoutsTableTotalCount } = useSWR<{
+    count: number;
+    amount: number;
+  }>(
+    defaultProgramId && !isExplicitSelectionMode
+      ? `/api/programs/${defaultProgramId}/payouts/eligible/count?${new URLSearchParams(tableQuery).toString()}`
+      : null,
+    fetcher,
+    {
+      keepPreviousData: true,
+    },
+  );
+
+  const eligiblePayoutsTableRowCount = isExplicitSelectionMode
+    ? eligiblePayoutsSummaryCount?.count ?? 0
+    : eligiblePayoutsTableTotalCount?.count ?? 0;
+
+  const [page, setPage] = useState(1);
+  const { pagination, setPagination } = useTablePagination({
+    pageSize: ELIGIBLE_PAYOUTS_MAX_PAGE_SIZE,
+    page,
+    onPageChange: setPage,
+  });
 
   const {
     data: eligiblePayouts,
     error: eligiblePayoutsError,
     isLoading: eligiblePayoutsLoading,
   } = useSWR<PayoutResponse[]>(
-    `/api/programs/${defaultProgramId}/payouts/eligible?${new URLSearchParams({
-      workspaceId,
-      cutoffPeriod,
-      ...(selectedPayoutId && { selectedPayoutId }),
-    } as Record<string, any>).toString()}`,
+    defaultProgramId
+      ? `/api/programs/${defaultProgramId}/payouts/eligible?${new URLSearchParams(
+          {
+            ...tableQuery,
+            page: pagination.pageIndex.toString(),
+          },
+        ).toString()}`
+      : null,
     fetcher,
+    {
+      keepPreviousData: true,
+    },
   );
 
-  const excludedPayoutIds =
-    searchParamsObj.excludedPayoutIds?.split(",").filter(Boolean) || [];
+  /** All rows returned for the table (including bulk-mode exclusions, for strikethrough + Include). */
+  const finalEligiblePayouts = useMemo(
+    () => eligiblePayouts ?? [],
+    [eligiblePayouts],
+  );
 
-  const finalEligiblePayouts = useMemo(() => {
-    // if there's a selected payout id, return the payout directly
-    if (selectedPayoutId) return eligiblePayouts;
-
-    // else, we need to filter out the excluded payout ids (if specified)
-    return eligiblePayouts?.filter(
+  /** Subset actually on the invoice (for fees / external amount / external row in summary). */
+  const payoutsIncludedInInvoice = useMemo(() => {
+    if (!eligiblePayouts) {
+      return [];
+    }
+    if (isExplicitSelectionMode) {
+      return eligiblePayouts;
+    }
+    return eligiblePayouts.filter(
       (payout) => !excludedPayoutIds.includes(payout.id),
     );
-  }, [eligiblePayouts, selectedPayoutId, excludedPayoutIds]);
+  }, [eligiblePayouts, isExplicitSelectionMode, excludedPayoutIds]);
+
+  const showPerRowIncludeExclude = useMemo(
+    () => !isExplicitSelectionMode || resolvedSelectedPayoutIds.length > 1,
+    [isExplicitSelectionMode, resolvedSelectedPayoutIds.length],
+  );
+
+  const { commissionsCount } = useCommissionsCount({
+    include: [],
+    status: CommissionStatus.hold,
+    // for explicitly selected payouts, filter by the payouts for those partners
+    ...(isExplicitSelectionMode &&
+      payoutsIncludedInInvoice && {
+        partnerId: payoutsIncludedInInvoice.map((p) => p.partner.id).join(","),
+      }),
+  });
 
   const { executeAsync: confirmPayouts } = useAction(confirmPayoutsAction, {
     onError: ({ error }) => {
@@ -268,9 +406,7 @@ function ConfirmPayoutsSheetContent() {
   };
 
   const { amount, fee, total, fastAchFee, externalAmount } = useMemo(() => {
-    const amount = finalEligiblePayouts?.reduce((acc, payout) => {
-      return acc + payout.amount;
-    }, 0);
+    const amount = eligiblePayoutsSummaryCount?.amount;
 
     if (
       amount === undefined ||
@@ -286,18 +422,27 @@ function ConfirmPayoutsSheetContent() {
       };
     }
 
-    // Calculate the total external amount
-    const externalAmount = finalEligiblePayouts?.reduce(
+    const externalAmount = payoutsIncludedInInvoice.reduce(
       (acc, payout) =>
         isExternalPayout(payout) ? acc + payout.amount : acc + 0,
       0,
     );
 
-    const fastAchFee = selectedPaymentMethod.fastSettlement
-      ? FAST_ACH_FEE_CENTS
-      : 0;
+    const invoicePaymentMethod = selectedPaymentMethod.fastSettlement
+      ? "ach_fast"
+      : STRIPE_PAYMENT_METHOD_NORMALIZATION[selectedPaymentMethod.type];
 
-    const fee = Math.round(amount * selectedPaymentMethod.fee + fastAchFee);
+    const fastAchFee =
+      invoicePaymentMethod === "ach_fast" ? FAST_ACH_FEE_CENTS : 0;
+
+    const { fee } = calculatePayoutFeeWithWaiver({
+      payoutAmount: amount,
+      payoutFeeWaiverLimit: payoutFeeWaiverLimit ?? 0,
+      payoutFeeWaiverUsage: payoutFeeWaiverUsage ?? 0,
+      payoutFee: selectedPaymentMethod.fee,
+      paymentMethod: invoicePaymentMethod,
+    });
+
     const total = amount + fee;
 
     return {
@@ -307,7 +452,14 @@ function ConfirmPayoutsSheetContent() {
       total,
       fastAchFee,
     };
-  }, [finalEligiblePayouts, selectedPaymentMethod, program?.payoutMode]);
+  }, [
+    eligiblePayoutsSummaryCount,
+    payoutsIncludedInInvoice,
+    selectedPaymentMethod,
+    program?.payoutMode,
+    payoutFeeWaiverLimit,
+    payoutFeeWaiverUsage,
+  ]);
 
   const invoiceData = useMemo(() => {
     return [
@@ -376,41 +528,48 @@ function ConfirmPayoutsSheetContent() {
           </div>
         ),
       },
-      {
-        key: "Cutoff Period",
-        value: (
-          <div className="w-full">
-            <Combobox
-              options={cutoffPeriodOptions}
-              selected={selectedCutoffPeriodOption}
-              setSelected={(option: ComboboxOption) => {
-                if (!option) {
-                  return;
-                }
+      // only show cutoff period if there are less than 1,000 payouts
+      ...(eligiblePayoutsSummaryCount &&
+      eligiblePayoutsSummaryCount.count <= CUTOFF_PERIOD_MAX_PAYOUTS
+        ? [
+            {
+              key: "Cutoff Period",
+              value: (
+                <div className="w-full">
+                  <Combobox
+                    options={cutoffPeriodOptions}
+                    selected={selectedCutoffPeriodOption}
+                    setSelected={(option: ComboboxOption) => {
+                      if (!option) {
+                        return;
+                      }
 
-                setCutoffPeriod(option.value as CUTOFF_PERIOD_TYPES);
-              }}
-              placeholder="Select cutoff period"
-              buttonProps={{
-                className:
-                  "h-auto border border-neutral-200 px-3 py-1.5 text-xs focus:border-neutral-600 focus:ring-neutral-600",
-              }}
-              matchTriggerWidth
-              hideSearch
-              caret
-            />
-          </div>
-        ),
-        tooltipContent:
-          "Cutoff period in UTC. If set, only commissions accrued up to the cutoff period will be included in the payout invoice.",
-      },
+                      setCutoffPeriod(option.value as CUTOFF_PERIOD_TYPES);
+                    }}
+                    placeholder="Select cutoff period"
+                    buttonProps={{
+                      className:
+                        "h-auto border border-neutral-200 px-3 py-1.5 text-xs focus:border-neutral-600 focus:ring-neutral-600",
+                    }}
+                    matchTriggerWidth
+                    hideSearch
+                    caret
+                  />
+                </div>
+              ),
+              tooltipContent:
+                "Cutoff period in UTC. If set, only commissions accrued up to the cutoff period will be included in the payout invoice.",
+            },
+          ]
+        : []),
       {
         key: "Partners",
-        value: eligiblePayouts ? (
-          nFormatter(eligiblePayouts.length, { full: true })
-        ) : (
-          <div className="h-4 w-24 animate-pulse rounded-md bg-neutral-200" />
-        ),
+        value:
+          eligiblePayoutsSummaryCount !== undefined ? (
+            nFormatter(eligiblePayoutsSummaryCount.count, { full: true })
+          ) : (
+            <div className="h-4 w-24 animate-pulse rounded-md bg-neutral-200" />
+          ),
       },
       {
         key: "Amount",
@@ -421,7 +580,8 @@ function ConfirmPayoutsSheetContent() {
             currencyFormatter(amount)
           ),
       },
-      ...(finalEligiblePayouts && finalEligiblePayouts.some(isExternalPayout)
+      ...(payoutsIncludedInInvoice.length > 0 &&
+      payoutsIncludedInInvoice.some(isExternalPayout)
         ? [
             {
               key: "External Amount",
@@ -447,7 +607,12 @@ function ConfirmPayoutsSheetContent() {
             <div className="h-4 w-24 animate-pulse rounded-md bg-neutral-200" />
           ),
         tooltipContent: selectedPaymentMethod
-          ? `${selectedPaymentMethod.fee * 100}% processing fee${(fastAchFee ?? 0) > 0 ? ` + ${currencyFormatter(fastAchFee ?? 0)} Fast ACH fee` : ""}. ${!DIRECT_DEBIT_PAYMENT_METHOD_TYPES.includes(selectedPaymentMethod.type as Stripe.PaymentMethod.Type) ? " Switch to Direct Debit for a reduced fee." : ""} [Learn more](https://d.to/payouts)`
+          ? buildPayoutFeeTooltip({
+              selectedPaymentMethod,
+              fastAchFee: fastAchFee ?? 0,
+              payoutFeeWaiverLimit: payoutFeeWaiverLimit ?? 0,
+              payoutFeeWaiverUsage: payoutFeeWaiverUsage ?? 0,
+            })
           : undefined,
       },
       {
@@ -471,11 +636,22 @@ function ConfirmPayoutsSheetContent() {
   }, [
     amount,
     externalAmount,
+    eligiblePayoutsSummaryCount,
+    payoutsIncludedInInvoice,
     paymentMethods,
+    paymentMethodsLoading,
+    paymentMethodOptions,
     selectedPaymentMethod,
+    selectedPaymentMethodOption,
+    finalPaymentMethods,
+    slug,
+    program?.payoutMode,
     cutoffPeriod,
     cutoffPeriodOptions,
     selectedCutoffPeriodOption,
+    fastAchFee,
+    payoutFeeWaiverLimit,
+    payoutFeeWaiverUsage,
   ]);
 
   const partnerColumn = useMemo(
@@ -496,7 +672,7 @@ function ConfirmPayoutsSheetContent() {
   );
 
   const table = useTable({
-    data: eligiblePayouts || [],
+    data: finalEligiblePayouts || [],
     columns: [
       partnerColumn,
       {
@@ -507,38 +683,86 @@ function ConfirmPayoutsSheetContent() {
             <div className="relative flex items-center justify-end gap-1.5">
               <span
                 className={cn(
-                  !selectedPayoutId && "group-hover/row:opacity-0",
-                  excludedPayoutIds.includes(row.original.id) && "line-through",
+                  showPerRowIncludeExclude && "group-hover/row:opacity-0",
+                  !isExplicitSelectionMode &&
+                    excludedPayoutIds.includes(row.original.id) &&
+                    "line-through",
                 )}
               >
                 {currencyFormatter(row.original.amount)}
               </span>
 
-              {!selectedPayoutId && (
-                <div className="pointer-events-none absolute right-[calc(14px+0.375rem)] top-1/2 -translate-y-1/2 opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100">
+              {showPerRowIncludeExclude && (
+                <div
+                  className={cn(
+                    "pointer-events-none absolute top-1/2 -translate-y-1/2 opacity-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100",
+                    isExternalPayout(row.original) &&
+                      "right-[calc(14px+0.375rem)]",
+                  )}
+                >
                   <Button
                     variant="secondary"
                     text={
-                      excludedPayoutIds.includes(row.original.id)
-                        ? "Include"
-                        : "Exclude"
+                      isExplicitSelectionMode
+                        ? "Remove"
+                        : excludedPayoutIds.includes(row.original.id)
+                          ? "Include"
+                          : "Exclude"
                     }
                     className="h-6 w-fit px-2"
-                    onClick={() =>
-                      // Toggle excluded
-                      queryParams({
-                        set: {
-                          excludedPayoutIds: excludedPayoutIds.includes(
-                            row.original.id,
+                    onClick={() => {
+                      if (isExplicitSelectionMode) {
+                        const next = resolvedSelectedPayoutIds.filter(
+                          (id) => id !== row.original.id,
+                        );
+
+                        queryParams({
+                          ...(next.length > 0
+                            ? {
+                                set: {
+                                  selectedPayoutIds: next.join(","),
+                                },
+                                del: ["selectedPayoutId", "excludedPayoutIds"],
+                              }
+                            : {
+                                del: [
+                                  "selectedPayoutIds",
+                                  "selectedPayoutId",
+                                  "excludedPayoutIds",
+                                ],
+                              }),
+                          replace: true,
+                        });
+                        return;
+                      }
+
+                      const newExcludedPayoutIds = excludedPayoutIds.includes(
+                        row.original.id,
+                      )
+                        ? excludedPayoutIds.filter(
+                            (id) => id !== row.original.id,
                           )
-                            ? excludedPayoutIds.filter(
-                                (id) => id !== row.original.id,
-                              )
-                            : [...excludedPayoutIds, row.original.id],
-                        },
+                        : [...excludedPayoutIds, row.original.id];
+
+                      queryParams({
+                        ...(newExcludedPayoutIds.length > 0
+                          ? {
+                              set: {
+                                excludedPayoutIds:
+                                  newExcludedPayoutIds.join(","),
+                              },
+                              del: ["selectedPayoutIds", "selectedPayoutId"],
+                            }
+                          : {
+                              del: [
+                                "excludedPayoutIds",
+                                "selectedPayoutIds",
+                                "selectedPayoutId",
+                              ],
+                            }),
                         replace: true,
-                      })
-                    }
+                      });
+                    }}
                   />
                 </div>
               )}
@@ -556,20 +780,26 @@ function ConfirmPayoutsSheetContent() {
     tdClassName: (id, row) =>
       cn(
         "transition-opacity",
-        excludedPayoutIds.includes(row.original.id) && [
-          "[&>div]:opacity-50",
-          id === "total" && "group-hover/row:[&>div]:opacity-100",
-        ], // Excluded payout
+        !isExplicitSelectionMode &&
+          excludedPayoutIds.includes(row.original.id) && [
+            "[&>div]:opacity-50",
+            id === "total" && "group-hover/row:[&>div]:opacity-100",
+          ],
         id === "total" && "text-right",
         "border-l-0",
       ),
     className: "[&_tr:last-child>td]:border-b-transparent",
     scrollWrapperClassName: "min-h-[40px]",
-    resourceName: (p) => `eligible payout${p ? "s" : ""}`,
+    resourceName: (p) => `payout${p ? "s" : ""}`,
+    pagination,
+    onPaginationChange: setPagination,
+    rowCount: eligiblePayoutsTableRowCount,
     loading: eligiblePayoutsLoading,
     error: eligiblePayoutsError
       ? "Failed to load payouts for this invoice."
       : undefined,
+    onRowClick: (row) =>
+      window.open(`/${slug}/program/payouts/${row.original.id}`, "_blank"),
   });
 
   const { error: permissionsError } = clientAccessCheck({
@@ -577,6 +807,12 @@ function ConfirmPayoutsSheetContent() {
     action: "payouts.write",
     customPermissionDescription: "confirm payouts",
   });
+
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+
+  useEffect(() => {
+    setIsTouchDevice(window.matchMedia("(pointer: coarse)").matches);
+  }, []);
 
   return (
     <div className="flex h-full flex-col">
@@ -633,7 +869,7 @@ function ConfirmPayoutsSheetContent() {
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-2 border-t border-neutral-200 p-5">
+      <div className="flex flex-col gap-3 border-t border-neutral-200 px-5 py-4">
         <ConfirmPayoutsButton
           onClick={async () => {
             if (!workspaceId || !selectedPaymentMethod) {
@@ -645,8 +881,11 @@ function ConfirmPayoutsSheetContent() {
               paymentMethodId: selectedPaymentMethod.id.replace("-fast", ""),
               fastSettlement: selectedPaymentMethod.fastSettlement,
               cutoffPeriod,
-              selectedPayoutId,
-              excludedPayoutIds,
+              ...(isExplicitSelectionMode
+                ? { selectedPayoutIds: resolvedSelectedPayoutIds }
+                : excludedPayoutIds.length > 0
+                  ? { excludedPayoutIds }
+                  : {}),
               amount: amount ?? 0,
               fee: fee ?? 0,
               total: total ?? 0,
@@ -667,11 +906,14 @@ function ConfirmPayoutsSheetContent() {
           }}
           text={
             amount && amount > 0
-              ? `Hold to confirm ${currencyFormatter(amount)} payout`
-              : "Hold to confirm payout"
+              ? `${isTouchDevice ? "Press" : "Click"} and hold to confirm ${currencyFormatter(amount)} payout`
+              : `${isTouchDevice ? "Press" : "Click"} and hold to confirm payout`
           }
           disabled={
-            eligiblePayoutsLoading || !selectedPaymentMethod || amount === 0
+            eligiblePayoutsLoading ||
+            eligiblePayoutsSummaryLoading ||
+            !selectedPaymentMethod ||
+            amount === 0
           }
           disabledTooltip={
             payoutsUsage &&
@@ -687,13 +929,41 @@ function ConfirmPayoutsSheetContent() {
                 cta="Upgrade"
                 href={`/${slug}/settings/billing/upgrade`}
               />
-            ) : amount && amount < 1000 ? (
+            ) : amount && amount < INVOICE_MIN_PAYOUT_AMOUNT_CENTS ? (
               "Your payout total is less than the minimum invoice amount of $10."
             ) : (
               permissionsError || undefined
             )
           }
         />
+        {commissionsCount && commissionsCount.hold.count > 0 && (
+          <div className="flex items-center justify-center gap-2 text-sm text-neutral-600">
+            <span>
+              Excluding{" "}
+              <span className="font-medium text-neutral-800">
+                {nFormatter(commissionsCount.hold.count, { full: true })}
+              </span>
+              {` on hold ${pluralize("commission", commissionsCount.hold.count)} `}
+              <span className="font-medium text-neutral-800">
+                (
+                {currencyFormatter(commissionsCount.hold.earnings, {
+                  trailingZeroDisplay: "stripIfInteger",
+                })}
+                )
+              </span>
+            </span>
+            <a
+              href={`/${slug}/program/commissions?status=hold`}
+              target="_blank"
+            >
+              <Button
+                variant="secondary"
+                text="Review"
+                className="h-7 w-fit cursor-alias rounded-md border border-neutral-200 px-2 text-sm"
+              />
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -720,7 +990,12 @@ export function ConfirmPayoutsSheet() {
       onOpenChange={setIsOpen}
       onClose={() => {
         queryParams({
-          del: ["confirmPayouts", "selectedPayoutId", "excludedPayoutIds"],
+          del: [
+            "confirmPayouts",
+            "selectedPayoutId",
+            "selectedPayoutIds",
+            "excludedPayoutIds",
+          ],
         });
       }}
     >
@@ -736,7 +1011,7 @@ function ConfirmPayoutsButton({
   disabledTooltip,
 }: {
   onClick: () => Promise<boolean>;
-  text: string;
+  text: ReactNode;
   disabled: boolean;
   disabledTooltip: React.ReactNode;
 }) {
@@ -777,6 +1052,8 @@ function ConfirmPayoutsButton({
     requestRef.current = requestAnimationFrame(animate);
   };
 
+  const [cancelCounter, setCancelCounter] = useState(0);
+
   const submitting = useRef(false);
 
   // Submit when the progress is >= 1 and not already submitting
@@ -784,6 +1061,8 @@ function ConfirmPayoutsButton({
     if (roundedProgress < 1 || submitting.current) return;
 
     submitting.current = true;
+    setCancelCounter(0);
+
     onClick()
       .then((result) => {
         if (result) {
@@ -806,83 +1085,152 @@ function ConfirmPayoutsButton({
     return () => cancelAnimationFrame(requestRef.current!);
   }, []);
 
+  const handleCancel = () => {
+    if (!holding.current) return;
+    holding.current = false;
+
+    if (isSuccess) return;
+    setCancelCounter((c) => c + 1);
+  };
+
   return (
-    <Button
-      type="button"
-      variant="primary"
-      className={cn(
-        "relative overflow-hidden",
-        isSuccess && "border-green-500 bg-green-500",
-      )}
-      textWrapperClassName="!overflow-visible select-none"
-      {...(!disabled &&
-        !disabledTooltip && {
-          // TODO: Handle keyboard control
-          onPointerDown: () => (holding.current = true),
-          onPointerUp: () => (holding.current = false),
-          onPointerLeave: () => (holding.current = false),
-          onPointerCancel: () => (holding.current = false),
-        })}
-      text={
-        <>
-          <div
-            ref={loadingBar}
-            className={cn(
-              "pointer-events-none absolute inset-y-0 left-0 overflow-hidden",
-              !isSuccess && "bg-[linear-gradient(90deg,#fff1,#fff4)]",
-            )}
-          >
-            <ShimmerDots
-              className="inset-[unset] inset-y-0 left-0 w-[600px] opacity-30"
-              color={[1, 1, 1]}
-            />
-          </div>
-          <div className="relative text-center">
-            <div
-              className={cn(
-                "transition-[transform,opacity] duration-300",
-                roundedProgress >= 0.5 && "-translate-y-4 opacity-0",
-              )}
-            >
-              {text}
-            </div>
-            <div
-              className={cn(
-                "pointer-events-none absolute inset-0 transition-[transform,opacity] duration-300",
-                roundedProgress < 0.5 && "translate-y-4 opacity-0",
-                roundedProgress >= 1 && "-translate-y-4 opacity-0",
-              )}
-              aria-hidden
-            >
-              Preparing payout...
-            </div>
-            <div
-              className={cn(
-                "pointer-events-none absolute inset-0 flex items-center justify-center transition-[transform,opacity] duration-300",
-                roundedProgress < 1 && "-translate-x-1 translate-y-4 opacity-0",
-                roundedProgress >= 1 &&
-                  isSuccess &&
-                  "-translate-y-4 translate-x-3 opacity-0",
-              )}
-              aria-hidden
-            >
-              <PaperPlane className="size-4" />
-            </div>
-            <div
-              className={cn(
-                "pointer-events-none absolute inset-0 flex items-center justify-center transition-[transform,opacity] duration-300",
-                (roundedProgress < 1 || !isSuccess) &&
-                  "translate-y-4 opacity-0",
-              )}
-              aria-hidden
-            >
-              Payout sent
-            </div>
-          </div>
-        </>
+    <Popover
+      openPopover={cancelCounter >= 2}
+      setOpenPopover={() => {}}
+      content={
+        <div
+          className="text-content-subtle select-none px-2 py-0.5 text-xs"
+          onClick={() => setCancelCounter(0)}
+        >
+          Keep holding the button to confirm
+        </div>
       }
-      disabled={disabled}
-      disabledTooltip={disabledTooltip}
-    />
+      side="top"
+    >
+      <div className="w-full">
+        <Button
+          type="button"
+          variant="primary"
+          className={cn(
+            "relative overflow-hidden",
+            isSuccess && "border-green-500 bg-green-500",
+            "active:scale-[0.98]",
+          )}
+          textWrapperClassName="!overflow-visible select-none"
+          {...(!disabled &&
+            !disabledTooltip && {
+              // TODO: Handle keyboard control
+              onPointerDown: () => (holding.current = true),
+              onPointerUp: handleCancel,
+              onPointerLeave: handleCancel,
+              onPointerCancel: handleCancel,
+            })}
+          text={
+            <>
+              <div
+                ref={loadingBar}
+                className={cn(
+                  "pointer-events-none absolute inset-y-0 left-0 overflow-hidden",
+                  !isSuccess && "bg-[linear-gradient(90deg,#fff1,#fff4)]",
+                )}
+              >
+                <ShimmerDots
+                  className="inset-[unset] inset-y-0 left-0 w-[600px] opacity-30"
+                  color={[1, 1, 1]}
+                />
+              </div>
+              <div className="relative text-center">
+                <div
+                  className={cn(
+                    "truncate transition-[transform,opacity] duration-300",
+                    roundedProgress >= 0.5 && "-translate-y-4 opacity-0",
+                  )}
+                >
+                  {text}
+                </div>
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 transition-[transform,opacity] duration-300",
+                    roundedProgress < 0.5 && "translate-y-4 opacity-0",
+                    roundedProgress >= 1 && "-translate-y-4 opacity-0",
+                  )}
+                  aria-hidden
+                >
+                  Preparing payout...
+                </div>
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 flex items-center justify-center transition-[transform,opacity] duration-300",
+                    roundedProgress < 1 &&
+                      "-translate-x-1 translate-y-4 opacity-0",
+                    roundedProgress >= 1 &&
+                      isSuccess &&
+                      "-translate-y-4 translate-x-3 opacity-0",
+                  )}
+                  aria-hidden
+                >
+                  <PaperPlane className="size-4" />
+                </div>
+                <div
+                  className={cn(
+                    "pointer-events-none absolute inset-0 flex items-center justify-center transition-[transform,opacity] duration-300",
+                    (roundedProgress < 1 || !isSuccess) &&
+                      "translate-y-4 opacity-0",
+                  )}
+                  aria-hidden
+                >
+                  Payout sent
+                </div>
+              </div>
+            </>
+          }
+          disabled={disabled}
+          disabledTooltip={disabledTooltip}
+        />
+      </div>
+    </Popover>
   );
+}
+
+function buildPayoutFeeTooltip({
+  selectedPaymentMethod,
+  fastAchFee,
+  payoutFeeWaiverLimit,
+  payoutFeeWaiverUsage,
+}: {
+  selectedPaymentMethod: Pick<SelectPaymentMethod, "fee" | "type">;
+  fastAchFee: number;
+  payoutFeeWaiverLimit: number;
+  payoutFeeWaiverUsage: number;
+}): string {
+  const feePercentage = selectedPaymentMethod.fee * 100;
+
+  const isWithinWaiver =
+    payoutFeeWaiverLimit > 0 && payoutFeeWaiverUsage < payoutFeeWaiverLimit;
+
+  const fastAchFeeText =
+    fastAchFee > 0
+      ? isWithinWaiver
+        ? ` A ${currencyFormatter(fastAchFee)} Fast ACH fee still applies.`
+        : ` + ${currencyFormatter(fastAchFee)} Fast ACH fee`
+      : "";
+
+  const isDirectDebit = DIRECT_DEBIT_PAYMENT_METHOD_TYPES.includes(
+    selectedPaymentMethod.type as any,
+  );
+
+  const directDebitSuggestion = isDirectDebit
+    ? ""
+    : ` [Switch to Direct Debit](https://dub.co/help/article/how-to-set-up-bank-account) for ${isWithinWaiver ? "0% fees" : "a reduced fee"}.`;
+
+  if (isWithinWaiver) {
+    const effectiveFeePercentage = isDirectDebit
+      ? 0
+      : CARD_PAYOUT_HARD_COST_RATE * 100;
+    const waiverLimitFormatted = nFormatter(payoutFeeWaiverLimit / 100);
+
+    return `${effectiveFeePercentage}% processing fee for the first $${waiverLimitFormatted} payouts, then ${feePercentage}%${fastAchFeeText}.${directDebitSuggestion} [Learn more](https://d.to/payouts)`;
+  }
+
+  return `${feePercentage}% processing fee${fastAchFeeText}.${directDebitSuggestion} [Learn more](https://d.to/payouts)`;
 }

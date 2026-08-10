@@ -1,6 +1,8 @@
-import { z } from "zod";
+import { processKey } from "@/lib/api/links/utils";
+import { PlatformType } from "@prisma/client";
+import * as z from "zod/v4";
 import { booleanQuerySchema, getPaginationQuerySchema } from "./misc";
-import { PartnerSchema } from "./partners";
+import { PartnerSchema, partnerPlatformSchema } from "./partners";
 
 export const PARTNER_CONVERSION_SCORES = [
   "unknown",
@@ -31,6 +33,7 @@ export const NetworkPartnersStatusSchema = z.enum([
   "discover",
   "invited",
   "recruited",
+  "ignored",
 ]);
 
 export const getNetworkPartnersQuerySchema = z
@@ -38,15 +41,15 @@ export const getNetworkPartnersQuerySchema = z
     status: NetworkPartnersStatusSchema.default("discover"),
     country: z.string().optional(),
     starred: booleanQuerySchema.nullish(),
+    sortBy: z.enum(["relevance", "subscribers"]).default("relevance"),
+    platform: z.enum(PlatformType).optional(),
     partnerIds: z
       .union([z.string(), z.array(z.string())])
       .transform((v) => (Array.isArray(v) ? v : v.split(",")))
       .optional(),
   })
-  .merge(
-    getPaginationQuerySchema({
-      pageSize: PARTNER_NETWORK_MAX_PAGE_SIZE,
-    }),
+  .extend(
+    getPaginationQuerySchema({ pageSize: PARTNER_NETWORK_MAX_PAGE_SIZE }),
   );
 
 export const getNetworkPartnersCountQuerySchema = getNetworkPartnersQuerySchema
@@ -57,7 +60,9 @@ export const getNetworkPartnersCountQuerySchema = getNetworkPartnersQuerySchema
   })
   .extend({
     status: NetworkPartnersStatusSchema.nullish(),
-    groupBy: z.enum(["status", "country"]).default("status"),
+    groupBy: z
+      .enum(["status", "country", "platform", "subscribers"])
+      .default("status"),
   });
 
 export const NetworkPartnerSchema = PartnerSchema.pick({
@@ -69,37 +74,20 @@ export const NetworkPartnerSchema = PartnerSchema.pick({
   image: true,
   description: true,
   createdAt: true,
-  trustedAt: true,
-
+  networkStatus: true,
   monthlyTraffic: true,
   preferredEarningStructures: true,
   salesChannels: true,
-
-  website: true,
-  websiteVerifiedAt: true,
-  youtube: true,
-  youtubeVerifiedAt: true,
-  youtubeSubscriberCount: true,
-  youtubeViewCount: true,
-  twitter: true,
-  twitterVerifiedAt: true,
-  linkedin: true,
-  linkedinVerifiedAt: true,
-  instagram: true,
-  instagramVerifiedAt: true,
-  tiktok: true,
-  tiktokVerifiedAt: true,
-}).merge(
-  z.object({
-    lastConversionAt: z.date().nullable(),
-    conversionScore: PartnerConversionScoreSchema,
-    starredAt: z.date().nullable(),
-    invitedAt: z.date().nullable(),
-    ignoredAt: z.date().nullable(),
-    recruitedAt: z.date().nullable(),
-    categories: z.array(z.string()),
-  }),
-);
+  identityVerificationStatus: true,
+  identityVerifiedAt: true,
+}).extend({
+  starredAt: z.date().nullable(),
+  invitedAt: z.date().nullable(),
+  ignoredAt: z.date().nullable(),
+  recruitedAt: z.date().nullable(),
+  categories: z.array(z.string()),
+  platforms: z.array(partnerPlatformSchema),
+});
 
 export const updateDiscoveredPartnerSchema = z.object({
   workspaceId: z.string(),
@@ -112,4 +100,17 @@ export const invitePartnerFromNetworkSchema = z.object({
   workspaceId: z.string(),
   partnerId: z.string(),
   groupId: z.string().nullish().default(null),
+  username: z
+    .string()
+    .max(100)
+    .nullish()
+    .refine(
+      (v) => (v ? processKey({ domain: "d.to", key: v }) !== null : true),
+      {
+        message: "Invalid username. Must be a URL-friendly string.",
+      },
+    ),
+  emailSubject: z.string().trim().max(255).optional(),
+  emailTitle: z.string().trim().max(255).optional(),
+  emailBody: z.string().trim().max(3000).optional(),
 });

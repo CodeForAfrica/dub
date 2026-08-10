@@ -2,14 +2,14 @@ import { DubApiError } from "@/lib/api/errors";
 import { withWorkspace } from "@/lib/auth";
 import { isGenericEmail } from "@/lib/is-generic-email";
 import { jackson, samlAudience } from "@/lib/jackson";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const createSAMLConnectionSchema = z
   .object({
-    metadataUrl: z.string().url(),
+    metadataUrl: z.url(),
     encodedRawMetadata: z.string(),
   })
   .partial()
@@ -103,6 +103,27 @@ export const DELETE = withWorkspace(
       deleteSAMLConnectionSchema.parse(searchParams);
 
     const { apiController } = await jackson();
+
+    const connections = await apiController.getConnections({
+      tenant: workspace.id,
+      product: "Dub",
+    });
+
+    const connection = connections.find(
+      (connection) => connection.clientID === clientID,
+    );
+
+    if (!connection) {
+      throw new DubApiError({
+        code: "not_found",
+        message: "SAML connection not found",
+      });
+    }
+
+    await apiController.deleteConnections({
+      clientID: connection.clientID,
+      clientSecret: connection.clientSecret,
+    });
 
     await apiController.deleteConnections({
       clientID,

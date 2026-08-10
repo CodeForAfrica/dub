@@ -1,25 +1,21 @@
 import { recordAuditLog } from "@/lib/api/audit-logs/record-audit-log";
-import { isDiscountEquivalent } from "@/lib/api/discounts/is-discount-equivalent";
-import { queueDiscountCodeDeletion } from "@/lib/api/discounts/queue-discount-code-deletion";
 import { DubApiError } from "@/lib/api/errors";
 import { getGroupOrThrow } from "@/lib/api/groups/get-group-or-throw";
-import { includeProgramEnrollment } from "@/lib/api/links/include-program-enrollment";
-import { includeTags } from "@/lib/api/links/include-tags";
+import { movePartnersToGroup } from "@/lib/api/groups/move-partners-to-group";
+import { upsertGroupMoveRules } from "@/lib/api/groups/upsert-group-move-rules";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { withWorkspace } from "@/lib/auth";
 import { qstash } from "@/lib/cron";
-import { recordLink } from "@/lib/tinybird";
+import { prisma } from "@/lib/prisma";
 import { GroupWithProgramSchema } from "@/lib/zod/schemas/group-with-program";
 import {
   DEFAULT_PARTNER_GROUP,
   GroupSchema,
   updateGroupSchema,
 } from "@/lib/zod/schemas/groups";
-import { prisma } from "@dub/prisma";
 import { APP_DOMAIN_WITH_NGROK, constructURLFromUTMParams } from "@dub/utils";
-import { DiscountCode } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 
@@ -32,20 +28,14 @@ export const GET = withWorkspace(
       programId,
       groupId: params.groupIdOrSlug,
       includeExpandedFields: true,
+      includeBounties: true,
     });
 
     return NextResponse.json(GroupWithProgramSchema.parse(group));
   },
   {
     requiredPermissions: ["groups.read"],
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );
 
@@ -69,6 +59,11 @@ export const PATCH = withWorkspace(
       linkStructure,
       applicationFormData,
       landerData,
+      holdingPeriodDays,
+      autoApprovePartners,
+      updateAutoApprovePartnersForAllGroups,
+      updateHoldingPeriodDaysForAllGroups,
+      moveRules,
     } = updateGroupSchema.parse(await parseRequestBody(req));
 
     // Only check slug uniqueness if slug is being updated
@@ -123,28 +118,78 @@ export const PATCH = withWorkspace(
         })
       : null;
 
-    const updatedGroup = await prisma.partnerGroup.update({
-      where: {
-        id: group.id,
-      },
-      data: {
-        name,
-        slug,
-        color,
-        additionalLinks,
-        maxPartnerLinks,
-        linkStructure,
-        utmTemplateId,
-        applicationFormData,
-        landerData,
-      },
-      include: {
-        clickReward: true,
-        leadReward: true,
-        saleReward: true,
-        discount: true,
-      },
+    const { workflowId } = await upsertGroupMoveRules({
+      workspace,
+      group,
+      moveRules,
     });
+
+    const [updatedGroup] = await Promise.all([
+      prisma.partnerGroup.update({
+        where: {
+          id: group.id,
+        },
+        data: {
+          name,
+          slug,
+          color,
+          additionalLinks,
+          maxPartnerLinks,
+          linkStructure,
+          utmTemplateId,
+          applicationFormData,
+          landerData,
+          workflowId,
+          ...(holdingPeriodDays !== undefined &&
+            !updateHoldingPeriodDaysForAllGroups && {
+              holdingPeriodDays,
+            }),
+          ...(autoApprovePartners !== undefined &&
+            !updateAutoApprovePartnersForAllGroups && {
+              autoApprovePartnersEnabledAt: autoApprovePartners
+                ? new Date()
+                : null,
+            }),
+        },
+        include: {
+          clickReward: true,
+          leadReward: true,
+          saleReward: true,
+          referralReward: true,
+          discount: true,
+        },
+      }),
+
+      // Update auto-approve for all groups if selected
+      ...(autoApprovePartners !== undefined &&
+      updateAutoApprovePartnersForAllGroups
+        ? [
+            prisma.partnerGroup.updateMany({
+              where: {
+                programId,
+              },
+              data: {
+                autoApprovePartnersEnabledAt: autoApprovePartners
+                  ? new Date()
+                  : null,
+              },
+            }),
+          ]
+        : []),
+      // Update holding period for all groups if selected
+      ...(holdingPeriodDays !== undefined && updateHoldingPeriodDaysForAllGroups
+        ? [
+            prisma.partnerGroup.updateMany({
+              where: {
+                programId,
+              },
+              data: {
+                holdingPeriodDays,
+              },
+            }),
+          ]
+        : []),
+    ]);
 
     waitUntil(
       (async () => {
@@ -206,14 +251,7 @@ export const PATCH = withWorkspace(
   },
   {
     requiredPermissions: ["groups.write"],
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );
 
@@ -237,10 +275,6 @@ export const DELETE = withWorkspace(
                 },
               }),
         },
-        include: {
-          partners: true,
-          discount: true,
-        },
       }),
 
       prisma.partnerGroup.findUniqueOrThrow({
@@ -250,11 +284,15 @@ export const DELETE = withWorkspace(
             slug: DEFAULT_PARTNER_GROUP.slug,
           },
         },
-        include: {
-          discount: true,
-        },
       }),
     ]);
+
+    if (group.programId !== programId) {
+      throw new DubApiError({
+        code: "forbidden",
+        message: `Group "${groupIdOrSlug}" not found in your program.`,
+      });
+    }
 
     if (group.slug === DEFAULT_PARTNER_GROUP.slug) {
       throw new DubApiError({
@@ -263,71 +301,77 @@ export const DELETE = withWorkspace(
       });
     }
 
-    const keepDiscountCodes = isDiscountEquivalent(
-      group.discount,
-      defaultGroup.discount,
-    );
-
-    // Cache discount codes to delete them later
-    let discountCodesToDelete: DiscountCode[] = [];
-    if (group.discountId && !keepDiscountCodes) {
-      discountCodesToDelete = await prisma.discountCode.findMany({
-        where: {
-          discountId: group.discountId,
-        },
-      });
-    }
-
-    const deletedGroup = await prisma.$transaction(async (tx) => {
-      // 1. Update all partners in the group to the default group
-      await tx.programEnrollment.updateMany({
+    while (true) {
+      const programEnrollments = await prisma.programEnrollment.findMany({
         where: {
           groupId: group.id,
         },
-        data: {
-          groupId: defaultGroup.id,
-          clickRewardId: defaultGroup.clickRewardId,
-          leadRewardId: defaultGroup.leadRewardId,
-          saleRewardId: defaultGroup.saleRewardId,
-          discountId: defaultGroup.discountId,
-        },
+        take: 100,
       });
+      if (programEnrollments.length === 0) {
+        break;
+      }
+      const count = await movePartnersToGroup({
+        workspaceId: workspace.id,
+        programId,
+        partnerIds: programEnrollments.map(({ partnerId }) => partnerId),
+        userId: session.user.id,
+        group: defaultGroup,
+        isGroupDeleted: true,
+      });
+      console.log(`Moved ${count} partners to the default group`);
+    }
 
-      // 2. Delete the group's rewards
-      if (group.clickRewardId || group.leadRewardId || group.saleRewardId) {
+    let shouldDeleteGroupRewards = false;
+
+    const groupRewardIds = [
+      group.clickRewardId,
+      group.leadRewardId,
+      group.saleRewardId,
+      group.referralRewardId,
+    ].filter(Boolean) as string[];
+
+    if (groupRewardIds.length > 0) {
+      const groupRewardCommissions = await prisma.commission.count({
+        where: {
+          programId,
+          rewardId: {
+            in: groupRewardIds,
+          },
+        },
+        take: 100,
+      });
+      if (groupRewardCommissions === 0) {
+        shouldDeleteGroupRewards = true;
+      }
+    }
+
+    const deletedGroup = await prisma.$transaction(async (tx) => {
+      // 1. Delete the group's rewards (if no commissions are associated with the rewards)
+      if (shouldDeleteGroupRewards) {
         await tx.reward.deleteMany({
           where: {
             id: {
-              in: [
-                group.clickRewardId,
-                group.leadRewardId,
-                group.saleRewardId,
-              ].filter(Boolean) as string[],
+              in: groupRewardIds,
             },
           },
         });
       }
 
-      if (group.discountId) {
-        // 3. Update the discount codes
-        await tx.discountCode.updateMany({
-          where: {
-            discountId: group.discountId,
-          },
-          data: {
-            discountId: keepDiscountCodes ? defaultGroup.discountId : null,
-          },
-        });
+      // Note: we can't delete this group's discount yet because it is needed
+      // for `remap-discount-codes` that runs in movePartnersToGroup
+      // but we will delete the Discount in `remap-discount-codes` once there are no remaining discount codes.
 
-        // 4. Delete the group's discount
-        await tx.discount.delete({
+      // 2. Delete the group move workflow
+      if (group.workflowId) {
+        await tx.workflow.delete({
           where: {
-            id: group.discountId,
+            id: group.workflowId,
           },
         });
       }
 
-      // 5. Delete the group
+      // 3. Delete the group
       await tx.partnerGroup.delete({
         where: {
           id: group.id,
@@ -339,61 +383,20 @@ export const DELETE = withWorkspace(
 
     if (deletedGroup) {
       waitUntil(
-        (async () => {
-          const partnerIds = group.partners.map(({ partnerId }) => partnerId);
-
-          // TODO:
-          // This won't work for larger groups
-          // We should split this into multiple batches
-          const partnerLinks = await prisma.link.findMany({
-            where: {
-              programId,
-              partnerId: {
-                in: partnerIds,
-              },
-              partnerGroupDefaultLinkId: null,
+        recordAuditLog({
+          workspaceId: workspace.id,
+          programId,
+          action: "group.deleted",
+          description: `Group ${group.name} (${group.id}) deleted`,
+          actor: session.user,
+          targets: [
+            {
+              type: "group",
+              id: group.id,
+              metadata: group,
             },
-            include: {
-              ...includeTags,
-              ...includeProgramEnrollment,
-            },
-          });
-
-          await Promise.allSettled([
-            partnerIds.length > 0 &&
-              qstash.publishJSON({
-                url: `${APP_DOMAIN_WITH_NGROK}/api/cron/groups/remap-default-links`,
-                body: {
-                  programId,
-                  groupId: defaultGroup.id,
-                  partnerIds,
-                  userId: session.user.id,
-                  isGroupDeleted: true,
-                },
-              }),
-
-            ...discountCodesToDelete.map((discountCode) =>
-              queueDiscountCodeDeletion(discountCode.id),
-            ),
-
-            recordAuditLog({
-              workspaceId: workspace.id,
-              programId,
-              action: "group.deleted",
-              description: `Group ${group.name} (${group.id}) deleted`,
-              actor: session.user,
-              targets: [
-                {
-                  type: "group",
-                  id: group.id,
-                  metadata: group,
-                },
-              ],
-            }),
-
-            recordLink(partnerLinks),
-          ]);
-        })(),
+          ],
+        }),
       );
     }
 
@@ -401,13 +404,6 @@ export const DELETE = withWorkspace(
   },
   {
     requiredPermissions: ["groups.write"],
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

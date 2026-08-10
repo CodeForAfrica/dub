@@ -1,6 +1,6 @@
+import { configureCampaignEmailImage } from "@/lib/tiptap/campaign-email-image";
 import { EmailTemplateVariables, TiptapNode } from "@/lib/types";
 import { EMAIL_TEMPLATE_VARIABLES } from "@/lib/zod/schemas/campaigns";
-import Image from "@tiptap/extension-image";
 import Mention from "@tiptap/extension-mention";
 import { generateHTML } from "@tiptap/html/server";
 import StarterKit from "@tiptap/starter-kit";
@@ -20,13 +20,22 @@ export function renderCampaignEmailHTML({
         levels: [1, 2],
       },
     }),
-    Image.configure({
+    configureCampaignEmailImage({
       HTMLAttributes: {
         style: "max-width: 100%; height: auto; margin: 12px auto;",
       },
     }),
     Mention.extend({
+      addAttributes() {
+        return {
+          ...this.parent?.(),
+          fallback: { default: null },
+        };
+      },
       renderHTML({ node }: { node: any }) {
+        const label = node.attrs.fallback
+          ? `{{${node.attrs.id} | ${node.attrs.fallback}}}`
+          : `{{${node.attrs.id}}}`;
         return [
           "span",
           {
@@ -35,11 +44,13 @@ export function renderCampaignEmailHTML({
             "data-type": "mention",
             "data-id": node.attrs.id,
           },
-          `{{${node.attrs.id}}}`,
+          label,
         ];
       },
       renderText({ node }: { node: any }) {
-        return `{{${node.attrs.id}}}`;
+        return node.attrs.fallback
+          ? `{{${node.attrs.id} | ${node.attrs.fallback}}}`
+          : `{{${node.attrs.id}}}`;
       },
     }).configure({
       suggestion: {
@@ -63,7 +74,7 @@ export function renderCampaignEmailHTML({
     )
     .replace(
       /<li([^>]*)>/g,
-      '<li$1 style="margin-left: 0; padding-left: 4px; margin-top: 0px; margin-bottom: 0px; line-height:1;">',
+      '<li$1 style="margin-left: 0; padding-left: 4px; margin-top: 0px; margin-bottom: 0px;">',
     );
 
   return interpolateEmailTemplate({
@@ -78,6 +89,7 @@ const sanitizeHtmlBody = (body: string) => {
       "p",
       "strong",
       "em",
+      "s",
       "ul",
       "ol",
       "li",
@@ -85,6 +97,7 @@ const sanitizeHtmlBody = (body: string) => {
       "h1",
       "h2",
       "img",
+      "br",
     ],
     allowedAttributes: {
       a: ["href", "name", "target", "rel"],

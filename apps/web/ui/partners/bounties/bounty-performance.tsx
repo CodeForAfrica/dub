@@ -1,63 +1,99 @@
-import { PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES } from "@/lib/api/bounties/performance-bounty-scope-attributes";
 import { isCurrencyAttribute } from "@/lib/api/workflows/utils";
+import { PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES } from "@/lib/bounty/api/performance-bounty-scope-attributes";
 import { PartnerBountyProps } from "@/lib/types";
 import { cn, currencyFormatter, nFormatter } from "@dub/utils";
+import {
+  BountyProgressBarRow,
+  EmphasisNumber,
+} from "./bounty-progress-bar-row";
 
-export function BountyPerformance({ bounty }: { bounty: PartnerBountyProps }) {
+export function PerformanceBountyProgress({
+  bounty,
+  labelClassName,
+  wrapperClassName,
+}: {
+  bounty: PartnerBountyProps;
+  labelClassName?: string;
+  wrapperClassName?: string;
+}) {
   const performanceCondition = bounty.performanceCondition;
 
   if (!performanceCondition) {
     return null;
   }
 
-  const attribute = performanceCondition.attribute;
+  const { attribute } = performanceCondition;
+
+  // Current value
+  const value = bounty.submissions?.[0]?.performanceCount ?? 0;
+  const formattedValue = isCurrencyAttribute(attribute)
+    ? currencyFormatter(value, { trailingZeroDisplay: "stripIfInteger" })
+    : nFormatter(value, { full: true });
+
+  // Target value
   const target = performanceCondition.value;
-  const value = bounty.submission?.performanceCount ?? 0;
-
-  const formattedValue =
-    value === undefined
-      ? "-"
-      : isCurrencyAttribute(attribute)
-        ? currencyFormatter(value)
-        : nFormatter(value, { full: true });
-
   const formattedTarget = isCurrencyAttribute(attribute)
-    ? currencyFormatter(target)
+    ? currencyFormatter(target, { trailingZeroDisplay: "stripIfInteger" })
     : nFormatter(target, { full: true });
 
   const metricLabel =
-    PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES[
-      performanceCondition.attribute
-    ].toLowerCase();
+    PERFORMANCE_BOUNTY_SCOPE_ATTRIBUTES[attribute].toLowerCase();
 
-  const expiredBounty =
-    bounty.endsAt && new Date(bounty.endsAt) < new Date() ? true : false;
+  const percent =
+    target > 0 ? Math.min(Math.max(value / target, 0), 1) * 100 : 0;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
-        {value && (
-          <div
-            style={{
-              width: Math.min(Math.max(value / target, 0), 1) * 100 + "%",
-            }}
-            className={cn(
-              "h-full rounded-full bg-orange-600",
-              expiredBounty && "bg-neutral-400",
-            )}
-          />
-        )}
-      </div>
-      <span className="text-content-default text-xs font-medium">
-        <strong className="text-content-emphasis font-semibold">
-          {formattedValue}
-        </strong>{" "}
-        of{" "}
-        <strong className="text-content-emphasis font-semibold">
-          {formattedTarget}
-        </strong>{" "}
-        {metricLabel} generated
-      </span>
+    <BountyProgressBarRow
+      progress={percent}
+      labelClassName={labelClassName}
+      wrapperClassName={wrapperClassName}
+    >
+      <EmphasisNumber>{formattedValue}</EmphasisNumber> of{" "}
+      <EmphasisNumber>{formattedTarget}</EmphasisNumber> {metricLabel} generated
+    </BountyProgressBarRow>
+  );
+}
+
+export function SubmissionBountyProgress({
+  bounty,
+  labelClassName,
+  wrapperClassName,
+  className,
+}: {
+  bounty: PartnerBountyProps;
+  labelClassName?: string;
+  wrapperClassName?: string;
+  className?: string;
+}) {
+  const submittedCount = bounty.submissions.filter(
+    ({ status }) => status !== "draft",
+  ).length;
+
+  const approvedCount = bounty.submissions.filter(
+    ({ status }) => status === "approved",
+  ).length;
+
+  const maxSubmissions = bounty.maxSubmissions || 1;
+  const submittedPercent = (submittedCount / maxSubmissions) * 100;
+  const approvedPercent = (approvedCount / maxSubmissions) * 100;
+
+  return (
+    <div className={cn("flex flex-col gap-4 sm:flex-row", className)}>
+      <BountyProgressBarRow
+        progress={submittedPercent}
+        labelClassName={labelClassName}
+        wrapperClassName={wrapperClassName}
+      >
+        <EmphasisNumber>{submittedCount}</EmphasisNumber> of{" "}
+        <EmphasisNumber>{maxSubmissions}</EmphasisNumber> submitted
+      </BountyProgressBarRow>
+      <BountyProgressBarRow
+        progress={approvedPercent}
+        labelClassName={labelClassName}
+        wrapperClassName={wrapperClassName}
+      >
+        <EmphasisNumber>{approvedCount}</EmphasisNumber> approved
+      </BountyProgressBarRow>
     </div>
   );
 }

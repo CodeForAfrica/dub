@@ -1,30 +1,17 @@
+import { prisma } from "@/lib/prisma";
 import { getGroupsQuerySchema } from "@/lib/zod/schemas/groups";
-import { prisma } from "@dub/prisma";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 type GroupFilters = z.infer<typeof getGroupsQuerySchema> & {
   programId: string;
-};
-
-// secondary sort column
-const secondarySortColumnMap = {
-  createdAt: "totalClicks",
-  totalPartners: "totalSaleAmount",
-  totalClicks: "totalLeads",
-  totalLeads: "totalConversions",
-  totalConversions: "totalSaleAmount",
-  totalSales: "totalSaleAmount",
-  totalSaleAmount: "totalLeads",
-  totalCommissions: "totalSaleAmount",
-  netRevenue: "totalSaleAmount",
 };
 
 export async function getGroups(filters: GroupFilters) {
   const {
     search,
     groupIds,
-    page,
+    page = 1,
     pageSize,
     sortBy,
     sortOrder,
@@ -32,7 +19,7 @@ export async function getGroups(filters: GroupFilters) {
     includeExpandedFields,
   } = filters;
 
-  const groups = (await prisma.$queryRaw`
+  const groups = (await prisma.$queryRaw(Prisma.sql`
     SELECT
       pg.id,
       pg.programId,
@@ -50,6 +37,11 @@ export async function getGroups(filters: GroupFilters) {
       pg.applicationFormPublishedAt,
       pg.landerData,
       pg.landerPublishedAt,
+      pg.logo,
+      pg.wordmark,
+      pg.brandColor,
+      pg.holdingPeriodDays,
+      pg.autoApprovePartnersEnabledAt,
       pg.utmTemplateId,
       pg.createdAt,
       pg.updatedAt,
@@ -82,9 +74,9 @@ export async function getGroups(filters: GroupFilters) {
     ${search ? Prisma.sql`AND (pg.name LIKE ${`%${search}%`} OR pg.slug LIKE ${`%${search}%`})` : Prisma.sql``}
     ${groupIds && groupIds.length > 0 ? Prisma.sql`AND pg.id IN (${Prisma.join(groupIds)})` : Prisma.sql``}
     GROUP BY pg.id
-    ORDER BY ${Prisma.raw(sortBy === "createdAt" ? "pg.createdAt" : sortBy)} ${Prisma.raw(sortOrder)}, ${Prisma.raw(secondarySortColumnMap[sortBy])} ${Prisma.raw(sortOrder)}
+    ORDER BY ${Prisma.raw(sortBy === "createdAt" ? "pg.createdAt" : sortBy)} ${Prisma.raw(sortOrder)}
     LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
-  `) satisfies Array<any>;
+  `)) satisfies Array<any>;
 
   return groups.map((group) => ({
     ...group,

@@ -1,13 +1,15 @@
 import { createId } from "@/lib/api/create-id";
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { evaluateWorkflowConditions } from "@/lib/api/workflows/evaluate-workflow-conditions";
 import { qstash } from "@/lib/cron";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
 import { aggregatePartnerLinksStats } from "@/lib/partners/aggregate-partner-links-stats";
+import { prisma } from "@/lib/prisma";
 import { workflowConditionSchema } from "@/lib/zod/schemas/workflows";
-import { prisma } from "@dub/prisma";
-import { APP_DOMAIN_WITH_NGROK, log } from "@dub/utils";
+import { APP_DOMAIN_WITH_NGROK, log, toCentsNumber } from "@dub/utils";
+import { Prisma } from "@prisma/client";
 import { differenceInMinutes } from "date-fns";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 
 export const dynamic = "force-dynamic";
@@ -135,24 +137,41 @@ export async function POST(req: Request) {
       .parse(bounty.workflow.triggerConditions)[0];
 
     // Partners with their link metrics
-    const partners = programEnrollments.map((partner) => {
+    const partners = programEnrollments.map((programEnrollment) => {
       return {
-        id: partner.partnerId,
-        ...aggregatePartnerLinksStats(partner.links),
-        totalCommissions: partner.totalCommissions,
+        id: programEnrollment.partnerId,
+        ...aggregatePartnerLinksStats(programEnrollment.links),
+        totalCommissions: toCentsNumber(programEnrollment.totalCommissions),
       };
     });
 
-    const bountySubmissionsToCreate = partners
-      // only create submissions for partners that have at least 1 performanceCount
-      .filter((partner) => partner[condition.attribute] > 0)
-      .map((partner) => ({
-        id: createId({ prefix: "bnty_sub_" }),
-        programId: bounty.programId,
-        partnerId: partner.id,
-        bountyId: bounty.id,
-        performanceCount: partner[condition.attribute],
-      }));
+    const bountySubmissionsToCreate: Prisma.BountySubmissionCreateManyInput[] =
+      partners
+        // only create submissions for partners that have at least 1 performanceCount
+        .filter((partner) => partner[condition.attribute] > 0)
+        .map((partner) => {
+          const performanceCount = partner[condition.attribute];
+
+          const conditionMet = evaluateWorkflowConditions({
+            conditions: [condition],
+            attributes: {
+              [condition.attribute]: performanceCount,
+            },
+          });
+
+          return {
+            id: createId({ prefix: "bnty_sub_" }),
+            programId: bounty.programId,
+            partnerId: partner.id,
+            bountyId: bounty.id,
+            performanceCount,
+            // If the condition is met, automatically submit the submission
+            ...(conditionMet && {
+              status: "submitted",
+              completedAt: new Date(),
+            }),
+          };
+        });
 
     console.table(bountySubmissionsToCreate);
 
@@ -161,6 +180,7 @@ export async function POST(req: Request) {
       data: bountySubmissionsToCreate,
       skipDuplicates: true,
     });
+
     console.log(
       `Created ${createdBountySubmissions.count} bounty submissions for bounty ${bountyId}.`,
     );

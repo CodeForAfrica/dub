@@ -1,6 +1,7 @@
 import { cn } from "@dub/utils";
 import FileHandler from "@tiptap/extension-file-handler";
 import Image from "@tiptap/extension-image";
+import Link from "@tiptap/extension-link";
 import Mention from "@tiptap/extension-mention";
 import { Placeholder } from "@tiptap/extensions";
 import { Markdown } from "@tiptap/markdown";
@@ -11,15 +12,18 @@ import {
   createContext,
   forwardRef,
   useContext,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useState,
 } from "react";
+import { configureCampaignEditorImage } from "./campaign-editor-image";
 import { suggestions } from "./variables";
 
 export const PROSE_STYLES = {
   default: "prose-p:my-2 prose-ul:my-2 prose-ol:my-2",
   condensed: "prose-p:my-0 prose-ul:my-2 prose-ol:my-2",
+  chat: "prose-p:my-0 prose-ul:my-2 prose-ol:my-2 [&_p+p]:mt-2",
   relaxed: "",
 } as const;
 
@@ -30,12 +34,21 @@ const FEATURES = [
   "headings",
   "bold",
   "italic",
+  "strike",
 ] as const;
+
+export const DEFAULT_RICH_TEXT_FEATURES = FEATURES;
+
+const OPTIONAL_FEATURES = ["imageControls"] as const;
+
+export type RichTextFeature =
+  | (typeof FEATURES)[number]
+  | (typeof OPTIONAL_FEATURES)[number];
 
 type RichTextProviderProps = PropsWithChildren<{
   placeholder?: string;
   initialValue?: any;
-  features?: (typeof FEATURES)[number][];
+  features?: RichTextFeature[];
   markdown?: boolean;
   style?: keyof typeof PROSE_STYLES;
   onChange?: (editor: Editor) => void;
@@ -132,8 +145,18 @@ export const RichTextProvider = forwardRef<
             : false,
           bold: features.includes("bold") ? undefined : false,
           italic: features.includes("italic") ? undefined : false,
-          link: features.includes("links") ? undefined : false,
+          strike: features.includes("strike") ? undefined : false,
+          link: false,
         }),
+
+        ...(features.includes("links")
+          ? [
+              Link.extend({
+                inclusive: false,
+              }),
+            ]
+          : []),
+
         Placeholder.configure({
           placeholder,
           emptyEditorClass:
@@ -143,12 +166,24 @@ export const RichTextProvider = forwardRef<
         // Images
         ...(features.includes("images") && handleImageUpload
           ? [
-              Image.configure({
-                inline: false,
-                HTMLAttributes: {
-                  class: "rounded-lg max-w-full h-auto",
-                },
-              }),
+              ...(features.includes("imageControls")
+                ? [
+                    configureCampaignEditorImage({
+                      inline: false,
+                      imageAltControls: true,
+                      HTMLAttributes: {
+                        class: "rounded-lg max-w-full h-auto",
+                      },
+                    }),
+                  ]
+                : [
+                    Image.configure({
+                      inline: false,
+                      HTMLAttributes: {
+                        class: "rounded-lg max-w-full h-auto",
+                      },
+                    }),
+                  ]),
               FileHandler.configure({
                 allowedMimeTypes: [
                   "image/png",
@@ -177,7 +212,24 @@ export const RichTextProvider = forwardRef<
         ...(features.includes("variables") && variables
           ? [
               Mention.extend({
+                addAttributes() {
+                  return {
+                    ...this.parent?.(),
+                    fallback: {
+                      default: null,
+                      parseHTML: (element) =>
+                        element.getAttribute("data-fallback"),
+                      renderHTML: (attrs) =>
+                        attrs.fallback
+                          ? { "data-fallback": attrs.fallback }
+                          : {},
+                    },
+                  };
+                },
                 renderHTML({ node }: { node: any }) {
+                  const label = node.attrs.fallback
+                    ? `{{${node.attrs.id} | ${node.attrs.fallback}}}`
+                    : `{{${node.attrs.id}}}`;
                   return [
                     "span",
                     {
@@ -185,12 +237,17 @@ export const RichTextProvider = forwardRef<
                         "px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold",
                       "data-type": "mention",
                       "data-id": node.attrs.id,
+                      ...(node.attrs.fallback
+                        ? { "data-fallback": node.attrs.fallback }
+                        : {}),
                     },
-                    `{{${node.attrs.id}}}`,
+                    label,
                   ];
                 },
                 renderText({ node }: { node: any }) {
-                  return `{{${node.attrs.id}}}`;
+                  return node.attrs.fallback
+                    ? `{{${node.attrs.id} | ${node.attrs.fallback}}}`
+                    : `{{${node.attrs.id}}}`;
                 },
               }).configure({
                 suggestion: suggestions(variables),
@@ -206,6 +263,7 @@ export const RichTextProvider = forwardRef<
             "prose prose-sm prose-neutral",
             PROSE_STYLES[style],
             "[&_.ProseMirror-selectednode]:outline [&_.ProseMirror-selectednode]:outline-2 [&_.ProseMirror-selectednode]:outline-blue-500 [&_.ProseMirror-selectednode]:outline-offset-2",
+            "[&_.ProseMirror-selectednode:has(img)]:outline-none",
             editorClassName,
           ),
         },
@@ -216,6 +274,10 @@ export const RichTextProvider = forwardRef<
       onUpdate: ({ editor }) => onChange?.(editor),
       immediatelyRender: false,
     });
+
+    useEffect(() => {
+      editor?.setEditable(editable ?? true);
+    }, [editor, editable]);
 
     useImperativeHandle(ref, () => ({
       setContent: (content: any) => {

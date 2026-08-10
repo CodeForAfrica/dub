@@ -6,7 +6,6 @@ import useWorkspace from "@/lib/swr/use-workspace";
 import { Campaign, CampaignList } from "@/lib/types";
 import { AnimatedEmptyState } from "@/ui/shared/animated-empty-state";
 import { SearchBoxPersisted } from "@/ui/shared/search-box";
-import { CampaignStatus } from "@dub/prisma/client";
 import {
   AnimatedSizeContainer,
   Button,
@@ -22,6 +21,7 @@ import {
 } from "@dub/ui";
 import { Dots, Duplicate, LoadingCircle, Trash } from "@dub/ui/icons";
 import { fetcher, formatDateTimeSmart } from "@dub/utils";
+import { CampaignStatus } from "@prisma/client";
 import { Row } from "@tanstack/react-table";
 import { Command } from "cmdk";
 import { Mail, Pause, Play } from "lucide-react";
@@ -44,16 +44,10 @@ export function CampaignsTable() {
   const router = useRouter();
   const { id: workspaceId, slug } = useWorkspace();
   const { pagination, setPagination } = usePagination();
-  const { getQueryString } = useRouterStuff();
-
-  const {
-    filters,
-    activeFilters,
-    onSelect,
-    onRemove,
-    onRemoveAll,
-    isFiltered,
-  } = useCampaignsFilters();
+  const { getQueryString, searchParamsObj } = useRouterStuff();
+  const isFiltered = Object.keys(searchParamsObj).some(
+    (key) => !["sortBy", "sortOrder", "page"].includes(key),
+  );
 
   const {
     data: campaigns,
@@ -150,33 +144,7 @@ export function CampaignsTable() {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <Filter.Select
-            className="w-full md:w-fit"
-            filters={filters}
-            activeFilters={activeFilters}
-            onSelect={onSelect}
-            onRemove={onRemove}
-          />
-          <SearchBoxPersisted
-            placeholder="Search by name"
-            inputClassName="md:w-[19rem]"
-          />
-        </div>
-        <AnimatedSizeContainer height>
-          <div>
-            {activeFilters.length > 0 && (
-              <div className="pt-3">
-                <Filter.List
-                  filters={filters}
-                  activeFilters={activeFilters}
-                  onRemove={onRemove}
-                  onRemoveAll={onRemoveAll}
-                />
-              </div>
-            )}
-          </div>
-        </AnimatedSizeContainer>
+        <CampaignFilters />
       </div>
 
       {campaigns?.length !== 0 ? (
@@ -197,11 +165,50 @@ export function CampaignsTable() {
           )}
           addButton={!isFiltered ? <CreateCampaignButton /> : undefined}
           learnMoreHref={
-            !isFiltered ? "https://dub.co/docs/email-campaigns" : undefined
+            !isFiltered
+              ? "https://dub.co/help/article/email-campaigns"
+              : undefined
           }
         />
       )}
     </div>
+  );
+}
+
+function CampaignFilters() {
+  const { filters, activeFilters, onSelect, onRemove, onRemoveAll } =
+    useCampaignsFilters();
+
+  return (
+    <>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <Filter.Select
+          className="w-full md:w-fit"
+          filters={filters}
+          activeFilters={activeFilters}
+          onSelect={onSelect}
+          onRemove={onRemove}
+        />
+        <SearchBoxPersisted
+          placeholder="Search by name"
+          inputClassName="md:w-[19rem]"
+        />
+      </div>
+      <AnimatedSizeContainer height>
+        <div>
+          {activeFilters.length > 0 && (
+            <div className="pt-3">
+              <Filter.List
+                filters={filters}
+                activeFilters={activeFilters}
+                onRemove={onRemove}
+                onRemoveAll={onRemoveAll}
+              />
+            </div>
+          )}
+        </div>
+      </AnimatedSizeContainer>
+    </>
   );
 }
 
@@ -302,7 +309,7 @@ function RowMenuButton({
       >
         <Button
           type="button"
-          className="h-8 whitespace-nowrap px-2"
+          className="size-8 shrink-0 whitespace-nowrap rounded-lg p-0"
           variant="outline"
           icon={<Dots className="h-4 w-4 shrink-0" />}
         />

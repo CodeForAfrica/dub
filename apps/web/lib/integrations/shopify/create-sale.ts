@@ -2,15 +2,15 @@ import { isFirstConversion } from "@/lib/analytics/is-first-conversion";
 import { includeTags } from "@/lib/api/links/include-tags";
 import { syncPartnerLinksStats } from "@/lib/api/partners/sync-partner-links-stats";
 import { executeWorkflows } from "@/lib/api/workflows/execute-workflows";
-import { createPartnerCommission } from "@/lib/partners/create-partner-commission";
+import { queuePartnerCommissionCreation } from "@/lib/partners/queue-partner-commission-creation";
+import { sendPartnerPostback } from "@/lib/postback/send-partner-postback";
+import { prisma } from "@/lib/prisma";
 import { recordSale } from "@/lib/tinybird";
-import { LeadEventTB, WebhookPartner } from "@/lib/types";
+import { LeadEventTB } from "@/lib/types";
 import { redis } from "@/lib/upstash";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { transformSaleEventData } from "@/lib/webhook/transform";
-import { prisma } from "@dub/prisma";
 import { nanoid } from "@dub/utils";
-import { WorkflowTrigger } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { orderSchema } from "./schema";
 
@@ -115,7 +115,7 @@ export async function createShopifySale({
     }),
     prisma.customer.update({
       where: {
-        id: customerId,
+        id: existingCustomer.id,
       },
       data: {
         sales: {
@@ -124,15 +124,19 @@ export async function createShopifySale({
         saleAmount: {
           increment: amount,
         },
+        firstSaleAt: existingCustomer.firstSaleAt ? undefined : new Date(),
       },
     }),
     redis.del(`shopify:checkout:${checkoutToken}`),
   ]);
 
   // for program links
-  let webhookPartner: WebhookPartner | undefined;
+  let result:
+    | Awaited<ReturnType<typeof queuePartnerCommissionCreation>>
+    | undefined = undefined;
+
   if (link.programId && link.partnerId) {
-    const createdCommission = await createPartnerCommission({
+    result = await queuePartnerCommissionCreation({
       event: "sale",
       programId: link.programId,
       partnerId: link.partnerId,
@@ -146,27 +150,39 @@ export async function createShopifySale({
       context: {
         customer: {
           country: customer.country,
+          signupDate: customer.createdAt,
         },
         sale: {
           amount: saleData.amount,
         },
       },
+      clickEvent: {
+        url: saleData.url,
+        referer: saleData.referer,
+      },
+      isFirstConversion: firstConversionFlag,
     });
-    webhookPartner = createdCommission?.webhookPartner;
 
     waitUntil(
       Promise.allSettled([
         executeWorkflows({
-          trigger: WorkflowTrigger.saleRecorded,
-          context: {
+          trigger: "partnerMetricsUpdated",
+          reason: "sale",
+          identity: {
+            workspaceId: workspaceId,
             programId: link.programId,
             partnerId: link.partnerId,
+            customerId: customer.id,
+            customerFirstSaleAt: customer.firstSaleAt ?? new Date(),
+          },
+          metrics: {
             current: {
-              saleAmount: saleData.amount,
               conversions: firstConversionFlag ? 1 : 0,
+              saleAmount: saleData.amount,
             },
           },
         }),
+
         syncPartnerLinksStats({
           partnerId: link.partnerId,
           programId: link.programId,
@@ -177,17 +193,34 @@ export async function createShopifySale({
   }
 
   waitUntil(
-    sendWorkspaceWebhook({
-      trigger: "sale.created",
-      workspace,
-      data: transformSaleEventData({
-        ...saleData,
-        link,
-        clickedAt: customer.clickedAt || customer.createdAt,
-        customer,
-        partner: webhookPartner,
-        metadata: null,
+    Promise.allSettled([
+      sendWorkspaceWebhook({
+        trigger: "sale.created",
+        workspace,
+        data: transformSaleEventData({
+          ...saleData,
+          link,
+          clickedAt: customer.clickedAt || customer.createdAt,
+          customer,
+          partner: result?.webhookPartner,
+          metadata: null,
+        }),
       }),
-    }),
+
+      ...(link?.partnerId
+        ? [
+            sendPartnerPostback({
+              partnerId: link.partnerId,
+              event: "sale.created",
+              data: {
+                ...saleData,
+                clickedAt: customer.clickedAt || customer.createdAt,
+                link,
+                customer,
+              },
+            }),
+          ]
+        : []),
+    ]),
   );
 }
