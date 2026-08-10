@@ -1,22 +1,19 @@
+import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@dub/email";
 import FailedPayment from "@dub/email/templates/failed-payment";
-import { prisma } from "@dub/prisma";
 import Stripe from "stripe";
 
-export async function invoicePaymentFailed(event: Stripe.Event) {
+export async function invoicePaymentFailed(
+  event: Stripe.InvoicePaymentFailedEvent,
+) {
   const {
     customer: stripeId,
     attempt_count: attemptCount,
     amount_due: amountDue,
-  } = event.data.object as Stripe.Invoice;
+  } = event.data.object;
 
   if (!stripeId) {
-    console.log(
-      "Invoice with Stripe ID *`" +
-        stripeId +
-        "`* not found in invoice.payment_failed event",
-    );
-    return;
+    return "No customer found in invoice.payment_failed event.";
   }
 
   const workspace = await prisma.project.findUnique({
@@ -27,6 +24,8 @@ export async function invoicePaymentFailed(event: Stripe.Event) {
       id: true,
       name: true,
       slug: true,
+      plan: true,
+      defaultProgramId: true,
       users: {
         select: {
           user: {
@@ -46,12 +45,7 @@ export async function invoicePaymentFailed(event: Stripe.Event) {
   });
 
   if (!workspace) {
-    console.log(
-      "Workspace with Stripe ID *`" +
-        stripeId +
-        "`* not found in invoice.payment_failed event",
-    );
-    return;
+    return `Workspace with Stripe ID ${stripeId} not found in invoice.payment_failed event.`;
   }
 
   await Promise.allSettled([
@@ -88,4 +82,6 @@ export async function invoicePaymentFailed(event: Stripe.Event) {
       }),
     ),
   ]);
+
+  return `Recorded payment failure and sent ${workspace.users.length} notice(s) for workspace ${workspace.slug}.`;
 }

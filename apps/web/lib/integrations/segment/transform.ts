@@ -5,9 +5,9 @@ import {
   PartnerEventWebhookPayload,
   SaleEventWebhookPayload,
 } from "@/lib/webhook/types";
-import { Link } from "@dub/prisma/client";
 import { capitalize } from "@dub/utils";
-import { z } from "zod";
+import { Link } from "@prisma/client";
+import * as z from "zod/v4";
 
 const integration = {
   name: "dub",

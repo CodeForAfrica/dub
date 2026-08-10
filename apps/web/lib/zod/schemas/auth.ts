@@ -1,4 +1,4 @@
-import z from "@/lib/zod";
+import * as z from "zod/v4";
 
 export const passwordSchema = z
   .string()
@@ -11,6 +11,7 @@ export const passwordSchema = z
 
 export const emailSchema = z
   .string()
+  .trim()
   .email()
   .min(1)
   .transform((email) => email.toLowerCase());

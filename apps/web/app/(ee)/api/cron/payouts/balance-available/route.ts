@@ -1,17 +1,21 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { BANK_ACCOUNT_STATUS_DESCRIPTIONS } from "@/lib/constants/payouts";
 import { qstash } from "@/lib/cron";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { getPartnerBankAccount } from "@/lib/partners/get-partner-bank-account";
+import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
 import { sendEmail } from "@dub/email";
+import PartnerPayoutWithdrawalFailed from "@dub/email/templates/partner-payout-withdrawal-failed";
 import PartnerPayoutWithdrawalInitiated from "@dub/email/templates/partner-payout-withdrawal-initiated";
-import { prisma } from "@dub/prisma";
 import {
   APP_DOMAIN_WITH_NGROK,
   currencyFormatter,
   formatDate,
   log,
+  prettyPrint,
 } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 export const dynamic = "force-dynamic";
 
@@ -32,6 +36,7 @@ export async function POST(req: Request) {
         stripeConnectId: stripeAccount,
       },
       select: {
+        id: true,
         email: true,
       },
     });
@@ -53,10 +58,7 @@ export async function POST(req: Request) {
     if (balance.available.length === 0) {
       // should never happen, but just in case
       return logAndRespond(
-        `Partner ${partner.email} (${stripeAccount}) has no available balance. Skipping...`,
-        {
-          logLevel: "error",
-        },
+        `Partner ${partner.email} (${stripeAccount}) has no available balances. Skipping...`,
       );
     }
 
@@ -89,6 +91,44 @@ export async function POST(req: Request) {
       );
     }
 
+    const bankAccount = await getPartnerBankAccount(stripeAccount);
+
+    const statusInfo = bankAccount
+      ? BANK_ACCOUNT_STATUS_DESCRIPTIONS[bankAccount.status]
+      : // edge case for cases where the partner doesn't have a bank account on file at all
+        {
+          title: "No bank account",
+          description: "This partner does not have an active bank account.",
+          variant: "invalid",
+        };
+
+    if (statusInfo.variant === "invalid") {
+      if (partner.email) {
+        const sentEmail = await sendEmail({
+          variant: "notifications",
+          subject:
+            "[Action Required]: Update your bank account details to receive payouts",
+          to: partner.email,
+          react: PartnerPayoutWithdrawalFailed({
+            email: partner.email,
+            bankAccount,
+            payout: {
+              amount: availableBalance,
+              currency,
+              failureReason: statusInfo.description,
+              isAvailableBalance: true,
+            },
+          }),
+        });
+        console.log(
+          `Sent email to partner ${partner.email} (${stripeAccount}): ${prettyPrint(sentEmail)}`,
+        );
+      }
+      return logAndRespond(
+        `Partner ${partner.email} (${stripeAccount}) has an errored bank account. Skipping...`,
+      );
+    }
+
     if (["huf", "twd"].includes(currency)) {
       // For HUF and TWD, Stripe requires payout amounts to be evenly divisible by 100
       // We need to round down to the nearest 100 units
@@ -117,17 +157,29 @@ export async function POST(req: Request) {
       limit: 100,
     });
 
-    // update all payouts that match the following criteria to have the stripePayoutId:
+    // update all payouts for the partner that match the following criteria to have the stripePayoutId:
     // - in the "sent" status
-    // - have a stripe transfer id (meaning it was transferred to this connected account)
     // - no stripe payout id (meaning it was not yet withdrawn to the connected bank account)
+    // - have a stripe transfer id (meaning it was transferred to this connected account)
+    // OR: payouts that are in the "failed" status + have a stripePayoutId (failed to send before)
     const updatedPayouts = await prisma.payout.updateMany({
       where: {
-        status: "sent",
-        stripePayoutId: null,
-        stripeTransferId: {
-          in: transfers.data.map(({ id }) => id),
-        },
+        partnerId: partner.id,
+        OR: [
+          {
+            status: "sent",
+            stripePayoutId: null,
+            stripeTransferId: {
+              in: transfers.data.map(({ id }) => id),
+            },
+          },
+          {
+            status: "failed",
+            stripePayoutId: {
+              not: null,
+            },
+          },
+        ],
       },
       data: {
         stripePayoutId: stripePayout.id,
@@ -141,7 +193,7 @@ export async function POST(req: Request) {
     if (partner.email) {
       const sentEmail = await sendEmail({
         variant: "notifications",
-        subject: "Your funds are on their way to your bank",
+        subject: `Your ${currencyFormatter(stripePayout.amount, { currency: stripePayout.currency })} auto-withdrawal from Dub is on its way to your bank`,
         to: partner.email,
         react: PartnerPayoutWithdrawalInitiated({
           email: partner.email,
@@ -169,8 +221,6 @@ export async function POST(req: Request) {
       message: `Error handling "balance.available" ${error.message}.`,
       type: "errors",
     });
-
-    console.error(error);
 
     return handleAndReturnErrorResponse(error);
   }

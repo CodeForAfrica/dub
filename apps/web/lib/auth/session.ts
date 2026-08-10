@@ -1,6 +1,6 @@
 import { DubApiError, handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { prisma } from "@/lib/prisma";
 import { ratelimit } from "@/lib/upstash";
-import { prisma } from "@dub/prisma";
 import { getSearchParams } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { headers } from "next/headers";
@@ -37,7 +37,7 @@ export const withSession = (handler: WithSessionHandler) =>
 
         const authorizationHeader = requestHeaders.get("Authorization");
         if (authorizationHeader) {
-          if (!authorizationHeader.includes("Bearer ")) {
+          if (!authorizationHeader.startsWith("Bearer ")) {
             throw new DubApiError({
               code: "bad_request",
               message:
@@ -71,7 +71,7 @@ export const withSession = (handler: WithSessionHandler) =>
           }
 
           const { success, limit, reset, remaining } = await ratelimit(
-            600,
+            60,
             "1 m",
           ).limit(apiKey);
 

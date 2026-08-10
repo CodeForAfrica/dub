@@ -3,16 +3,18 @@ import {
   CursorRays,
   InvoiceDollar,
   MoneyBills2,
+  Nodes4,
   UserCheck,
 } from "@dub/ui/icons";
 import { cn } from "@dub/utils";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const ICONS_MAP = {
   click: { icon: CursorRays, className: "text-blue-500" },
   lead: { icon: UserCheck, className: "text-purple-500" },
   sale: { icon: InvoiceDollar, className: "text-teal-500" },
   custom: { icon: MoneyBills2, className: "text-gray-500" },
+  referral: { icon: Nodes4, className: "text-gray-500" },
 };
 
 export const CommissionTypeIcon = ({

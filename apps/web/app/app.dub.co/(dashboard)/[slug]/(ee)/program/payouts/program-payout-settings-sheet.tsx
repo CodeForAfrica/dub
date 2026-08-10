@@ -4,16 +4,18 @@ import { parseActionError } from "@/lib/actions/parse-action-errors";
 import { updateProgramAction } from "@/lib/actions/partners/update-program";
 import {
   ALLOWED_MIN_PAYOUT_AMOUNTS,
-  PAYOUT_HOLDING_PERIOD_DAYS,
+  getAllowedMinPayoutAmounts,
 } from "@/lib/constants/payouts";
 import { mutatePrefix } from "@/lib/swr/mutate";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { ProgramProps } from "@/lib/types";
+import { DEFAULT_PARTNER_GROUP } from "@/lib/zod/schemas/groups";
 import { X } from "@/ui/shared/icons";
 import { Button, Sheet, Slider } from "@dub/ui";
 import NumberFlow from "@number-flow/react";
 import { useAction } from "next-safe-action/hooks";
+import { useParams } from "next/navigation";
 import { Dispatch, SetStateAction, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -24,13 +26,14 @@ type ProgramPayoutSettingsSheetProps = {
   setIsOpen: Dispatch<SetStateAction<boolean>>;
 };
 
-type FormData = Pick<ProgramProps, "holdingPeriodDays" | "minPayoutAmount">;
+type FormData = Pick<ProgramProps, "minPayoutAmount">;
 
 function ProgramPayoutSettingsSheetContent({
   setIsOpen,
 }: ProgramPayoutSettingsSheetProps) {
   const { id: workspaceId, defaultProgramId } = useWorkspace();
   const { program } = useProgram();
+  const params = useParams<{ slug: string }>();
 
   const {
     register,
@@ -44,7 +47,6 @@ function ProgramPayoutSettingsSheetContent({
 
   useEffect(() => {
     if (program) {
-      setValue("holdingPeriodDays", program.holdingPeriodDays);
       setValue("minPayoutAmount", program.minPayoutAmount);
     }
   }, [program, setValue]);
@@ -53,7 +55,7 @@ function ProgramPayoutSettingsSheetContent({
     onSuccess: async () => {
       toast.success("Payout settings updated successfully.");
       setIsOpen(false);
-      mutatePrefix(`/api/programs/${defaultProgramId}`);
+      mutatePrefix([`/api/programs/${defaultProgramId}`, `/api/groups`]);
     },
     onError: ({ error }) => {
       toast.error(parseActionError(error, "Failed to update payout settings."));
@@ -72,6 +74,9 @@ function ProgramPayoutSettingsSheetContent({
   };
 
   const minPayoutAmount = watch("minPayoutAmount");
+  const allowedMinPayoutAmounts = workspaceId
+    ? getAllowedMinPayoutAmounts(workspaceId)
+    : ALLOWED_MIN_PAYOUT_AMOUNTS;
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex h-full flex-col">
@@ -92,29 +97,26 @@ function ProgramPayoutSettingsSheetContent({
 
       <div className="h-full divide-y divide-neutral-200 bg-neutral-50 p-4 sm:p-6">
         {/* Payout holding period */}
-        <div className="space-y-6 pb-6">
+        <div className="grid gap-3 pb-6">
           <div>
             <h4 className="text-base font-semibold leading-6 text-neutral-900">
               Payout holding period
             </h4>
             <p className="text-sm font-medium text-neutral-500">
-              Set how long to hold funds before they are eligible for payout.
+              The payout holding period is now configurable on a group level.
             </p>
           </div>
-          <div>
-            <div className="relative rounded-md shadow-sm">
-              <select
-                className="block w-full rounded-md border border-neutral-300 bg-white py-2 pl-3 pr-10 text-sm text-neutral-900 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500"
-                {...register("holdingPeriodDays", { required: true })}
-              >
-                {PAYOUT_HOLDING_PERIOD_DAYS.map((v) => (
-                  <option value={v} key={v}>
-                    {v} days {v === 30 && " (recommended)"}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+          <a
+            href={`/${params.slug}/program/groups/${DEFAULT_PARTNER_GROUP.slug}/settings`}
+            target="_blank"
+          >
+            <Button
+              type="button"
+              variant="secondary"
+              text="View default group settings ↗"
+              className="h-8 w-full px-3"
+            />
+          </a>
         </div>
 
         {/* Minimum payout amount */}
@@ -124,8 +126,7 @@ function ProgramPayoutSettingsSheetContent({
               Minimum payout amount
             </h4>
             <p className="text-sm font-medium text-neutral-500">
-              Set the minimum amount required for funds to be eligible for
-              payout.
+              Set the minimum amount required for payouts to be processed.
             </p>
           </div>
 
@@ -151,18 +152,11 @@ function ProgramPayoutSettingsSheetContent({
 
             <Slider
               value={minPayoutAmount}
-              min={ALLOWED_MIN_PAYOUT_AMOUNTS[0]}
-              max={
-                ALLOWED_MIN_PAYOUT_AMOUNTS[
-                  ALLOWED_MIN_PAYOUT_AMOUNTS.length - 1
-                ]
-              }
+              min={allowedMinPayoutAmounts[0]}
+              max={allowedMinPayoutAmounts[allowedMinPayoutAmounts.length - 1]}
               onChange={(value) => {
-                const closest = ALLOWED_MIN_PAYOUT_AMOUNTS.reduce(
-                  (prev, curr) =>
-                    Math.abs(curr - value) < Math.abs(prev - value)
-                      ? curr
-                      : prev,
+                const closest = allowedMinPayoutAmounts.reduce((prev, curr) =>
+                  Math.abs(curr - value) < Math.abs(prev - value) ? curr : prev,
                 );
 
                 setValue("minPayoutAmount", closest, {
@@ -170,7 +164,7 @@ function ProgramPayoutSettingsSheetContent({
                   shouldValidate: true,
                 });
               }}
-              marks={ALLOWED_MIN_PAYOUT_AMOUNTS}
+              marks={allowedMinPayoutAmounts}
             />
           </div>
         </div>

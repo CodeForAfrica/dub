@@ -1,6 +1,7 @@
 import { DUB_WORDMARK } from "@dub/utils";
 import {
   Body,
+  Column,
   Container,
   Head,
   Heading,
@@ -9,11 +10,11 @@ import {
   Img,
   Link,
   Preview,
+  Row,
   Section,
   Tailwind,
   Text,
 } from "@react-email/components";
-import { ReactNode } from "react";
 import { Footer } from "../components/footer";
 
 export default function PartnerApplicationApproved({
@@ -27,7 +28,26 @@ export default function PartnerApplicationApproved({
     email: "panic@thedis.co",
     payoutsEnabled: false,
   },
-  rewardDescription = "Earn 30% for each sale for 12 months.",
+  rewards = [
+    {
+      icon: "https://assets.dub.co/email-assets/icons/invoice-dollar.png",
+      label: "Earn up to 65% per sale for 1 year",
+    },
+    {
+      icon: "https://assets.dub.co/email-assets/icons/gift.png",
+      label: "New users get 20% off for 3 months",
+    },
+  ],
+  bounties = [
+    {
+      icon: "https://assets.dub.co/email-assets/icons/heart.png",
+      label: "Create a YouTube video about Acme",
+    },
+    {
+      icon: "https://assets.dub.co/email-assets/icons/trophy.png",
+      label: "Earn $100 after generating $1,000 in revenue",
+    },
+  ],
 }: {
   program: {
     name: string;
@@ -39,21 +59,25 @@ export default function PartnerApplicationApproved({
     email: string;
     payoutsEnabled: boolean;
   };
-  rewardDescription: ReactNode;
+  rewards?: { icon: string; label: string }[] | null;
+  bounties?: { icon: string; label: string }[] | null;
 }) {
   return (
     <Html>
       <Head />
       <Preview>
-        Your application to join {program.name}'s partner program has been
-        approved!
+        {rewards && rewards.length > 0
+          ? `Rewards: ${rewards.map((reward) => reward.label).join(", ")}`
+          : bounties && bounties.length > 0
+            ? `Bounties: ${bounties.map((bounty) => bounty.label).join(", ")}`
+            : `Your application to join ${program.name}'s partner program has been approved!`}
       </Preview>
       <Tailwind>
         <Body className="mx-auto my-auto bg-white font-sans">
           <Container className="mx-auto my-10 max-w-[600px] rounded border border-solid border-neutral-200 px-10 py-5">
             <Section className="mt-8">
               <Img
-                src={program.logo || "https://assets.dub.co/logo.png"}
+                src={program.logo || "https://assets.dub.co/wordmark.png"}
                 height="32"
                 alt={program.name}
               />
@@ -65,13 +89,54 @@ export default function PartnerApplicationApproved({
 
             <Text className="text-sm leading-6 text-neutral-600">
               Your application to join <strong>{program.name}'s</strong> partner
-              program has been approved. You can now start promoting their
-              products and earning commissions.
+              program has been approved. You can now promote their products and
+              earn commissions.
             </Text>
 
-            <Text className="text-sm leading-6 text-neutral-900">
-              {rewardDescription}
-            </Text>
+            {Boolean(rewards?.length || bounties?.length) && (
+              <Section className="my-4 rounded-xl border border-solid border-neutral-200 bg-neutral-50 px-5 py-4">
+                {rewards && Boolean(rewards.length) && (
+                  <>
+                    <Text className="my-0 text-base font-semibold text-black">
+                      Rewards
+                    </Text>
+                    {rewards.map((reward) => (
+                      <Row key={reward.label} className="mb-0 mt-2">
+                        <Column className="align-center">
+                          <Img src={reward.icon} height="16" alt="" />
+                        </Column>
+                        <Column className="w-full pl-2">
+                          <Text className="my-0 text-sm font-medium text-neutral-600">
+                            {reward.label}
+                          </Text>
+                        </Column>
+                      </Row>
+                    ))}
+                  </>
+                )}
+                {bounties && Boolean(bounties.length) && (
+                  <>
+                    <Text
+                      className={`mb-0 text-base font-semibold text-black ${rewards?.length ? "mt-5" : "mt-0"}`}
+                    >
+                      Bounties
+                    </Text>
+                    {bounties.map((bounty) => (
+                      <Row key={bounty.label} className="mb-0 mt-2">
+                        <Column className="align-center">
+                          <Img src={bounty.icon} height="16" alt="" />
+                        </Column>
+                        <Column className="w-full pl-2">
+                          <Text className="my-0 text-sm font-medium text-neutral-600">
+                            {bounty.label}
+                          </Text>
+                        </Column>
+                      </Row>
+                    ))}
+                  </>
+                )}
+              </Section>
+            )}
 
             <Hr className="my-6 border-neutral-200" />
 
@@ -167,7 +232,7 @@ export default function PartnerApplicationApproved({
 
             <Footer
               email={partner.email}
-              notificationSettingsUrl="https://partners.dub.co/settings/notifications"
+              notificationSettingsUrl="https://partners.dub.co/profile/notifications"
             />
           </Container>
         </Body>

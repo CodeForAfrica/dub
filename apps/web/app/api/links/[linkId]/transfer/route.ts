@@ -4,12 +4,12 @@ import { getLinkOrThrow } from "@/lib/api/links/get-link-or-throw";
 import { normalizeWorkspaceId } from "@/lib/api/workspaces/workspace-id";
 import { withWorkspace } from "@/lib/auth";
 import { verifyFolderAccess } from "@/lib/folder/permissions";
+import { prisma } from "@/lib/prisma";
 import { recordLink } from "@/lib/tinybird";
-import { prisma } from "@dub/prisma";
 import { isDubDomain } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 const transferLinkBodySchema = z.object({
   newWorkspaceId: z

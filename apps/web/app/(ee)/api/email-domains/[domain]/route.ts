@@ -5,12 +5,12 @@ import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-progr
 import { parseRequestBody } from "@/lib/api/utils";
 import { withWorkspace } from "@/lib/auth";
 import { qstash } from "@/lib/cron";
+import { prisma } from "@/lib/prisma";
 import {
   EmailDomainSchema,
   updateEmailDomainBodySchema,
 } from "@/lib/zod/schemas/email-domains";
 import { resend } from "@dub/email/resend";
-import { prisma } from "@dub/prisma";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
 import { Prisma } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
@@ -127,13 +127,14 @@ export const PATCH = withWorkspace(
     } catch (error) {
       console.error(error);
 
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === "P2002") {
-          throw new DubApiError({
-            code: "conflict",
-            message: `This ${slug} domain has been registered already by another program.`,
-          });
-        }
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new DubApiError({
+          code: "conflict",
+          message: `This ${slug} domain has been registered already by another program.`,
+        });
       }
 
       throw new DubApiError({

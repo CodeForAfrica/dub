@@ -1,6 +1,7 @@
 import { getProgram } from "@/lib/fetchers/get-program";
 import { DEFAULT_PARTNER_GROUP } from "@/lib/zod/schemas/groups";
 import { programLanderSchema } from "@/lib/zod/schemas/program-lander";
+import { ApplicationAnalytics } from "@/ui/application-analytics";
 import { PageContent } from "@/ui/layout/page-content";
 import { PageWidthWrapper } from "@/ui/layout/page-width-wrapper";
 import { BLOCK_COMPONENTS } from "@/ui/partners/lander/blocks";
@@ -8,6 +9,8 @@ import { BackLink } from "@/ui/shared/back-link";
 import { redirect } from "next/navigation";
 import { CSSProperties } from "react";
 import { ProgramSidebar } from "./program-sidebar";
+
+export const revalidate = 3600; // 1 hour
 
 export default async function ProgramDetailsPage(props: {
   params: Promise<{ programSlug: string }>;
@@ -21,12 +24,13 @@ export default async function ProgramDetailsPage(props: {
     groupSlug: DEFAULT_PARTNER_GROUP.slug,
   });
 
-  if (!program || !program.group) {
+  if (!program || !program.group || !program.group.applicationFormPublishedAt) {
     redirect("/programs");
   }
 
   return (
     <PageContent>
+      <ApplicationAnalytics />
       <PageWidthWrapper className="mb-10 mt-4">
         <BackLink href="/programs">Programs</BackLink>
         <div className="mt-8 grid grid-cols-1 gap-x-16 gap-y-10 lg:grid-cols-[300px_minmax(0,600px)]">
@@ -65,7 +69,11 @@ export default async function ProgramDetailsPage(props: {
                     .blocks.map((block, idx) => {
                       const Component = BLOCK_COMPONENTS[block.type];
                       return Component ? (
-                        <Component key={idx} block={block} program={program} />
+                        <Component
+                          key={idx}
+                          block={block}
+                          group={program.group}
+                        />
                       ) : null;
                     })}
                 </div>

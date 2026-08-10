@@ -14,7 +14,7 @@ import {
   PartnerStackPartner,
 } from "./types";
 
-const PAGE_LIMIT = 100;
+export const PARTNERSTACK_PAGE_LIMIT = 100;
 
 export class PartnerStackApi {
   private readonly baseUrl = "https://api.partnerstack.com/api/v2";
@@ -77,7 +77,7 @@ export class PartnerStackApi {
   async listPartners({ startingAfter }: { startingAfter?: string }) {
     const searchParams = new URLSearchParams();
     searchParams.append("approved_status", "approved");
-    searchParams.append("limit", PAGE_LIMIT.toString());
+    searchParams.append("limit", PARTNERSTACK_PAGE_LIMIT.toString());
 
     if (startingAfter) {
       searchParams.append("starting_after", startingAfter);
@@ -104,7 +104,7 @@ export class PartnerStackApi {
 
   async listCustomers({ startingAfter }: { startingAfter?: string }) {
     const searchParams = new URLSearchParams();
-    searchParams.append("limit", PAGE_LIMIT.toString());
+    searchParams.append("limit", PARTNERSTACK_PAGE_LIMIT.toString());
 
     if (startingAfter) {
       searchParams.append("starting_after", startingAfter);
@@ -119,12 +119,22 @@ export class PartnerStackApi {
     return partnerStackCustomer.array().parse(items);
   }
 
-  async listCommissions({ startingAfter }: { startingAfter?: string }) {
+  async listCommissions({
+    startingAfter,
+    status,
+  }: {
+    startingAfter?: string;
+    status?: PartnerStackCommission["reward_status"];
+  }) {
     const searchParams = new URLSearchParams();
-    searchParams.append("limit", PAGE_LIMIT.toString());
+    searchParams.append("limit", PARTNERSTACK_PAGE_LIMIT.toString());
 
     if (startingAfter) {
       searchParams.append("starting_after", startingAfter);
+    }
+
+    if (status) {
+      searchParams.append("status", status);
     }
 
     const {

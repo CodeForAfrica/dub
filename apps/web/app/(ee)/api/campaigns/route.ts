@@ -3,6 +3,7 @@ import { createId } from "@/lib/api/create-id";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
 import { withWorkspace } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { WorkflowAction, WorkflowCondition } from "@/lib/types";
 import {
   CampaignSchema,
@@ -13,7 +14,6 @@ import {
   WORKFLOW_ACTION_TYPES,
   WORKFLOW_ATTRIBUTE_TRIGGER,
 } from "@/lib/zod/schemas/workflows";
-import { prisma } from "@dub/prisma";
 import { CampaignStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 
@@ -22,8 +22,14 @@ export const GET = withWorkspace(
   async ({ workspace, searchParams }) => {
     const programId = getDefaultProgramIdOrThrow(workspace);
 
-    const { type, status, search, page, pageSize } =
-      getCampaignsQuerySchema.parse(searchParams);
+    const {
+      type,
+      status,
+      search,
+      triggerCondition,
+      page = 1,
+      pageSize,
+    } = getCampaignsQuerySchema.parse(searchParams);
 
     const campaigns = await prisma.campaign.findMany({
       where: {
@@ -35,6 +41,13 @@ export const GET = withWorkspace(
             { name: { contains: search } },
             { subject: { contains: search } },
           ],
+        }),
+        ...(triggerCondition && {
+          workflow: {
+            triggerConditions: {
+              equals: [triggerCondition],
+            },
+          },
         }),
       },
       include: {
@@ -128,5 +141,6 @@ export const POST = withWorkspace(
   },
   {
     requiredPlan: ["advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );

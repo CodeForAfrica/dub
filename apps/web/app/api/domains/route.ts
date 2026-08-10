@@ -5,14 +5,15 @@ import { validateDomain } from "@/lib/api/domains/utils";
 import { DubApiError } from "@/lib/api/errors";
 import { createLink, transformLink } from "@/lib/api/links";
 import { parseRequestBody } from "@/lib/api/utils";
+import { isNonEmptyJson } from "@/lib/api/utils/is-non-empty-json";
 import { withWorkspace } from "@/lib/auth";
 import { exceededLimitError } from "@/lib/exceeded-limit-error";
+import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import {
   createDomainBodySchemaExtended,
   getDomainsQuerySchemaExtended,
 } from "@/lib/zod/schemas/domains";
-import { prisma } from "@dub/prisma";
 import { combineWords, DEFAULT_LINK_PROPS, nanoid } from "@dub/utils";
 import { Link, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
@@ -20,8 +21,13 @@ import { NextResponse } from "next/server";
 // GET /api/domains – get all domains for a workspace
 export const GET = withWorkspace(
   async ({ workspace, searchParams }) => {
-    const { search, archived, page, pageSize, includeLink } =
-      getDomainsQuerySchemaExtended.parse(searchParams);
+    const {
+      search,
+      archived,
+      page = 1,
+      pageSize,
+      includeLink,
+    } = getDomainsQuerySchemaExtended.parse(searchParams);
 
     const domains = await prisma.domain.findMany({
       where: {
@@ -108,7 +114,7 @@ export const POST = withWorkspace(
         notFoundUrl ||
         assetLinks ||
         appleAppSiteAssociation ||
-        deepviewData
+        isNonEmptyJson(deepviewData)
       ) {
         const proFeaturesString = combineWords(
           [
@@ -117,7 +123,7 @@ export const POST = withWorkspace(
             notFoundUrl && "not found URLs",
             assetLinks && "Asset Links",
             appleAppSiteAssociation && "Apple App Site Association",
-            deepviewData && "Deep View",
+            isNonEmptyJson(deepviewData) && "Deep View",
           ].filter(Boolean) as string[],
         );
 
@@ -176,12 +182,34 @@ export const POST = withWorkspace(
             }),
           });
         }
+
+        if (slug.endsWith(".dub.link")) {
+          const alreadyClaimed = await tx.domain.count({
+            where: {
+              projectId: workspace.id,
+              slug: {
+                endsWith: ".dub.link",
+              },
+            },
+          });
+          if (alreadyClaimed >= 1) {
+            throw new DubApiError({
+              code: "forbidden",
+              message:
+                "You can only claim one .dub.link subdomain per workspace.",
+            });
+          }
+        }
+
         return await tx.domain.create({
           data: {
             id: domainId,
             slug: slug,
             projectId: workspace.id,
             primary: totalDomains === 0,
+            ...(slug.endsWith(".dub.link") && {
+              verified: true,
+            }),
             ...(placeholder && { placeholder }),
             expiredUrl,
             notFoundUrl,

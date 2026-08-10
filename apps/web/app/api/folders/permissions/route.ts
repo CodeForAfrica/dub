@@ -1,10 +1,10 @@
 import { withWorkspace } from "@/lib/auth";
 import { getFolders } from "@/lib/folder/get-folders";
 import {
-  findUserFolderRole,
+  findFolderUserRole,
   getFolderPermissions,
 } from "@/lib/folder/permissions";
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
 // GET /api/folders/permissions - get folders and their permissions for authenticated user
@@ -30,15 +30,16 @@ export const GET = withWorkspace(
         folderUsers.find((folderUser) => folderUser.folderId === folder.id) ||
         null;
 
-      const role = findUserFolderRole({
+      const userFolderRole = findFolderUserRole({
         folder,
         user: folderUser,
+        workspaceRole: workspace.users[0]?.role,
       });
 
       return {
         id: folder.id,
         name: folder.name,
-        permissions: getFolderPermissions(role),
+        permissions: getFolderPermissions(userFolderRole),
       };
     });
 
@@ -48,13 +49,6 @@ export const GET = withWorkspace(
   },
   {
     requiredPermissions: ["folders.read"],
-    requiredPlan: [
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

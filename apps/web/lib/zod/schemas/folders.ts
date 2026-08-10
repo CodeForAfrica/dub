@@ -3,20 +3,23 @@ import {
   FOLDER_WORKSPACE_ACCESS,
 } from "@/lib/folder/constants";
 import { FolderAccessLevel } from "@/lib/types";
-import z from "@/lib/zod";
-import { FolderType, FolderUserRole } from "@dub/prisma/client";
+import { FolderType, FolderUserRole } from "@prisma/client";
+import * as z from "zod/v4";
 import { getPaginationQuerySchema } from "./misc";
 
-const workspaceFolderAccess = z
-  .enum(
-    Object.keys(FOLDER_WORKSPACE_ACCESS) as [
-      FolderAccessLevel,
-      ...FolderAccessLevel[],
-    ],
-  )
+const folderAccessLevelSchema = z.enum(
+  Object.keys(FOLDER_WORKSPACE_ACCESS) as [
+    FolderAccessLevel,
+    ...FolderAccessLevel[],
+  ],
+);
+
+const workspaceFolderAccess = folderAccessLevelSchema
   .nullish()
-  .default(null)
-  .describe("The access level of the folder within the workspace.");
+  .default("write")
+  .describe(
+    "The workspace-level access level settings for the folder. Default is `write` which allows full access to the folder for all team members. The other options are `read` (view-only access) and `null` (no access) and are only available on Business plans and above.",
+  );
 
 export const folderUserRoleSchema = z
   .enum(Object.keys(FOLDER_USER_ROLE) as [FolderUserRole, ...FolderUserRole[]])
@@ -53,6 +56,12 @@ export const listFoldersQuerySchema = z
       .optional()
       .describe("The search term to filter the folders by."),
   })
-  .merge(getPaginationQuerySchema({ pageSize: FOLDERS_MAX_PAGE_SIZE }));
+  .extend(getPaginationQuerySchema({ pageSize: FOLDERS_MAX_PAGE_SIZE }));
 
-export const updateFolderSchema = createFolderSchema.partial();
+export const updateFolderSchema = z.object({
+  name: createFolderSchema.shape.name.optional(),
+  description: createFolderSchema.shape.description.optional(),
+  accessLevel: folderAccessLevelSchema
+    .nullish()
+    .describe("The access level of the folder within the workspace."),
+});

@@ -1,13 +1,20 @@
+import { handleMoneyInputChange, handleMoneyKeyDown } from "@/lib/form-utils";
 import { X } from "@/ui/shared/icons";
 import {
   AnimatedSizeContainer,
   Button,
   Check2,
+  MarkdownIcon,
   Plus,
   Popover,
+  PopoverProps,
+  RichTextArea,
+  RichTextProvider,
+  RichTextToolbar,
+  ScrollContainer,
   useScrollProgress,
 } from "@dub/ui";
-import { cn } from "@dub/utils";
+import { cn, nFormatter } from "@dub/utils";
 import { Command } from "cmdk";
 import {
   createContext,
@@ -34,14 +41,20 @@ export const InlineBadgePopoverContext = createContext<{
 export function InlineBadgePopover({
   text,
   invalid,
+  showOptional,
+  align = "start",
   disabled,
   children,
   buttonClassName,
+  contentClassName,
 }: PropsWithChildren<{
   text: ReactNode;
   invalid?: boolean;
+  showOptional?: boolean;
+  align?: PopoverProps["align"];
   disabled?: boolean;
   buttonClassName?: string;
+  contentClassName?: string;
 }>) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -49,12 +62,14 @@ export function InlineBadgePopover({
     <Popover
       openPopover={isOpen}
       setOpenPopover={setIsOpen}
-      align="start"
+      align={align}
       content={
         <InlineBadgePopoverContext.Provider value={{ isOpen, setIsOpen }}>
-          <div className="w-full min-w-32 p-1 text-sm sm:w-auto">
-            {children}
-          </div>
+          <AnimatedSizeContainer height width>
+            <ScrollContainer className="max-h-[50dvh] min-h-0 w-full min-w-32 overscroll-contain p-1 text-sm sm:w-auto">
+              {children}
+            </ScrollContainer>
+          </AnimatedSizeContainer>
         </InlineBadgePopoverContext.Provider>
       }
       onWheel={(e) => {
@@ -67,23 +82,29 @@ export function InlineBadgePopover({
         disabled={disabled}
         className={cn(
           "inline-block rounded px-1.5 text-left text-sm font-semibold transition-colors",
-          invalid
-            ? "bg-orange-50 text-orange-500 hover:bg-orange-100 data-[state=open]:bg-orange-100"
-            : "bg-blue-50 text-blue-700 hover:bg-blue-100 data-[state=open]:bg-blue-100",
+          disabled
+            ? "cursor-not-allowed bg-neutral-200 text-neutral-500 hover:bg-neutral-200 data-[state=open]:bg-neutral-200"
+            : invalid
+              ? "bg-orange-50 text-orange-500 hover:bg-orange-100 data-[state=open]:bg-orange-100"
+              : showOptional
+                ? "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 data-[state=open]:bg-neutral-200"
+                : "bg-blue-50 text-blue-700 hover:bg-blue-100 data-[state=open]:bg-blue-100",
           buttonClassName,
         )}
       >
-        <span>{text}</span>
+        <span className={contentClassName}>{text}</span>
       </button>
     </Popover>
   );
 }
 
-type MenuItem<T> = {
+export type InlineBadgePopoverMenuItem<T> = {
   icon?: ReactNode;
   text: string;
+  description?: string;
   value: T;
   onSelect?: () => void;
+  preventClose?: boolean;
 };
 
 export function InlineBadgePopoverMenu<T extends any>({
@@ -92,7 +113,7 @@ export function InlineBadgePopoverMenu<T extends any>({
   selectedValue,
   search,
 }: {
-  items: MenuItem<T>[];
+  items: InlineBadgePopoverMenuItem<T>[];
   onSelect?: (value: T) => void;
   selectedValue?: T | T[];
   search?: boolean;
@@ -101,8 +122,13 @@ export function InlineBadgePopoverMenu<T extends any>({
 
   const isMultiSelect = Array.isArray(selectedValue);
 
+  const commandRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { scrollProgress, updateScrollProgress } = useScrollProgress(scrollRef);
+
+  useEffect(() => {
+    if (!search) commandRef.current?.focus();
+  }, []);
 
   const sortedItems = useMemo(
     () =>
@@ -124,7 +150,9 @@ export function InlineBadgePopoverMenu<T extends any>({
   );
 
   const [displayedItems, setDisplayedItems] =
-    useState<MenuItem<T>[]>(sortedItems);
+    useState<InlineBadgePopoverMenuItem<T>[]>(sortedItems);
+
+  const hasDescriptions = items.some((item) => item.description);
 
   // Update the displayed items to sorted when closed
   useEffect(() => {
@@ -132,7 +160,7 @@ export function InlineBadgePopoverMenu<T extends any>({
   }, [isOpen, sortedItems]);
 
   return (
-    <Command loop className="focus:outline-none">
+    <Command ref={commandRef} loop tabIndex={-1} className="focus:outline-none">
       {search && (
         <div className="-mx-1 -mt-1 mb-1 flex items-center overflow-hidden rounded-t-lg border-b border-neutral-200">
           <Command.Input
@@ -144,32 +172,66 @@ export function InlineBadgePopoverMenu<T extends any>({
       <AnimatedSizeContainer height>
         <div className="relative">
           <Command.List
-            className="scrollbar-hide flex max-h-64 max-w-52 flex-col gap-1 overflow-y-auto transition-all"
+            className={cn(
+              "scrollbar-hide flex max-h-64 flex-col gap-1 overflow-y-auto transition-all",
+              hasDescriptions ? "max-w-72" : "max-w-52",
+            )}
             ref={scrollRef}
             onScroll={updateScrollProgress}
           >
             {displayedItems.map(
-              ({ icon, text, value, onSelect: itemOnSelect }) => (
+              ({
+                icon,
+                text,
+                description,
+                value,
+                onSelect: itemOnSelect,
+                preventClose,
+              }) => (
                 <Command.Item
-                  key={text}
-                  value={`${text} ${value}`}
+                  key={String(value)}
+                  value={`${text} ${description ?? ""} ${value}`}
                   onSelect={() => {
                     itemOnSelect?.();
                     onSelect?.(value);
-                    !isMultiSelect && setIsOpen(false);
+                    !isMultiSelect && !preventClose && setIsOpen(false);
                   }}
-                  className="flex cursor-pointer items-center justify-between rounded-md px-1.5 py-1 transition-colors duration-150 data-[selected=true]:bg-neutral-100"
+                  className={cn(
+                    "flex cursor-pointer justify-between rounded-md px-1.5 py-1 transition-colors duration-150 data-[selected=true]:bg-neutral-100",
+                    description ? "items-start gap-2 py-1.5" : "items-center",
+                  )}
                 >
-                  <div className="flex items-center gap-2">
+                  <div
+                    className={cn(
+                      "flex min-w-0 gap-2",
+                      description ? "items-start" : "items-center",
+                    )}
+                  >
                     {icon}
-                    <span className="text-content-default pr-3 text-left text-sm font-medium">
-                      {text}
-                    </span>
+                    {description ? (
+                      <div className="flex min-w-0 flex-col gap-0.5 pr-2">
+                        <span className="text-content-default text-left text-sm font-medium">
+                          {text}
+                        </span>
+                        <span className="text-content-subtle text-left text-xs font-normal leading-snug">
+                          {description}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-content-default pr-3 text-left text-sm font-medium">
+                        {text}
+                      </span>
+                    )}
                   </div>
                   {(Array.isArray(selectedValue)
                     ? selectedValue.includes(value)
                     : selectedValue === value) && (
-                    <Check2 className="text-content-emphasis size-3.5 shrink-0" />
+                    <Check2
+                      className={cn(
+                        "text-content-emphasis size-3.5 shrink-0",
+                        description && "mt-0.5",
+                      )}
+                    />
                   )}
                 </Command.Item>
               ),
@@ -299,6 +361,119 @@ export const InlineBadgePopoverInputs = ({
         icon={<Plus className="size-3" />}
         onClick={handleAppend}
       />
+    </div>
+  );
+};
+
+export const InlineBadgePopoverAmountInput = forwardRef<
+  HTMLInputElement,
+  Omit<HTMLProps<HTMLInputElement>, "type"> & {
+    type: "currency" | "percentage" | "number";
+  }
+>(({ type, className, onKeyDown, onChange, ...rest }, ref) => {
+  const { setIsOpen } = useContext(InlineBadgePopoverContext);
+
+  return (
+    <div className={cn("relative rounded-md shadow-sm", className)}>
+      {type === "currency" && (
+        <span className="absolute inset-y-0 left-0 flex items-center pl-1.5 text-sm text-neutral-400">
+          $
+        </span>
+      )}
+      <input
+        ref={ref}
+        className={cn(
+          "block w-full rounded-md border-neutral-300 px-1.5 py-1 text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-neutral-500 sm:w-32 sm:text-sm",
+          type === "currency" && "pl-4 pr-12",
+          type === "percentage" && "pr-7",
+        )}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            setIsOpen(false);
+          }
+          handleMoneyKeyDown(e);
+          onKeyDown?.(e);
+        }}
+        onChange={(e) => {
+          handleMoneyInputChange(e);
+          onChange?.(e);
+        }}
+        {...rest}
+      />
+      {["currency", "percentage"].includes(type) && (
+        <span className="absolute inset-y-0 right-0 flex items-center pr-1.5 text-sm text-neutral-400">
+          {type === "currency" ? "USD" : "%"}
+        </span>
+      )}
+    </div>
+  );
+});
+
+export const InlineBadgePopoverRichTextArea = ({
+  value,
+  onChange,
+  maxLength,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  maxLength: number;
+  className?: string;
+}) => {
+  const { setIsOpen } = useContext(InlineBadgePopoverContext);
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "w-full rounded-md border border-neutral-300 shadow-sm focus-within:border-neutral-500 focus-within:ring-1 focus-within:ring-neutral-500 sm:w-32",
+          className,
+        )}
+      >
+        <div>
+          <RichTextProvider
+            features={["bold", "italic", "links"]}
+            style="condensed"
+            markdown
+            placeholder="Reward tooltip"
+            editorClassName="block max-h-24 w-full resize-none border-none overflow-auto scrollbar-hide p-3 text-base sm:text-sm"
+            initialValue={value}
+            onChange={(editor) => onChange((editor as any).getMarkdown())}
+            autoFocus
+            editorProps={{
+              handleDOMEvents: {
+                keydown: (_, e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsOpen(false);
+                    return false;
+                  }
+                },
+              },
+            }}
+          >
+            <RichTextArea />
+
+            <div className="flex items-center justify-between gap-4 px-1 pb-1">
+              <RichTextToolbar />
+            </div>
+          </RichTextProvider>
+        </div>
+      </div>
+      <div className="mt-1 flex items-center justify-between px-1">
+        {maxLength ? (
+          <div className="text-content-subtle mt-1 text-xs">
+            {nFormatter(value?.toString().length || 0, { full: true })}/
+            {nFormatter(maxLength, { full: true })} characters
+          </div>
+        ) : (
+          <div />
+        )}
+
+        <MarkdownIcon className="text-content-default size-4" />
+      </div>
     </div>
   );
 };

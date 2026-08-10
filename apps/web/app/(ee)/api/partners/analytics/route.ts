@@ -3,12 +3,14 @@ import { getStartEndDates } from "@/lib/analytics/utils/get-start-end-dates";
 import { DubApiError } from "@/lib/api/errors";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { withWorkspace } from "@/lib/auth";
+import { throwIfNoPartnerIdOrTenantId } from "@/lib/partners/throw-if-no-partnerid-tenantid";
 import { sqlGranularityMap } from "@/lib/planetscale/granularity";
+import { prisma } from "@/lib/prisma";
 import {
   partnerAnalyticsQuerySchema,
   partnersTopLinksSchema,
 } from "@/lib/zod/schemas/partners";
-import { prisma } from "@dub/prisma";
+import { parseFilterValue } from "@dub/utils";
 import { format } from "date-fns";
 import { NextResponse } from "next/server";
 
@@ -28,14 +30,9 @@ export const GET = withWorkspace(
       query,
     } = partnerAnalyticsQuerySchema.parse(searchParams);
 
-    if (!partnerId && !tenantId) {
-      throw new DubApiError({
-        code: "bad_request",
-        message: "You must provide a partnerId or tenantId.",
-      });
-    }
+    throwIfNoPartnerIdOrTenantId({ partnerId, tenantId });
 
-    const programEnrollment = await prisma.programEnrollment.findUniqueOrThrow({
+    const programEnrollment = await prisma.programEnrollment.findUnique({
       where: partnerId
         ? {
             partnerId_programId: {
@@ -59,6 +56,13 @@ export const GET = withWorkspace(
       },
     });
 
+    if (!programEnrollment) {
+      throw new DubApiError({
+        code: "not_found",
+        message: `The partner with ${partnerId ? "partnerId" : "tenantId"} ${partnerId ?? tenantId} is not enrolled in your program.`,
+      });
+    }
+
     if (programEnrollment.program.workspaceId !== workspace.id) {
       throw new DubApiError({
         code: "not_found",
@@ -69,7 +73,7 @@ export const GET = withWorkspace(
     const analytics = await getAnalytics({
       event: "composite",
       groupBy,
-      linkIds: programEnrollment.links.map((link) => link.id),
+      linkId: parseFilterValue(programEnrollment.links.map((link) => link.id)),
       interval,
       start,
       end,
@@ -203,6 +207,6 @@ export const GET = withWorkspace(
     return NextResponse.json(topLinksWithEarnings);
   },
   {
-    requiredPlan: ["advanced", "enterprise"],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

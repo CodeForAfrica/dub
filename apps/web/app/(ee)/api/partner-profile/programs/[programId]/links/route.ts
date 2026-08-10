@@ -5,11 +5,15 @@ import { getProgramEnrollmentOrThrow } from "@/lib/api/programs/get-program-enro
 import { parseRequestBody } from "@/lib/api/utils";
 import { extractUtmParams } from "@/lib/api/utm/extract-utm-params";
 import { withPartnerProfile } from "@/lib/auth/partner";
+import { prisma } from "@/lib/prisma";
 import { PartnerProfileLinkSchema } from "@/lib/zod/schemas/partner-profile";
-import { createPartnerLinkSchema } from "@/lib/zod/schemas/partners";
-import { prisma } from "@dub/prisma";
+import {
+  createPartnerLinkSchema,
+  INACTIVE_ENROLLMENT_STATUSES,
+} from "@/lib/zod/schemas/partners";
+import { getUTMParamsFromURL } from "@dub/utils";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/partner-profile/programs/[programId]/links - get a partner's links in a program
 export const GET = withPartnerProfile(async ({ partner, params }) => {
@@ -33,6 +37,7 @@ export const GET = withPartnerProfile(async ({ partner, params }) => {
     return {
       ...link,
       discountCode: discountCode?.code,
+      discountCodeDisabledAt: discountCode?.disabledAt ?? null,
     };
   });
 
@@ -62,7 +67,7 @@ export const POST = withPartnerProfile(
       },
     });
 
-    if (["banned", "deactivated", "rejected"].includes(status)) {
+    if (INACTIVE_ENROLLMENT_STATUSES.includes(status)) {
       throw new DubApiError({
         code: "forbidden",
         message: `You cannot create links in this program because you have been ${status}`,
@@ -103,22 +108,30 @@ export const POST = withPartnerProfile(
         })
       : null;
 
+    const linkUrl = url || program.url;
+
     const { link, error, code } = await processLink({
       payload: {
         domain: program.domain,
         key: key || undefined,
-        url: url || program.url,
+        url: linkUrl,
+        ...(groupUtmTemplate
+          ? {
+              ...extractUtmParams(groupUtmTemplate),
+              ...getUTMParamsFromURL(linkUrl),
+            }
+          : {}),
         programId: program.id,
         tenantId,
         partnerId: partner.id,
         folderId: program.defaultFolderId,
         comments,
         trackConversion: true,
-        ...(groupUtmTemplate ? extractUtmParams(groupUtmTemplate) : {}),
       },
       workspace: {
         id: program.workspaceId,
         plan: "business",
+        users: [{ role: "owner" }],
       },
       userId: session.user.id, // TODO: Hm, this is the partner user, not the workspace user?
       skipFolderChecks: true, // can't be changed by the partner

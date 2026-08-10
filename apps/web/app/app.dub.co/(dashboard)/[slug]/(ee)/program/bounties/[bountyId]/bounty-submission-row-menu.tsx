@@ -31,12 +31,8 @@ export function BountySubmissionRowMenu({
 
   const { setShowConfirmModal, confirmModal } = useConfirmModal({
     title: "Reopen submission",
-    description: (
-      <>
-        Are you sure you want to reopen this bounty submission? This will reset
-        the submission back to draft status.
-      </>
-    ),
+    description:
+      "Are you sure you want to reopen this bounty submission? This will reset the submission back to draft status.",
     confirmText: "Reopen",
     onConfirm: async () => {
       try {
@@ -74,13 +70,12 @@ export function BountySubmissionRowMenu({
                       set: {
                         submissionId: submission.id,
                       },
-                      scroll: false,
                     });
                     setIsOpen(false);
                   }}
                 />
 
-                {submission.status === "submitted" && (
+                {["submitted", "rejected"].includes(submission.status) && (
                   <MenuItem
                     icon={ArrowsOppositeDirectionX}
                     label="Reopen submission"
@@ -98,7 +93,7 @@ export function BountySubmissionRowMenu({
       >
         <Button
           type="button"
-          className="h-8 whitespace-nowrap px-2"
+          className="size-8 shrink-0 whitespace-nowrap rounded-lg p-0"
           variant="outline"
           icon={<Dots className="h-4 w-4 shrink-0" />}
         />

@@ -6,6 +6,7 @@ import {
 } from "@/lib/types";
 import {
   DEFAULT_ADDITIONAL_PARTNER_LINKS,
+  DEFAULT_PARTNER_GROUP,
   GroupSchema,
 } from "@/lib/zod/schemas/groups";
 import { RESOURCE_COLORS } from "@/ui/colors";
@@ -19,13 +20,20 @@ const expectedGroup: Partial<GroupProps> = {
   name: expect.any(String),
   slug: expect.any(String),
   color: expect.any(String),
+  logo: expect.any(String),
+  wordmark: expect.any(String),
+  holdingPeriodDays: expect.any(Number),
+  brandColor: null,
+  autoApprovePartnersEnabledAt: null,
   clickReward: null,
   leadReward: null,
   saleReward: null,
+  referralReward: null,
   discount: null,
   maxPartnerLinks: DEFAULT_ADDITIONAL_PARTNER_LINKS,
   linkStructure: "short",
   additionalLinks: expect.any(Array),
+  moveRules: null,
 };
 
 describe.sequential("/groups/**", async () => {
@@ -35,6 +43,11 @@ describe.sequential("/groups/**", async () => {
   let group: GroupProps;
 
   test("POST /groups - create group", async () => {
+    // Fetch the default group to get its default values
+    const { data: defaultGroup } = await http.get<GroupWithProgramProps>({
+      path: `/groups/${DEFAULT_PARTNER_GROUP.slug}`,
+    });
+
     const groupName = generateRandomName();
 
     const newGroup = {
@@ -50,9 +63,18 @@ describe.sequential("/groups/**", async () => {
 
     expect(status).toEqual(201);
     expect(() => GroupSchema.parse(data)).not.toThrow();
+
     expect(data).toStrictEqual({
       ...expectedGroup,
       ...newGroup,
+      logo: defaultGroup.logo,
+      wordmark: defaultGroup.wordmark,
+      brandColor: defaultGroup.brandColor,
+      additionalLinks: defaultGroup.additionalLinks,
+      maxPartnerLinks: defaultGroup.maxPartnerLinks,
+      linkStructure: defaultGroup.linkStructure,
+      holdingPeriodDays: defaultGroup.holdingPeriodDays,
+      autoApprovePartnersEnabledAt: defaultGroup.autoApprovePartnersEnabledAt,
     });
 
     group = data;
@@ -66,6 +88,7 @@ describe.sequential("/groups/**", async () => {
     const {
       applicationFormData,
       applicationFormPublishedAt,
+      bounties,
       landerData,
       landerPublishedAt,
       program,
@@ -85,6 +108,7 @@ describe.sequential("/groups/**", async () => {
       color: randomValue(RESOURCE_COLORS),
       maxPartnerLinks: 5,
       linkStructure: "query",
+      holdingPeriodDays: 30,
       additionalLinks: [
         {
           domain: "example.com",
@@ -101,16 +125,137 @@ describe.sequential("/groups/**", async () => {
 
     const { status, data: updatedGroup } = await http.patch<GroupProps>({
       path: `/groups/${group.id}`,
-      body: toUpdate,
+      body: {
+        ...toUpdate,
+        autoApprovePartners: true,
+      },
     });
 
     expect(status).toEqual(200);
     expect(updatedGroup).toStrictEqual({
       ...group,
       ...toUpdate,
+      autoApprovePartnersEnabledAt: expect.any(String),
     });
 
     group = updatedGroup;
+  });
+
+  test("PATCH /groups/[groupId] - update group with group move rule", async () => {
+    const moveRules = [
+      {
+        attribute: "totalLeads" as const,
+        operator: "gte" as const,
+        value: 10,
+      },
+    ];
+
+    const { status } = await http.patch<GroupProps>({
+      path: `/groups/${group.id}`,
+      body: {
+        moveRules,
+      },
+    });
+
+    expect(status).toEqual(200);
+
+    // Fetch the group to verify moveRules was persisted
+    const { data: fetchedGroup } = await http.get<GroupWithProgramProps>({
+      path: `/groups/${group.id}`,
+    });
+
+    const {
+      applicationFormData,
+      applicationFormPublishedAt,
+      landerData,
+      landerPublishedAt,
+      program,
+      ...updatedGroup
+    } = fetchedGroup;
+
+    expect(updatedGroup.moveRules).toStrictEqual(moveRules);
+
+    group = {
+      ...group,
+      moveRules,
+    };
+  });
+
+  test("PATCH /groups/[groupId] - add new rule to existing group move", async () => {
+    const moveRules = [
+      {
+        attribute: "totalLeads" as const,
+        operator: "gte" as const,
+        value: 10,
+      },
+      {
+        attribute: "totalConversions" as const,
+        operator: "gte" as const,
+        value: 5,
+      },
+    ];
+
+    const { status } = await http.patch<GroupProps>({
+      path: `/groups/${group.id}`,
+      body: {
+        moveRules,
+      },
+    });
+
+    expect(status).toEqual(200);
+
+    // Fetch the group to verify moveRules was updated
+    const { data: fetchedGroup } = await http.get<GroupWithProgramProps>({
+      path: `/groups/${group.id}`,
+    });
+
+    const {
+      applicationFormData,
+      applicationFormPublishedAt,
+      landerData,
+      landerPublishedAt,
+      program,
+      ...updatedGroup
+    } = fetchedGroup;
+
+    expect(updatedGroup.moveRules).toStrictEqual(moveRules);
+
+    group = {
+      ...group,
+      moveRules,
+    };
+  });
+
+  test("PATCH /groups/[groupId] - remove group move rule", async () => {
+    const { status } = await http.patch<GroupProps>({
+      path: `/groups/${group.id}`,
+      body: {
+        moveRules: [],
+      },
+    });
+
+    expect(status).toEqual(200);
+
+    // Fetch the group to verify moveRules was removed
+    const { data: fetchedGroup } = await http.get<GroupWithProgramProps>({
+      path: `/groups/${group.id}`,
+    });
+
+    const {
+      applicationFormData,
+      applicationFormPublishedAt,
+      landerData,
+      landerPublishedAt,
+      program,
+      ...updatedGroup
+    } = fetchedGroup;
+
+    expect(updatedGroup.moveRules).toBeNull();
+
+    group = {
+      ...group,
+      moveRules: null,
+    };
   });
 
   test("GET /groups - fetch all groups", async () => {
@@ -132,6 +277,11 @@ describe.sequential("/groups/**", async () => {
       additionalLinks: group.additionalLinks,
       maxPartnerLinks: group.maxPartnerLinks,
       linkStructure: group.linkStructure,
+      logo: group.logo,
+      wordmark: group.wordmark,
+      brandColor: group.brandColor,
+      holdingPeriodDays: group.holdingPeriodDays,
+      autoApprovePartnersEnabledAt: group.autoApprovePartnersEnabledAt,
       totalPartners: 0,
       totalClicks: 0,
       totalLeads: 0,
@@ -140,6 +290,7 @@ describe.sequential("/groups/**", async () => {
       totalConversions: 0,
       totalCommissions: 0,
       netRevenue: 0,
+      moveRules: null,
     });
   });
 

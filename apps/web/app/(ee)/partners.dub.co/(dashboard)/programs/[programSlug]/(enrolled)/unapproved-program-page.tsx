@@ -34,7 +34,8 @@ const states: Record<
   }),
   rejected: () => ({
     title: "Application rejected",
-    description: "Your application has been rejected.",
+    description:
+      "Your application has been rejected. You can re-apply in 30 days.",
   }),
 };
 
@@ -52,7 +53,7 @@ export function UnapprovedProgramPage({
   const badge = PartnerStatusBadges[programEnrollment.status];
 
   const { setShowConfirmModal, confirmModal } = useConfirmModal({
-    title: "Withdraw Application",
+    title: "Withdraw application",
     description: `Are you sure you want to withdraw your application for ${programEnrollment.program.name}? This will delete your application completely and you'll have to re-apply if you want to join again.`,
     confirmText: "Withdraw application",
     onConfirm: async () => {
@@ -86,7 +87,7 @@ export function UnapprovedProgramPage({
           </h2>
           <p className="text-content-subtle [&_strong]:text-content-default mt-2 max-w-sm text-balance text-sm font-medium [&_strong]:font-semibold">
             {description}{" "}
-            {["banned", "rejected"].includes(programEnrollment.status) && (
+            {programEnrollment.status === "banned" && (
               <>
                 <Link
                   href={`/messages/${programEnrollment.program.slug}`}
@@ -104,7 +105,7 @@ export function UnapprovedProgramPage({
             <div className="mt-6">
               <Button
                 variant="secondary"
-                text="Withdraw Application"
+                text="Withdraw application"
                 onClick={() => setShowConfirmModal(true)}
                 className="h-8 px-2.5"
               />

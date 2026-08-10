@@ -1,5 +1,8 @@
+import { formatMoneyCentsForExport } from "@/lib/api/utils/format-money-cents-for-export";
+import { polyfillSocialMediaFields } from "@/lib/social-utils";
 import { exportPartnerColumns } from "@/lib/zod/schemas/partners";
-import { z } from "zod";
+import { toCentsNumber } from "@dub/utils";
+import * as z from "zod/v4";
 
 const columnIdToLabel = exportPartnerColumns.reduce(
   (acc, column) => {
@@ -12,6 +15,13 @@ const columnIdToLabel = exportPartnerColumns.reduce(
 const numericColumns = exportPartnerColumns
   .filter((column) => column.numeric)
   .map((column) => column.id);
+
+/** Stored in cents; exported as formatted currency strings. */
+const numericCentsMoneyColumns = new Set([
+  "totalSaleAmount",
+  "totalCommissions",
+  "netRevenue",
+]);
 
 const dateColumns = ["createdAt", "payoutsEnabledAt"];
 
@@ -29,20 +39,20 @@ export function formatPartnersForExport(
     {} as Record<string, number>,
   );
 
-  const sortedColumns = columns.sort(
+  const sortedColumns = [...columns].sort(
     (a, b) => (columnOrderMap[a] || 999) - (columnOrderMap[b] || 999),
   );
 
   // Create schema for validation
   const schemaFields: Record<string, any> = {};
   sortedColumns.forEach((column) => {
-    if (numericColumns.includes(column)) {
-      schemaFields[columnIdToLabel[column]] = z.coerce
-        .number()
-        .optional()
-        .default(0);
+    const label = columnIdToLabel[column];
+    if (numericCentsMoneyColumns.has(column)) {
+      schemaFields[label] = z.string().optional().default("");
+    } else if (numericColumns.includes(column)) {
+      schemaFields[label] = z.coerce.number().optional().default(0);
     } else {
-      schemaFields[columnIdToLabel[column]] = z.string().optional().default("");
+      schemaFields[label] = z.string().optional().default("");
     }
   });
 
@@ -52,11 +62,33 @@ export function formatPartnersForExport(
   return partners.map((partner) => {
     const result: Record<string, any> = {};
 
-    sortedColumns.forEach((column) => {
-      let value = partner[column] || "";
+    partner = {
+      ...partner,
+      ...polyfillSocialMediaFields(partner.platforms),
+    };
 
-      // Handle date fields - convert to ISO string format
-      if (dateColumns.includes(column) && value instanceof Date) {
+    sortedColumns.forEach((column) => {
+      let value = partner[column] ?? "";
+
+      if (
+        column === "group" &&
+        value &&
+        typeof value === "object" &&
+        "name" in value
+      ) {
+        value = value.name ?? "";
+      }
+
+      if (numericCentsMoneyColumns.has(column)) {
+        value =
+          value === "" || value == null
+            ? ""
+            : formatMoneyCentsForExport(
+                Number(toCentsNumber(value as number | bigint)),
+                "USD",
+                `partner ${partner.id}`,
+              );
+      } else if (dateColumns.includes(column) && value instanceof Date) {
         value = value.toISOString();
       }
 

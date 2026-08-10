@@ -1,44 +1,93 @@
-import { VALID_ANALYTICS_ENDPOINTS } from "@/lib/analytics/constants";
-import { getAnalytics } from "@/lib/analytics/get-analytics";
-import { getFolderIdsToFilter } from "@/lib/analytics/get-folder-ids-to-filter";
-import { convertToCSV } from "@/lib/analytics/utils";
-import { getDomainOrThrow } from "@/lib/api/domains/get-domain-or-throw";
+import { exportAnalyticsToZip } from "@/lib/analytics/export-analytics-to-zip";
+import {
+  getFirstFilterValue,
+  hasExactlyOneLinkIdFilter,
+} from "@/lib/analytics/filter-helpers";
+import { formatProgramAnalyticsForExport } from "@/lib/analytics/utils/format-analytics-export";
+import { DubApiError } from "@/lib/api/errors";
 import { getLinkOrThrow } from "@/lib/api/links/get-link-or-throw";
 import { throwIfClicksUsageExceeded } from "@/lib/api/links/usage-checks";
+import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
+import { getProgramOrThrow } from "@/lib/api/programs/get-program-or-throw";
 import { assertValidDateRangeForPlan } from "@/lib/api/utils/assert-valid-date-range-for-plan";
+import { prefixWorkspaceId } from "@/lib/api/workspaces/workspace-id";
 import { withWorkspace } from "@/lib/auth";
 import { verifyFolderAccess } from "@/lib/folder/permissions";
-import { analyticsQuerySchema } from "@/lib/zod/schemas/analytics";
-import { Link } from "@dub/prisma/client";
-import JSZip from "jszip";
+import { getPlanCapabilities } from "@/lib/plan-capabilities";
+import { ratelimit } from "@/lib/upstash";
+import { parseAnalyticsQuery } from "@/lib/zod/schemas/analytics";
 
-// GET /api/analytics/export – get export data for analytics
+export const maxDuration = 300;
+
+// GET /api/analytics/export – get export data for analytics
 export const GET = withWorkspace(
   async ({ searchParams, workspace, session }) => {
-    throwIfClicksUsageExceeded(workspace);
+    const { success } = await ratelimit(1, "30 s").limit(
+      `analyticsExport:${workspace.id}`,
+    );
 
-    const parsedParams = analyticsQuerySchema.parse(searchParams);
-
-    const { interval, start, end, linkId, externalId, domain, key, folderId } =
-      parsedParams;
-
-    let link: Link | null = null;
-
-    if (domain) {
-      await getDomainOrThrow({ workspace, domain });
-    }
-
-    if (linkId || externalId || (domain && key)) {
-      link = await getLinkOrThrow({
-        workspaceId: workspace.id,
-        linkId,
-        externalId,
-        domain,
-        key,
+    if (!success) {
+      throw new DubApiError({
+        code: "rate_limit_exceeded",
+        message:
+          "Analytics export is limited to once every 30 seconds. Please try again shortly.",
       });
     }
 
-    const folderIdToVerify = link?.folderId || folderId;
+    throwIfClicksUsageExceeded(workspace);
+
+    const parsedParams = parseAnalyticsQuery(searchParams);
+
+    let {
+      interval,
+      start,
+      end,
+      folderId,
+      domain,
+      key,
+      linkId,
+      externalId,
+      programId,
+    } = parsedParams;
+
+    let programStartedAt: Date | null | undefined = null;
+    if (programId) {
+      const workspaceProgramId = getDefaultProgramIdOrThrow(workspace);
+      if (programId !== workspaceProgramId) {
+        throw new DubApiError({
+          code: "forbidden",
+          message: `Program ${programId} does not belong to workspace ${prefixWorkspaceId(workspace.id)}.`,
+        });
+      }
+      const program = await getProgramOrThrow({
+        workspaceId: workspace.id,
+        programId,
+      });
+      programStartedAt = program.startedAt;
+    }
+
+    let folderIdToVerify = getFirstFilterValue(folderId);
+    if (!linkId && (externalId || (domain && key))) {
+      const link = await getLinkOrThrow({
+        workspaceId: workspace.id,
+        linkId,
+        externalId,
+        domain: getFirstFilterValue(domain),
+        key,
+      });
+
+      parsedParams.linkId = {
+        operator: "IS",
+        sqlOperator: "IN",
+        values: [link.id],
+      };
+
+      parsedParams.domain = undefined;
+
+      if (link.folderId && !folderIdToVerify) {
+        folderIdToVerify = link.folderId;
+      }
+    }
 
     if (folderIdToVerify) {
       await verifyFolderAccess({
@@ -57,42 +106,27 @@ export const GET = withWorkspace(
       end,
     });
 
-    const folderIds = folderIdToVerify
-      ? undefined
-      : await getFolderIdsToFilter({
-          workspace,
-          userId: session.user.id,
-        });
+    const { canTrackConversions } = getPlanCapabilities(workspace.plan);
 
-    const zip = new JSZip();
+    const { domain: _domain, key: _key, ...filterParams } = parsedParams;
+    const hasLinkIdFilter = Boolean(parsedParams.linkId);
+    const analyticsParams = hasLinkIdFilter ? filterParams : parsedParams;
 
-    await Promise.all(
-      VALID_ANALYTICS_ENDPOINTS.map(async (endpoint) => {
-        // no need to fetch top links data if there's a link specified
-        // since this is just a single link
-        if (endpoint === "top_links" && link) return;
-        // skip clicks count
-        if (endpoint === "count") return;
-
-        const response = await getAnalytics({
-          ...parsedParams,
-          workspaceId: workspace.id,
-          ...(link && { linkId: link.id }),
-          groupBy: endpoint,
-          folderIds,
-          folderId: folderId || "",
-        });
-
-        if (!response || response.length === 0) return;
-
-        const csvData = convertToCSV(response);
-        zip.file(`${endpoint}.csv`, csvData);
+    const zipData = await exportAnalyticsToZip({
+      params: analyticsParams,
+      workspaceId: workspace.id,
+      useComposite: canTrackConversions,
+      skipTopLinksForSingleLink: hasExactlyOneLinkIdFilter(parsedParams.linkId),
+      getDataAvailableFrom: (endpoint) =>
+        endpoint === "timeseries"
+          ? programStartedAt ?? workspace.createdAt
+          : undefined,
+      ...(programId && {
+        formatRows: formatProgramAnalyticsForExport,
       }),
-    );
+    });
 
-    const zipData = await zip.generateAsync({ type: "nodebuffer" });
-
-    return new Response(zipData, {
+    return new Response(zipData as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": "attachment; filename=analytics_export.zip",

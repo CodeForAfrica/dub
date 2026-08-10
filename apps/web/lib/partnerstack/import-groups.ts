@@ -1,5 +1,5 @@
+import { prisma } from "@/lib/prisma";
 import { RESOURCE_COLORS } from "@/ui/colors";
-import { prisma } from "@dub/prisma";
 import { getDomainWithoutWWW, randomValue } from "@dub/utils";
 import { createId } from "../api/create-id";
 import { DEFAULT_ADDITIONAL_PARTNER_LINKS } from "../zod/schemas/groups";
@@ -38,11 +38,6 @@ export async function importGroups(payload: PartnerStackImportPayload) {
 
   if (groups.length > 0) {
     for (const group of groups) {
-      // Default group is already created in the program creation
-      if (group.default) {
-        continue;
-      }
-
       await prisma.partnerGroup.upsert({
         where: {
           programId_slug: {

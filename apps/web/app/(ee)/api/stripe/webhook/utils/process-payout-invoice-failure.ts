@@ -2,12 +2,11 @@ import {
   DIRECT_DEBIT_PAYMENT_METHOD_TYPES,
   PAYOUT_FAILURE_FEE_CENTS,
 } from "@/lib/constants/payouts";
+import { prisma } from "@/lib/prisma";
 import { createPaymentIntent } from "@/lib/stripe/create-payment-intent";
 import { sendBatchEmail } from "@dub/email";
 import PartnerPayoutFailed from "@dub/email/templates/partner-payout-failed";
-import { prisma } from "@dub/prisma";
-import { Invoice } from "@dub/prisma/client";
-import { log } from "@dub/utils";
+import { Invoice } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import Stripe from "stripe";
 
@@ -18,14 +17,8 @@ export async function processPayoutInvoiceFailure({
   invoice: Invoice;
   charge?: Stripe.Charge;
 }) {
-  await log({
-    message: `Partner payout failed for invoice ${invoice.id}.`,
-    type: "errors",
-    mention: true,
-  });
-
-  // Mark the payouts as pending again
-  await prisma.payout.updateMany({
+  // reset the payouts to their initial state
+  const { count } = await prisma.payout.updateMany({
     where: {
       invoiceId: invoice.id,
     },
@@ -33,8 +26,15 @@ export async function processPayoutInvoiceFailure({
       status: "pending",
       userId: null,
       invoiceId: null,
+      initiatedAt: null,
+      paidAt: null,
+      mode: null,
     },
   });
+
+  console.log(
+    `Reset ${count} payouts to their initial state for invoice ${invoice.id}`,
+  );
 
   const workspace = await prisma.project.update({
     where: {

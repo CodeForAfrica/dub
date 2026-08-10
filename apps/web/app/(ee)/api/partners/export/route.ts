@@ -28,7 +28,7 @@ export const GET = withWorkspace(
     // Process the export in the background if the number of partners is greater than MAX_PARTNERS_TO_EXPORT
     if (partnersCount > MAX_PARTNERS_TO_EXPORT) {
       await qstash.publishJSON({
-        url: `${APP_DOMAIN_WITH_NGROK}/api/cron/partners/export`,
+        url: `${APP_DOMAIN_WITH_NGROK}/api/cron/export/partners`,
         body: {
           ...parsedParams,
           columns: columns.join(","),
@@ -45,6 +45,7 @@ export const GET = withWorkspace(
       page: 1,
       pageSize: MAX_PARTNERS_TO_EXPORT,
       programId,
+      includeGroup: columns.includes("group"),
     });
 
     const formattedPartners = formatPartnersForExport(partners, columns);
@@ -57,13 +58,6 @@ export const GET = withWorkspace(
     });
   },
   {
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );

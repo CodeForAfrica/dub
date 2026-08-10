@@ -4,8 +4,13 @@ import { useSession } from "next-auth/react";
 import useSWR from "swr";
 import { PayoutsCount } from "../types";
 
-export default function usePartnerPayoutsCount<T>(
-  opts?: Record<string, string>,
+export default function usePartnerPayoutsCount(
+  query?: Record<string, string>,
+  {
+    includeParams = ["programId"],
+  }: {
+    includeParams?: string[];
+  } = {},
 ) {
   const { data: session } = useSession();
   const partnerId = session?.user?.["defaultPartnerId"];
@@ -13,8 +18,8 @@ export default function usePartnerPayoutsCount<T>(
 
   const { data: payoutsCount, error } = useSWR<PayoutsCount[]>(
     partnerId &&
-      `/api/partner-profile/payouts/count${getQueryString(opts, {
-        include: ["programId"],
+      `/api/partner-profile/payouts/count${getQueryString(query, {
+        include: includeParams,
       })}`,
     fetcher,
     {
@@ -23,7 +28,7 @@ export default function usePartnerPayoutsCount<T>(
   );
 
   return {
-    payoutsCount: payoutsCount as T,
+    payoutsCount,
     error,
     loading: !payoutsCount && !error,
   };

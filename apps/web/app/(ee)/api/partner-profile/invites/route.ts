@@ -6,16 +6,16 @@ import {
   MAX_INVITES_PER_REQUEST,
   MAX_PARTNER_USERS,
 } from "@/lib/constants/partner-profile";
+import { prisma } from "@/lib/prisma";
 import {
   getPartnerUsersQuerySchema,
   invitePartnerUserSchema,
   partnerUserSchema,
 } from "@/lib/zod/schemas/partner-profile";
-import { prisma } from "@dub/prisma";
-import { PartnerRole } from "@dub/prisma/client";
 import { isRejected, pluralize } from "@dub/utils";
+import { PartnerRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/partner-profile/invites - get all invites for a partner profile
 export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
@@ -161,8 +161,8 @@ export const POST = withPartnerProfile(
 );
 
 const updateInviteRoleSchema = z.object({
-  email: z.string().email(),
-  role: z.nativeEnum(PartnerRole),
+  email: z.email(),
+  role: z.enum(PartnerRole),
 });
 
 // PATCH /api/partner-profile/invites - update an invite's role
@@ -208,7 +208,7 @@ export const PATCH = withPartnerProfile(
 );
 
 const removeInviteSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
 });
 
 // DELETE /api/partner-profile/invites?email={email} - remove an invite

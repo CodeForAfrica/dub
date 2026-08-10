@@ -1,32 +1,20 @@
 import { withWorkspace } from "@/lib/auth";
-import { tb } from "@/lib/tinybird";
-import { usageQuerySchema, usageResponse } from "@/lib/zod/schemas/usage";
+import { getWorkspaceUsage } from "@/lib/tinybird/get-workspace-usage";
+import { usageQuerySchema } from "@/lib/zod/schemas/usage";
 import { NextResponse } from "next/server";
-import { z } from "zod";
 
-export const GET = withWorkspace(async ({ searchParams, workspace }) => {
-  const { resource, folderId, domain, start, end, timezone } =
-    usageQuerySchema.parse(searchParams);
+export const GET = withWorkspace(
+  async ({ searchParams, workspace }) => {
+    const params = usageQuerySchema.parse(searchParams);
 
-  const pipe = tb.buildPipe({
-    pipe: "v3_usage",
-    // we extend this here since we don't need to include all the additional parameters
-    // in the actual request query schema
-    parameters: usageQuerySchema.extend({
-      workspaceId: z.string(),
-    }),
-    data: usageResponse,
-  });
+    const data = await getWorkspaceUsage({
+      workspaceId: workspace.id,
+      ...params,
+    });
 
-  const response = await pipe({
-    resource,
-    workspaceId: workspace.id,
-    start,
-    end,
-    timezone,
-    ...(folderId && { folderId }),
-    ...(domain && { domain }),
-  });
-
-  return NextResponse.json(response.data);
-});
+    return NextResponse.json(data);
+  },
+  {
+    requiredPermissions: ["workspaces.read"],
+  },
+);

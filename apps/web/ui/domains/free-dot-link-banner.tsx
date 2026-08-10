@@ -1,11 +1,12 @@
 import useWorkspace from "@/lib/swr/use-workspace";
 import { Grid, useLocalStorage } from "@dub/ui";
 import { LinkBroken } from "@dub/ui/icons";
+import { isWorkspaceBillingTrialActive } from "@dub/utils";
 import { useRegisterDomainModal } from "../modals/register-domain-modal";
 import { X } from "../shared/icons";
 
 export function FreeDotLinkBanner() {
-  const { id: workspaceId } = useWorkspace();
+  const { id: workspaceId, trialEndsAt } = useWorkspace();
   const [show, setShow] = useLocalStorage(
     `show-free-dot-link-banner:${workspaceId}`,
     true,
@@ -13,6 +14,10 @@ export function FreeDotLinkBanner() {
 
   const { RegisterDomainModal, setShowRegisterDomainModal } =
     useRegisterDomainModal();
+
+  if (isWorkspaceBillingTrialActive(trialEndsAt)) {
+    return null;
+  }
 
   return (
     show && (
@@ -53,7 +58,7 @@ export function FreeDotLinkBanner() {
           </div>
           <button
             type="button"
-            className="absolute inset-y-0 right-2.5 p-1 text-sm text-green-700 underline transition-colors hover:text-green-900"
+            className="absolute right-2.5 top-2.5 p-1 text-sm text-green-700 underline transition-colors hover:text-green-900 sm:top-1/2 sm:-translate-y-1/2"
             onClick={() => setShow(false)}
           >
             <X className="size-[18px]" />

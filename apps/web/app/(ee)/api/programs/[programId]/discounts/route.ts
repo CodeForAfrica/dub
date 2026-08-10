@@ -1,9 +1,9 @@
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { withWorkspace } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { DiscountSchema } from "@/lib/zod/schemas/discount";
-import { prisma } from "@dub/prisma";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // TODO: Remove once we migrate fully to partner groups
 // GET /api/programs/[programId]/discounts - get all discounts for a program

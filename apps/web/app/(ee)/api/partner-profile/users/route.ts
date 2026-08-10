@@ -2,14 +2,14 @@ import { DubApiError } from "@/lib/api/errors";
 import { parseRequestBody } from "@/lib/api/utils";
 import { withPartnerProfile } from "@/lib/auth/partner";
 import { throwIfNoPermission } from "@/lib/auth/partner-users/throw-if-no-permission";
+import { prisma } from "@/lib/prisma";
 import {
   getPartnerUsersQuerySchema,
   partnerUserSchema,
 } from "@/lib/zod/schemas/partner-profile";
-import { prisma } from "@dub/prisma";
-import { PartnerRole } from "@dub/prisma/client";
+import { PartnerRole } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/partner-profile/users - list of users
 export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
@@ -56,7 +56,7 @@ export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
 
 const updateRoleSchema = z.object({
   userId: z.string(),
-  role: z.nativeEnum(PartnerRole),
+  role: z.enum(PartnerRole),
 });
 
 // PATCH /api/partner-profile/users - update a user's role

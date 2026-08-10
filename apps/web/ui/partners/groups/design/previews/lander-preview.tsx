@@ -242,7 +242,11 @@ export function LanderPreview({ group }: { group: GroupWithProgramProps }) {
             {/* Program rewards */}
             <div className="mx-auto mb-1 mt-6 max-w-screen-sm">
               <div className="px-6">
-                <LanderRewards rewards={rewards} discount={discount} />
+                <LanderRewards
+                  rewards={rewards}
+                  discount={discount}
+                  bounties={group.bounties}
+                />
               </div>
             </div>
 
@@ -325,15 +329,7 @@ export function LanderPreview({ group }: { group: GroupWithProgramProps }) {
 
                     <div className="relative mx-auto max-w-screen-sm" inert>
                       <div className="px-6">
-                        <Component
-                          block={block}
-                          program={{
-                            ...program,
-                            rewards,
-                            discounts: discount,
-                            landerData,
-                          }}
-                        />
+                        <Component block={block} group={group} />
                       </div>
                     </div>
                   </div>
@@ -341,8 +337,16 @@ export function LanderPreview({ group }: { group: GroupWithProgramProps }) {
               })}
 
               {!landerData?.blocks?.length && (
-                <div className="flex justify-center py-10">
-                  <AddBlockButton onClick={() => setAddBlockIndex(0)} />
+                <div className="group/empty relative py-10">
+                  <div className="border-subtle pointer-events-none absolute inset-y-0 left-1/2 w-[1080px] max-w-[calc(100cqw-32px)] -translate-x-1/2 overflow-hidden rounded-xl border opacity-40 transition-opacity duration-300 ease-out group-hover/empty:opacity-100">
+                    <Grid
+                      cellSize={60}
+                      className="text-border-subtle inset-[unset] left-1/2 top-1/2 h-[max(1200px,100%)] w-[1200px] -translate-x-1/2 -translate-y-1/2"
+                    />
+                  </div>
+                  <div className="relative flex justify-center">
+                    <AddBlockButton onClick={() => setAddBlockIndex(0)} />
+                  </div>
                 </div>
               )}
             </div>

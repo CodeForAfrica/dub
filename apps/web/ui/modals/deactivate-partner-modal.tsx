@@ -2,8 +2,9 @@ import { deactivatePartnerAction } from "@/lib/actions/partners/deactivate-partn
 import { mutatePrefix } from "@/lib/swr/mutate";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { PartnerProps } from "@/lib/types";
+import { PartnerAvatar } from "@/ui/partners/partner-avatar";
 import { Button, Modal } from "@dub/ui";
-import { cn, OG_AVATAR_URL } from "@dub/utils";
+import { cn } from "@dub/utils";
 import { useAction } from "next-safe-action/hooks";
 import {
   Dispatch,
@@ -14,6 +15,7 @@ import {
 } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
+import { PartnerEmailNotificationTooltipHelper } from "../shared/partner-email-notification-tooltip-helper";
 
 type DeactivatePartnerFormData = {
   confirm: string;
@@ -84,11 +86,7 @@ function DeactivatePartnerModal({
         <div className="flex flex-col gap-6 bg-neutral-50 p-4 sm:p-6">
           <div className="rounded-lg border border-neutral-200 bg-neutral-100 p-3">
             <div className="flex items-center gap-4">
-              <img
-                src={partner.image || `${OG_AVATAR_URL}${partner.name}`}
-                alt={partner.name}
-                className="size-10 rounded-full bg-white"
-              />
+              <PartnerAvatar partner={partner} className="size-10 bg-white" />
               <div className="flex min-w-0 flex-col">
                 <h4 className="truncate text-sm font-medium text-neutral-900">
                   {partner.name}
@@ -101,9 +99,9 @@ function DeactivatePartnerModal({
           </div>
 
           <p className="text-sm text-neutral-600">
-            This will deactivate the partner and disable all their active links.
-            Their commissions and payouts will remain intact. You can reactivate
-            them later if needed.
+            All active links for this partner will be disabled and they will be{" "}
+            <PartnerEmailNotificationTooltipHelper />. Their commissions and
+            payouts will remain intact. You can reactivate them later if needed.
           </p>
 
           <div>

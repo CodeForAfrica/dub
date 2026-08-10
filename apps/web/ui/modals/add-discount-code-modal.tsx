@@ -16,9 +16,10 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { useDebounce } from "use-debounce";
-import { z } from "zod";
-import { STRIPE_ERROR_MAP } from "../partners/constants";
-import { X } from "../shared/icons";
+import * as z from "zod/v4";
+import { ERROR_MAP } from "../partners/constants";
+import { CustomToast } from "../shared/custom-toast";
+import { AlertCircleFill, X } from "../shared/icons";
 import { UpgradeRequiredToast } from "../shared/upgrade-required-toast";
 
 type FormData = z.infer<typeof createDiscountCodeSchema>;
@@ -40,8 +41,7 @@ const AddDiscountCodeModal = ({
   const formRef = useRef<HTMLFormElement>(null);
   const [debouncedSearch] = useDebounce(search, 500);
   const [, copyToClipboard] = useCopyToClipboard();
-  const { makeRequest: createDiscountCode, isSubmitting } =
-    useApiMutation<DiscountCodeProps>();
+  const { makeRequest, isSubmitting } = useApiMutation<DiscountCodeProps>();
 
   const { register, handleSubmit, setValue, watch } = useForm<FormData>({
     defaultValues: {
@@ -75,7 +75,7 @@ const AddDiscountCodeModal = ({
   }, [partnerLinks, debouncedSearch]);
 
   const onSubmit = async (formData: FormData) => {
-    await createDiscountCode("/api/discount-codes", {
+    await makeRequest("/api/discount-codes", {
       method: "POST",
       body: {
         ...formData,
@@ -88,28 +88,30 @@ const AddDiscountCodeModal = ({
         toast.success("Discount code created and copied to clipboard!");
       },
       onError: (error) => {
-        if (error) {
-          const code = Object.keys(STRIPE_ERROR_MAP).find((key) =>
-            error.startsWith(key),
-          );
+        const code = Object.keys(ERROR_MAP).find((key) =>
+          error.startsWith(key),
+        );
 
-          if (code) {
-            const { title, ctaLabel, ctaUrl } = STRIPE_ERROR_MAP[code];
-            const message = error.replace(`${code}: `, "");
+        if (code) {
+          const { title, ctaLabel, ctaUrl } = ERROR_MAP[code];
+          const message = error.replace(`${code}: `, "");
 
-            toast.custom(() => (
-              <UpgradeRequiredToast
-                title={title}
-                message={message}
-                ctaLabel={ctaLabel}
-                ctaUrl={ctaUrl}
-              />
-            ));
-            return;
-          }
+          toast.custom(() => (
+            <UpgradeRequiredToast
+              title={title}
+              message={message}
+              ctaLabel={ctaLabel}
+              ctaUrl={ctaUrl}
+            />
+          ));
+          return;
+        } else if (error.includes("already in use")) {
+          toast.custom(() => (
+            <CustomToast icon={AlertCircleFill}>{error}</CustomToast>
+          ));
+        } else {
+          toast.error(error);
         }
-
-        toast.error(error);
       },
     });
   };

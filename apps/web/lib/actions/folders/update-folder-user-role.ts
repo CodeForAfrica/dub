@@ -1,10 +1,10 @@
 "use server";
 
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
+import { prisma } from "@/lib/prisma";
 import { PlanProps } from "@/lib/types";
-import { prisma } from "@dub/prisma";
 import { waitUntil } from "@vercel/functions";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { verifyFolderAccess } from "../../folder/permissions";
 import { folderUserRoleSchema } from "../../zod/schemas/folders";
 import { authActionClient } from "../safe-action";
@@ -18,7 +18,7 @@ const schema = z.object({
 
 // Update the folder user role
 export const updateUserRoleInFolder = authActionClient
-  .schema(schema)
+  .inputSchema(schema)
   .action(async ({ ctx, parsedInput }) => {
     const { workspace, user } = ctx;
     const { folderId, userId, role } = parsedInput;

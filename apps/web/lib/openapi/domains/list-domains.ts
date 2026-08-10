@@ -1,7 +1,7 @@
 import { openApiErrorResponses } from "@/lib/openapi/responses";
-import z from "@/lib/zod";
 import { DomainSchema, getDomainsQuerySchema } from "@/lib/zod/schemas/domains";
 import { ZodOpenApiOperationObject } from "zod-openapi";
+import * as z from "zod/v4";
 
 export const listDomains: ZodOpenApiOperationObject = {
   operationId: "listDomains",
@@ -24,9 +24,9 @@ export const listDomains: ZodOpenApiOperationObject = {
       results: "$",
     },
   },
-  summary: "Retrieve a list of domains",
+  summary: "List all domains",
   description:
-    "Retrieve a list of domains associated with the authenticated workspace.",
+    "Retrieve a paginated list of domains for the authenticated workspace.",
   requestParams: {
     query: getDomainsQuerySchema,
   },

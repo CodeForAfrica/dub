@@ -6,8 +6,8 @@ import { E2E_PARTNER } from "../utils/resource";
 import { normalizedPartnerDateFields } from "./resource";
 
 // type coercion for date fields
-const EnrolledPartnerSchema = EnrolledPartnerSchemaDate.merge(
-  normalizedPartnerDateFields,
+const EnrolledPartnerSchema = EnrolledPartnerSchemaDate.extend(
+  normalizedPartnerDateFields.shape,
 );
 
 describe.sequential("GET /partners", async () => {
@@ -115,5 +115,19 @@ describe.sequential("GET /partners", async () => {
       const parsed = EnrolledPartnerSchema.parse(partner);
       expect(parsed.tenantId).toBe(E2E_PARTNER.tenantId);
     });
+  });
+
+  test("filters partners by search partner ID", async () => {
+    const { data, status } = await http.get<EnrolledPartnerProps[]>({
+      path: "/partners",
+      query: {
+        search: E2E_PARTNER.id,
+      },
+    });
+
+    expect(status).toEqual(200);
+    expect(Array.isArray(data)).toBe(true);
+    expect(data.length).toBeGreaterThan(0);
+    expect(data[0].id).toBe(E2E_PARTNER.id);
   });
 });

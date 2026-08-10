@@ -1,16 +1,14 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { verifyVercelSignature } from "@/lib/cron/verify-vercel";
+import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
-import { prisma } from "@dub/prisma";
 import { currencyFormatter } from "@dub/utils";
 import { logAndRespond } from "../utils";
 
 export const dynamic = "force-dynamic";
 
-/*
-    This route is used to trigger withdrawal from Stripe (since we're using manual payouts)
-    Runs twice a day at midnight and noon UTC (0 0 * * * and 0 12 * * *)
-*/
+// This route is used to trigger withdrawal from Stripe (since we're using manual payouts)
+// Runs twice a day at 1AM and 1PM UTC (0 1,13 * * *)
 export async function GET(req: Request) {
   try {
     await verifyVercelSignature(req);
@@ -29,8 +27,14 @@ export async function GET(req: Request) {
       }),
     ]);
 
-    const currentAvailableBalance = stripeBalanceData.available[0].amount; // available to withdraw
-    const currentPendingBalance = stripeBalanceData.pending[0].amount; // balance waiting to settle
+    // available to withdraw (USD)
+    const currentAvailableBalance =
+      stripeBalanceData.available.find((b) => b.currency === "usd")?.amount ??
+      0;
+    // balance waiting to settle (USD)
+    const currentPendingBalance =
+      stripeBalanceData.pending.find((b) => b.currency === "usd")?.amount ?? 0;
+
     // x-slack-ref: https://dub.slack.com/archives/C074P7LMV9C/p1750185638973479
     const currentNetBalance =
       currentPendingBalance < 0

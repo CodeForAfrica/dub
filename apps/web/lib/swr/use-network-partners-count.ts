@@ -1,12 +1,17 @@
 import { useRouterStuff } from "@dub/ui";
 import { fetcher } from "@dub/utils";
 import useSWR, { SWRConfiguration } from "swr";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { getNetworkPartnersCountQuerySchema } from "../zod/schemas/partner-network";
 import useWorkspace from "./use-workspace";
 
 export default function useNetworkPartnersCount<
-  T = { discover: number; invited: number; recruited: number },
+  T = {
+    discover: number;
+    invited: number;
+    recruited: number;
+    ignored: number;
+  },
 >({
   query,
   enabled,

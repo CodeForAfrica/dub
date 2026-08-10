@@ -1,10 +1,11 @@
 import { withPartnerProfile } from "@/lib/auth/partner";
+import { prisma } from "@/lib/prisma";
 import { partnerProfileProgramsQuerySchema } from "@/lib/zod/schemas/partner-profile";
 import { ProgramEnrollmentSchema } from "@/lib/zod/schemas/programs";
-import { prisma } from "@dub/prisma";
+import { NETWORK_PROGRAM_ID } from "@dub/utils";
 import { Reward } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
 
 // GET /api/partner-profile/programs - get all program enrollments for a given partnerId
 export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
@@ -14,7 +15,11 @@ export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
   const programEnrollments = await prisma.programEnrollment.findMany({
     where: {
       partnerId: partner.id,
+      programId: { not: NETWORK_PROGRAM_ID },
       ...(status && { status }),
+      program: {
+        deactivatedAt: null,
+      },
     },
     include: {
       links: {
@@ -32,10 +37,18 @@ export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
           },
         },
       },
+      application: {
+        select: {
+          rejectionReason: true,
+          rejectionNote: true,
+          reviewedAt: true,
+        },
+      },
       ...(includeRewardsDiscounts && {
         clickReward: true,
         leadReward: true,
         saleReward: true,
+        referralReward: true,
         discount: true,
       }),
     },
@@ -44,7 +57,12 @@ export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
         totalCommissions: "desc",
       },
       {
-        createdAt: "asc",
+        program: {
+          marketplaceRanking: "asc",
+        },
+      },
+      {
+        createdAt: "desc",
       },
     ],
   });
@@ -59,6 +77,13 @@ export const GET = withPartnerProfile(async ({ partner, searchParams }) => {
             enrollment.saleReward,
           ].filter((r): r is Reward => r !== null)
         : [],
+      application: enrollment.application
+        ? {
+            rejectionReason: enrollment.application.rejectionReason,
+            rejectionNote: enrollment.application.rejectionNote,
+            reviewedAt: enrollment.application.reviewedAt,
+          }
+        : null,
     };
   });
 

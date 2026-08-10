@@ -3,11 +3,19 @@ import { bulkCreateLinks } from "@/lib/api/links";
 import { generatePartnerLink } from "@/lib/api/partners/generate-partner-link";
 import { qstash } from "@/lib/cron";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { loadAppsFlyerParameters } from "@/lib/integrations/appsflyer/apply-parameters";
+import { AppsFlyerSettings } from "@/lib/integrations/appsflyer/schema";
+import { isAppsFlyerTrackingUrl } from "@/lib/middleware/utils/is-appsflyer-tracking-url";
+import { prisma } from "@/lib/prisma";
 import { WorkspaceProps } from "@/lib/types";
 import { MAX_DEFAULT_LINKS_PER_GROUP } from "@/lib/zod/schemas/groups";
-import { prisma } from "@dub/prisma";
-import { APP_DOMAIN_WITH_NGROK, isFulfilled, log } from "@dub/utils";
-import { z } from "zod";
+import {
+  APP_DOMAIN_WITH_NGROK,
+  isFulfilled,
+  log,
+  prettyPrint,
+} from "@dub/utils";
+import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
 import { remapPartnerGroupDefaultLinks } from "./utils";
 export const dynamic = "force-dynamic";
@@ -15,8 +23,8 @@ export const dynamic = "force-dynamic";
 const schema = z.object({
   programId: z.string(),
   groupId: z.string(),
-  partnerIds: z.array(z.string()).min(1),
-  userId: z.string(),
+  partnerIds: z.array(z.string()),
+  userId: z.string().nullish(),
   isGroupDeleted: z.boolean().optional(),
 });
 
@@ -43,6 +51,12 @@ export async function POST(req: Request) {
     const { programId, groupId, partnerIds, userId, isGroupDeleted } =
       schema.parse(JSON.parse(rawBody));
 
+    if (partnerIds.length === 0) {
+      return logAndRespond(
+        `No partners to remap default links for. Skipping...`,
+      );
+    }
+
     const [program, partnerGroup, programEnrollments] = await Promise.all([
       prisma.program.findUniqueOrThrow({
         where: {
@@ -52,7 +66,8 @@ export async function POST(req: Request) {
           workspace: true,
         },
       }),
-      prisma.partnerGroup.findUniqueOrThrow({
+
+      prisma.partnerGroup.findUnique({
         where: {
           id: groupId,
         },
@@ -61,6 +76,7 @@ export async function POST(req: Request) {
           partnerGroupDefaultLinks: true,
         },
       }),
+
       prisma.programEnrollment.findMany({
         where: {
           partnerId: {
@@ -91,6 +107,10 @@ export async function POST(req: Request) {
         },
       }),
     ]);
+
+    if (!partnerGroup) {
+      return logAndRespond(`Partner group ${groupId} not found. Skipping...`);
+    }
 
     console.log(
       `Updating ${programEnrollments.length} partners to be moved to group ${partnerGroup.name} (${partnerGroup.id}) for program ${program.name} (${program.id}).`,
@@ -123,6 +143,19 @@ export async function POST(req: Request) {
 
     // Create the links
     if (linksToCreate.length > 0) {
+      // Load AppsFlyer parameters if the default link is an AppsFlyer URL
+      let appsFlyerParameters: AppsFlyerSettings["parameters"] = [];
+
+      const hasAppsFlyerUrl = partnerGroup.partnerGroupDefaultLinks.some((dl) =>
+        isAppsFlyerTrackingUrl(dl.url),
+      );
+
+      if (hasAppsFlyerUrl) {
+        appsFlyerParameters = await loadAppsFlyerParameters(
+          program.workspace.id,
+        );
+      }
+
       const processedLinks = (
         await Promise.allSettled(
           linksToCreate.map((link) => {
@@ -153,7 +186,8 @@ export async function POST(req: Request) {
                 tenantId: programEnrollment?.tenantId ?? undefined,
                 partnerGroupDefaultLinkId: link.partnerGroupDefaultLinkId,
               },
-              userId,
+              userId: userId ?? undefined,
+              appsFlyerParameters,
             });
           }),
         )
@@ -217,25 +251,38 @@ export async function POST(req: Request) {
       );
     }
 
-    const res = await qstash.publishJSON({
+    const syncUtmJob = await qstash.publishJSON({
       url: `${APP_DOMAIN_WITH_NGROK}/api/cron/groups/sync-utm`,
       body: {
         groupId,
         partnerIds,
       },
     });
+
     console.log(
-      `Scheduled sync-utm job for group ${groupId}: ${JSON.stringify(res, null, 2)}`,
+      `Scheduled sync-utm job for group ${groupId}: ${prettyPrint(syncUtmJob)}`,
+    );
+
+    const remapDiscountCodesJob = await qstash.publishJSON({
+      url: `${APP_DOMAIN_WITH_NGROK}/api/cron/groups/remap-discount-codes`,
+      body: {
+        programId,
+        partnerIds,
+        groupId,
+        isGroupDeleted,
+      },
+    });
+
+    console.log(
+      `Scheduled remap-discount-codes job for group ${groupId}: ${prettyPrint(remapDiscountCodesJob)}`,
     );
 
     return logAndRespond(`Finished creating default links for the partners.`);
   } catch (error) {
     await log({
-      message: `Error creating default links for the partners: ${error.message}.`,
+      message: `Error remapping default links for the partners: ${error.message}.`,
       type: "errors",
     });
-
-    console.error(error);
 
     return handleAndReturnErrorResponse(error);
   }

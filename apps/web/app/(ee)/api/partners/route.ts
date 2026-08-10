@@ -4,36 +4,68 @@ import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-progr
 import { getProgramOrThrow } from "@/lib/api/programs/get-program-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
 import { withWorkspace } from "@/lib/auth";
+import { throwIfPartnersLimitExceeded } from "@/lib/partners/throw-if-partners-limit-exceeded";
+import { polyfillSocialMediaFields } from "@/lib/social-utils";
 import {
   createPartnerSchema,
   EnrolledPartnerSchema,
   getPartnersQuerySchemaExtended,
+  partnerPlatformSchema,
 } from "@/lib/zod/schemas/partners";
+import { parseFilterValue, toCentsNumber } from "@dub/utils";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import * as z from "zod/v4";
+
+function parsePartnerFilterParams(
+  searchParams: Record<string, string | undefined>,
+) {
+  const partnerTagIdParsed = parseFilterValue(searchParams.partnerTagId);
+  const groupIdParsed = parseFilterValue(searchParams.groupId);
+  const countryParsed = parseFilterValue(searchParams.country);
+
+  return {
+    partnerTagId: partnerTagIdParsed?.values,
+    partnerTagIdOperator: partnerTagIdParsed?.sqlOperator,
+    groupId: groupIdParsed?.values,
+    groupIdOperator: groupIdParsed?.sqlOperator,
+    country: countryParsed?.values,
+    countryOperator: countryParsed?.sqlOperator,
+  };
+}
 
 // GET /api/partners - get all partners for a program
 export const GET = withWorkspace(
   async ({ workspace, searchParams }) => {
     const programId = getDefaultProgramIdOrThrow(workspace);
+    const filterOverrides = parsePartnerFilterParams(searchParams);
+    const paramsToParse = {
+      ...searchParams,
+      ...(filterOverrides.partnerTagId && {
+        partnerTagId: filterOverrides.partnerTagId,
+      }),
+      ...(filterOverrides.groupId !== undefined && {
+        groupId: filterOverrides.groupId,
+      }),
+      ...(filterOverrides.country !== undefined && {
+        country: filterOverrides.country,
+      }),
+    };
     const { sortBy: sortByWithOldFields, ...parsedParams } =
       getPartnersQuerySchemaExtended
-        .merge(
-          z.object({
-            // add old fields for backward compatibility
-            sortBy: getPartnersQuerySchemaExtended.shape.sortBy.or(
-              z.enum([
-                "clicks",
-                "leads",
-                "conversions",
-                "sales",
-                "saleAmount",
-                "totalSales",
-              ]),
-            ),
-          }),
-        )
-        .parse(searchParams);
+        .extend({
+          // add old fields for backward compatibility
+          sortBy: getPartnersQuerySchemaExtended.shape.sortBy.or(
+            z.enum([
+              "clicks",
+              "leads",
+              "conversions",
+              "sales",
+              "saleAmount",
+              "totalSales",
+            ]),
+          ),
+        })
+        .parse(paramsToParse);
 
     // get the final sortBy field (replace old fields with new fields)
     const sortBy =
@@ -49,44 +81,48 @@ export const GET = withWorkspace(
     console.time("getPartners");
     const partners = await getPartners({
       ...parsedParams,
+      partnerTagId: filterOverrides.partnerTagId ?? parsedParams.partnerTagId,
+      partnerTagIdOperator: filterOverrides.partnerTagIdOperator,
+      groupId: filterOverrides.groupId ?? parsedParams.groupId,
+      groupIdOperator: filterOverrides.groupIdOperator,
+      country: filterOverrides.country ?? parsedParams.country,
+      countryOperator: filterOverrides.countryOperator,
       sortBy,
       programId,
     });
     console.timeEnd("getPartners");
 
     // polyfill deprecated fields for backward compatibility
+    const baseSchema = EnrolledPartnerSchema.extend({
+      clicks: z.number().default(0),
+      leads: z.number().default(0),
+      conversions: z.number().default(0),
+      sales: z.number().default(0),
+      saleAmount: z.number().default(0),
+    });
+
+    const responseSchema = parsedParams.includePartnerPlatforms
+      ? baseSchema.extend({
+          platforms: z.array(partnerPlatformSchema),
+        })
+      : baseSchema;
+
     return NextResponse.json(
-      z
-        .array(
-          EnrolledPartnerSchema.extend({
-            clicks: z.number().default(0),
-            leads: z.number().default(0),
-            conversions: z.number().default(0),
-            sales: z.number().default(0),
-            saleAmount: z.number().default(0),
-          }),
-        )
-        .parse(
-          partners.map((partner) => ({
-            ...partner,
-            clicks: partner.totalClicks,
-            leads: partner.totalLeads,
-            conversions: partner.totalConversions,
-            sales: partner.totalSales,
-            saleAmount: partner.totalSaleAmount,
-          })),
-        ),
+      z.array(responseSchema).parse(
+        partners.map((partner) => ({
+          ...partner,
+          clicks: partner.totalClicks,
+          leads: partner.totalLeads,
+          conversions: partner.totalConversions,
+          sales: partner.totalSales,
+          saleAmount: toCentsNumber(partner.totalSaleAmount),
+          ...polyfillSocialMediaFields(partner.platforms),
+        })),
+      ),
     );
   },
   {
-    requiredPlan: [
-      "business",
-      "business extra",
-      "business max",
-      "business plus",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );
 
@@ -104,6 +140,8 @@ export const POST = withWorkspace(
       programId,
     });
 
+    throwIfPartnersLimitExceeded(workspace);
+
     const enrolledPartner = await createAndEnrollPartner({
       workspace,
       program,
@@ -117,6 +155,7 @@ export const POST = withWorkspace(
     });
   },
   {
-    requiredPlan: ["advanced", "enterprise"],
+    requiredPlan: ["business", "advanced", "enterprise"],
+    requiredRoles: ["owner", "member"],
   },
 );

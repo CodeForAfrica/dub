@@ -1,6 +1,8 @@
+import { prisma } from "@/lib/prisma";
 import { getLinksQuerySchemaExtended } from "@/lib/zod/schemas/links";
-import { prisma } from "@dub/prisma";
-import { z } from "zod";
+import * as z from "zod/v4";
+import { DubApiError } from "../errors";
+import { buildPaginationQuery } from "../pagination";
 import { combineTagIds } from "../tags/combine-tag-ids";
 import { encodeKeyIfCaseSensitive } from "./case-sensitivity";
 import { transformLink } from "./utils";
@@ -13,39 +15,58 @@ export interface GetLinksForWorkspaceProps
   endDate?: Date;
 }
 
-export async function getLinksForWorkspace({
-  workspaceId,
-  domain,
-  tagId,
-  tagIds,
-  tagNames,
-  search,
-  searchMode,
-  sort, // Deprecated
-  sortBy,
-  sortOrder,
-  page,
-  pageSize,
-  userId,
-  showArchived,
-  withTags,
-  folderId,
-  folderIds,
-  linkIds,
-  includeUser,
-  includeWebhooks,
-  includeDashboard,
-  tenantId,
-  partnerId,
-  startDate,
-  endDate,
-}: GetLinksForWorkspaceProps) {
-  const combinedTagIds = combineTagIds({ tagId, tagIds });
+export async function getLinksForWorkspace(filters: GetLinksForWorkspaceProps) {
+  let {
+    workspaceId,
+    domain,
+    tagId,
+    tagIds,
+    tagNames,
+    search,
+    searchMode,
+    userId,
+    showArchived,
+    withTags,
+    folderId,
+    folderIds,
+    linkIds,
+    includeUser,
+    includeWebhooks,
+    includeDashboard,
+    tenantId,
+    partnerId,
+    startDate,
+    endDate,
+  } = filters;
 
-  // support legacy sort param
-  if (sort && sort !== "createdAt") {
-    sortBy = sort;
+  const paginationQuery = buildPaginationQuery({
+    ...filters,
+    sortOrder: "desc",
+  });
+
+  // Validate the provided cursor ID
+  const cursorId = filters.startingAfter || filters.endingBefore;
+
+  if (cursorId) {
+    const link = await prisma.link.findUnique({
+      where: {
+        id: cursorId,
+      },
+      select: {
+        id: true,
+        projectId: true,
+      },
+    });
+
+    if (!link || link.projectId !== workspaceId) {
+      throw new DubApiError({
+        code: "unprocessable_entity",
+        message: "Invalid cursor: the provided ID does not exist.",
+      });
+    }
   }
+
+  const combinedTagIds = combineTagIds({ tagId, tagIds });
 
   if (searchMode === "exact" && search) {
     try {
@@ -104,7 +125,9 @@ export async function getLinksForWorkspace({
                   ],
                 }),
                 ...(searchMode === "exact" && {
-                  shortLink: { startsWith: search },
+                  [search.startsWith("https://") ? "shortLink" : "key"]: {
+                    startsWith: search,
+                  },
                 }),
               },
             ]
@@ -160,11 +183,7 @@ export async function getLinksForWorkspace({
       webhooks: includeWebhooks,
       dashboard: includeDashboard,
     },
-    orderBy: {
-      [sortBy]: sortOrder,
-    },
-    take: pageSize,
-    skip: (page - 1) * pageSize,
+    ...paginationQuery,
   });
 
   return links.map((link) => transformLink(link));

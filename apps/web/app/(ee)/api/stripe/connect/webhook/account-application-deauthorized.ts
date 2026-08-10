@@ -1,7 +1,10 @@
-import { prisma } from "@dub/prisma";
+import { recomputePartnerPayoutState } from "@/lib/payouts/recompute-partner-payout-state";
+import { prisma } from "@/lib/prisma";
 import type Stripe from "stripe";
 
-export async function accountApplicationDeauthorized(event: Stripe.Event) {
+export async function accountApplicationDeauthorized(
+  event: Stripe.AccountApplicationDeauthorizedEvent,
+) {
   const stripeAccount = event.account;
 
   if (!stripeAccount) {
@@ -12,21 +15,38 @@ export async function accountApplicationDeauthorized(event: Stripe.Event) {
     where: {
       stripeConnectId: stripeAccount,
     },
+    select: {
+      id: true,
+      email: true,
+      stripeConnectId: true,
+      stripeRecipientId: true,
+      paypalEmail: true,
+      payoutsEnabledAt: true,
+      defaultPayoutMethod: true,
+      tremendousEmail: true,
+    },
   });
 
   if (!partner) {
     return `Partner with stripeConnectId ${stripeAccount} not found, skipping...`;
   }
 
+  const { payoutsEnabledAt, defaultPayoutMethod } =
+    await recomputePartnerPayoutState({
+      ...partner,
+      stripeConnectId: null,
+    });
+
   await prisma.partner.update({
     where: {
       id: partner.id,
     },
     data: {
-      payoutsEnabledAt: null,
-      payoutMethodHash: null,
+      stripeConnectId: null,
+      payoutsEnabledAt,
+      defaultPayoutMethod,
     },
   });
 
-  return `Connected account deauthorized, updated partner ${partner.email} (${partner.stripeConnectId}) with payoutsEnabledAt and payoutMethodHash null`;
+  return `Connected account ${stripeAccount} deauthorized, removed stripeConnectId for partner ${partner.email} (${partner.id})`;
 }

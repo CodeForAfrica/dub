@@ -16,16 +16,16 @@ import { parseRequestBody } from "@/lib/api/utils";
 import { withWorkspace } from "@/lib/auth";
 import { exceededLimitError } from "@/lib/exceeded-limit-error";
 import {
-  checkFolderPermissions,
   verifyFolderAccess,
+  verifyFolderAccessBulk,
 } from "@/lib/folder/permissions";
+import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import { NewLinkProps, ProcessedLinkProps } from "@/lib/types";
 import {
   bulkCreateLinksBodySchema,
   bulkUpdateLinksBodySchema,
 } from "@/lib/zod/schemas/links";
-import { prisma } from "@dub/prisma";
 import { R2_URL } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
@@ -173,8 +173,8 @@ export const POST = withWorkspace(
         ),
       ];
 
-      const folderPermissions = await checkFolderPermissions({
-        workspaceId: workspace.id,
+      const folderPermissions = await verifyFolderAccessBulk({
+        workspace,
         userId: session.user.id,
         folderIds,
         requiredPermission: "folders.links.write",
@@ -300,8 +300,9 @@ export const PATCH = withWorkspace(
           })),
       );
 
-    let { tagNames, expiresAt } = data;
+    let { tagNames, expiresAt, webhookIds } = data;
     const tagIds = combineTagIds(data);
+
     // tag checks
     if (tagIds && tagIds.length > 0) {
       const tags = await prisma.tag.findMany({
@@ -336,6 +337,34 @@ export const PATCH = withWorkspace(
       }
     }
 
+    // Webhook checks
+    if (webhookIds && webhookIds.length > 0) {
+      const webhooks = await prisma.webhook.findMany({
+        where: {
+          id: {
+            in: webhookIds,
+          },
+          projectId: workspace.id,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const invalidWebhookIds = webhookIds.filter(
+        (id) => !webhooks.some((webhook) => webhook.id === id),
+      );
+
+      if (invalidWebhookIds.length > 0) {
+        throw new DubApiError({
+          code: "unprocessable_entity",
+          message: `Invalid webhookIds detected: ${invalidWebhookIds.join(", ")}`,
+        });
+      }
+
+      data.webhookIds = webhooks.map((webhook) => webhook.id);
+    }
+
     if (data.folderId) {
       await verifyFolderAccess({
         workspace,
@@ -350,8 +379,8 @@ export const PATCH = withWorkspace(
         new Set(links.map((link) => link.folderId).filter(Boolean) as string[]),
       );
 
-      const folderPermissions = await checkFolderPermissions({
-        workspaceId: workspace.id,
+      const folderPermissions = await verifyFolderAccessBulk({
+        workspace,
         userId: session.user.id,
         folderIds,
         requiredPermission: "folders.links.write",
@@ -368,7 +397,7 @@ export const PATCH = withWorkspace(
 
         if (!validFolder?.hasPermission) {
           errorLinks.push({
-            error: `You don't have permission to move this link to the folder: ${link.folderId}`,
+            error: `You don't have permission to update links in this folder: ${link.folderId}`,
             code: "forbidden",
             link,
           });
@@ -522,8 +551,8 @@ export const DELETE = withWorkspace(
         ),
       ];
 
-      const folderPermissions = await checkFolderPermissions({
-        workspaceId: workspace.id,
+      const folderPermissions = await verifyFolderAccessBulk({
+        workspace,
         userId: session.user.id,
         folderIds,
         requiredPermission: "folders.links.write",

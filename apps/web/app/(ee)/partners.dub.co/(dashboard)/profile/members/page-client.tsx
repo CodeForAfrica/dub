@@ -8,9 +8,8 @@ import { useInvitePartnerUserModal } from "@/ui/modals/invite-partner-user-modal
 import { useRemovePartnerUserModal } from "@/ui/modals/remove-partner-user-modal";
 import { useUpdatePartnerUserModal } from "@/ui/modals/update-partner-user-modal";
 import { SearchBoxPersisted } from "@/ui/shared/search-box";
-import { PartnerRole } from "@dub/prisma/client";
+import { UserAvatar } from "@/ui/users/user-avatar";
 import {
-  Avatar,
   Button,
   Filter,
   Popover,
@@ -30,6 +29,7 @@ import {
   UserCrown,
 } from "@dub/ui/icons";
 import { cn, fetcher, timeAgo } from "@dub/utils";
+import { PartnerRole } from "@prisma/client";
 import { ColumnDef, Row } from "@tanstack/react-table";
 import { Command } from "cmdk";
 import { UserMinus, UserPlus } from "lucide-react";
@@ -67,6 +67,12 @@ export function ProfileMembersPageClient() {
       keepPreviousData: true,
     },
   );
+
+  const { data: invitesForCount } = useSWR<PartnerUserProps[]>(
+    defaultPartnerId ? "/api/partner-profile/invites" : null,
+    fetcher,
+  );
+  const inviteCount = invitesForCount?.length ?? 0;
 
   const isCurrentUserOwner = partner?.role === "owner";
 
@@ -138,7 +144,7 @@ export function ProfileMembersPageClient() {
 
           return (
             <div className="flex items-center space-x-3">
-              <Avatar user={user} />
+              <UserAvatar user={user} />
               <div className="flex flex-col">
                 <h3 className="text-sm font-medium">
                   {user.name || user.email}
@@ -171,9 +177,6 @@ export function ProfileMembersPageClient() {
       {
         id: "menu",
         enableHiding: false,
-        minSize: 43,
-        size: 43,
-        maxSize: 43,
         header: () => null,
         cell: ({ row }) => (
           <RowMenuButton row={row} isCurrentUserOwner={isCurrentUserOwner} />
@@ -223,6 +226,11 @@ export function ProfileMembersPageClient() {
       <InvitePartnerUserModal />
       <PageContent
         title="Members"
+        titleInfo={{
+          title:
+            "Learn how to invite team members, assign roles, and manage access to your partner profile.",
+          href: "https://dub.co/help/article/managing-partner-teams",
+        }}
         controls={
           isCurrentUserOwner && (
             <Button
@@ -234,14 +242,36 @@ export function ProfileMembersPageClient() {
           )
         }
       >
-        <PageWidthWrapper className="mb-20 flex flex-col gap-4">
+        <PageWidthWrapper className="mb-20 flex flex-col gap-2">
           <div className="flex justify-between gap-3">
-            <Filter.Select
-              filters={filters}
-              activeFilters={activeFilters}
-              onSelect={onSelect}
-              onRemove={onRemove}
-            />
+            <div className="flex items-center gap-2">
+              <Filter.Select
+                filters={filters}
+                activeFilters={activeFilters}
+                onSelect={onSelect}
+                onRemove={onRemove}
+              />
+              {inviteCount && status !== "invited" ? (
+                <Button
+                  text="View pending invites"
+                  variant="secondary"
+                  className="w-fit"
+                  right={
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 text-xs font-medium",
+                        "bg-neutral-200 text-neutral-700",
+                      )}
+                    >
+                      {inviteCount}
+                    </span>
+                  }
+                  onClick={() =>
+                    queryParams({ set: { status: "invited" }, del: "page" })
+                  }
+                />
+              ) : undefined}
+            </div>
             <SearchBoxPersisted
               placeholder="Search by name or email"
               inputClassName="w-full md:w-[20rem]"

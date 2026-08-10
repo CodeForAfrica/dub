@@ -1,15 +1,19 @@
 "use client";
 
+import { parseActionError } from "@/lib/actions/parse-action-errors";
 import { updateGroupBrandingAction } from "@/lib/actions/partners/update-group-branding";
 import useGroup from "@/lib/swr/use-group";
 import useWorkspace from "@/lib/swr/use-workspace";
 import {
   GroupWithProgramProps,
+  PartnerGroupProps,
   ProgramApplicationFormData,
   ProgramLanderData,
   ProgramProps,
 } from "@/lib/types";
 import LayoutLoader from "@/ui/layout/layout-loader";
+import { useConfirmModal } from "@/ui/modals/confirm-modal";
+import { ThreeDots } from "@/ui/shared/icons";
 import {
   Brush,
   Button,
@@ -26,7 +30,6 @@ import { useAction } from "next-safe-action/hooks";
 import { useEffect, useMemo, useState } from "react";
 import { FormProvider, useForm, useFormContext } from "react-hook-form";
 import { toast } from "sonner";
-import { KeyedMutator } from "swr";
 import { v4 as uuid } from "uuid";
 import {
   BrandingContextProvider,
@@ -39,7 +42,7 @@ import { LanderPreview } from "./previews/lander-preview";
 export type BrandingFormData = {
   applicationFormData: ProgramApplicationFormData;
   landerData: ProgramLanderData;
-} & Pick<ProgramProps, "logo" | "wordmark" | "brandColor">;
+} & Pick<PartnerGroupProps, "logo" | "wordmark" | "brandColor">;
 
 export function useBrandingFormContext() {
   return useFormContext<BrandingFormData>();
@@ -73,13 +76,8 @@ export function BrandingForm() {
   }
 
   return (
-    <BrandingContextProvider>
-      <BrandingFormInner
-        group={group}
-        mutateGroup={mutateGroup}
-        draft={draft}
-        setDraft={setDraft}
-      />
+    <BrandingContextProvider group={group} mutateGroup={mutateGroup}>
+      <BrandingFormInner draft={draft} setDraft={setDraft} />
     </BrandingContextProvider>
   );
 }
@@ -160,13 +158,9 @@ const dateIsAfter = (
 };
 
 function BrandingFormInner({
-  group,
-  mutateGroup,
   draft,
   setDraft,
 }: {
-  group: GroupWithProgramProps;
-  mutateGroup: KeyedMutator<GroupWithProgramProps>;
   draft: DraftData | null;
   setDraft: (draft: DraftData | null) => void;
 }) {
@@ -176,13 +170,15 @@ function BrandingFormInner({
     PREVIEW_TABS.find(({ value }) => searchParams.get("tab") === value) ||
     PREVIEW_TABS[0];
 
+  const { group, mutateGroup } = useBrandingContext();
+
   const [isSidePanelOpen, setIsSidePanelOpen] = useState(true);
 
   const form = useForm<BrandingFormData>({
     defaultValues: {
-      logo: group.program?.logo ?? draft?.logo ?? null,
-      wordmark: group.program?.wordmark ?? draft?.wordmark ?? null,
-      brandColor: group.program?.brandColor ?? draft?.brandColor ?? null,
+      logo: group.logo ?? draft?.logo ?? null,
+      wordmark: group.wordmark ?? draft?.wordmark ?? null,
+      brandColor: group.brandColor ?? draft?.brandColor ?? null,
       applicationFormData:
         group.applicationFormData ?? defaultApplicationFormData(group.program),
       landerData: group.landerData ?? { blocks: [] },
@@ -196,8 +192,6 @@ function BrandingFormInner({
     formState: { isDirty, isSubmitting, isSubmitSuccessful },
     getValues,
     setValue,
-
-    resetField,
   } = form;
 
   useEffect(() => {
@@ -231,9 +225,33 @@ function BrandingFormInner({
       });
     },
     onError({ error }) {
-      const message = error.serverError || "Failed to update application form.";
+      const message = parseActionError(
+        error,
+        "Failed to update application form.",
+      );
       toast.error(message);
-      setError("root", { message });
+    },
+  });
+
+  const {
+    confirmModal: unpublishModal,
+    setShowConfirmModal: setShowUnpublishModal,
+  } = useConfirmModal({
+    title: "Unpublish pages",
+    description:
+      "Are you sure you want to unpublish the landing page and application form? They will no longer be publicly accessible.",
+    confirmText: "Unpublish",
+    onConfirm: async () => {
+      await executeAsync({
+        workspaceId: workspaceId!,
+        groupId: group.id,
+        logo: group.logo,
+        wordmark: group.wordmark,
+        brandColor: group.brandColor,
+        applicationFormData: group.applicationFormData,
+        landerData: group.landerData,
+        unpublish: true,
+      });
     },
   });
 
@@ -337,13 +355,12 @@ function BrandingFormInner({
           </div>
           <div className="flex grow basis-0 items-center justify-end gap-4">
             <Drafts draft={draft} setDraft={setDraft} />
-            <Button
-              type="submit"
-              variant="primary"
-              text="Publish"
-              loading={isPending || isSubmitting || isSubmitSuccessful}
-              disabled={!publishButtonActive}
-              className="h-8 w-fit px-3"
+            {unpublishModal}
+            <PublishMenu
+              isPending={isPending || isSubmitting || isSubmitSuccessful}
+              publishButtonActive={publishButtonActive}
+              onUnpublish={() => setShowUnpublishModal(true)}
+              isPublished={!!group.landerPublishedAt}
             />
           </div>
         </div>
@@ -440,4 +457,68 @@ function Drafts({
   return isDirty ? (
     <span className="text-content-muted text-sm">Unsaved draft</span>
   ) : null;
+}
+
+function PublishMenu({
+  isPending,
+  publishButtonActive,
+  onUnpublish,
+  isPublished,
+}: {
+  isPending: boolean;
+  publishButtonActive: boolean;
+  onUnpublish: () => void;
+  isPublished: boolean;
+}) {
+  const [openPopover, setOpenPopover] = useState(false);
+
+  if (!isPublished) {
+    return (
+      <Button
+        type="submit"
+        variant="primary"
+        text="Publish"
+        loading={isPending}
+        disabled={!publishButtonActive}
+        className="h-8 w-fit px-3"
+      />
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        type="submit"
+        variant="primary"
+        text="Publish"
+        loading={isPending}
+        disabled={!publishButtonActive}
+        className="h-8 w-fit px-3"
+      />
+      <Popover
+        openPopover={openPopover}
+        setOpenPopover={setOpenPopover}
+        content={
+          <div className="grid w-screen gap-px p-2 sm:w-48">
+            <MenuItem
+              onClick={() => {
+                setOpenPopover(false);
+                onUnpublish();
+              }}
+            >
+              Unpublish
+            </MenuItem>
+          </div>
+        }
+        align="end"
+      >
+        <Button
+          variant="secondary"
+          className="h-8 px-1.5"
+          icon={<ThreeDots className="h-5 w-5 shrink-0" />}
+          onClick={() => setOpenPopover(!openPopover)}
+        />
+      </Popover>
+    </div>
+  );
 }

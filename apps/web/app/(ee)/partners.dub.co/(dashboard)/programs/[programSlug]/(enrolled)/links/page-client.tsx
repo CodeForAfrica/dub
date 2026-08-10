@@ -41,7 +41,7 @@ export function usePartnerLinksContext() {
   return context;
 }
 
-export function ProgramLinksPageClient() {
+export function PartnerProgramLinksPageClient() {
   const { searchParamsObj } = useRouterStuff();
   const { links, error, loading, isValidating } = usePartnerLinks();
   const { programEnrollment, showDetailedAnalytics } = useProgramEnrollment();
@@ -82,19 +82,27 @@ export function ProgramLinksPageClient() {
     enabled: canCreateNewLink ?? false,
   });
 
+  const showAllTimeAnalytics =
+    !showDetailedAnalytics || displayOption === "cards";
+
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <PartnerLinkModal />
       <div className="flex items-center justify-between">
         <SimpleDateRangePicker
           className="w-fit"
           align="start"
-          defaultInterval={DUB_PARTNERS_ANALYTICS_INTERVAL}
+          defaultInterval={
+            showAllTimeAnalytics ? "all" : DUB_PARTNERS_ANALYTICS_INTERVAL
+          }
+          disabled={showAllTimeAnalytics}
         />
         <div className="flex items-center gap-3">
           {!!showDetailedAnalytics && (
             <ToggleGroup
-              className="rounded-lg"
+              className="h-10 rounded-lg px-1"
+              optionClassName="px-2 rounded-md"
+              indicatorClassName="border-0 ring-1 ring-inset ring-neutral-200"
               options={[
                 {
                   value: "full",

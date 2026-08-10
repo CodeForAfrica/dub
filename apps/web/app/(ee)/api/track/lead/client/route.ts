@@ -23,7 +23,7 @@ export const POST = withPublishableKey(
     if (!allowRequest) {
       throw new DubApiError({
         code: "forbidden",
-        message: `Request origin '${getHostnameFromRequest(req)}' is not included in the allowed hostnames for this workspace. Update your allowed hostnames here: https://app.dub.co/settings/analytics`,
+        message: `Request origin '${getHostnameFromRequest(req)}' is not included in the allowed hostnames for this workspace. Update your allowed hostnames here: https://app.dub.co/settings/tracking`,
       });
     }
 
@@ -49,21 +49,13 @@ export const POST = withPublishableKey(
       customerAvatar,
       mode,
       metadata,
-      rawBody: body,
       workspace,
     });
 
     return NextResponse.json(response, { headers: COMMON_CORS_HEADERS });
   },
   {
-    requiredPlan: [
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["business", "advanced", "enterprise"],
   },
 );
 

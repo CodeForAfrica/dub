@@ -1,10 +1,11 @@
+import { useLinkTagsCount } from "@/lib/swr/use-link-tags-count";
 import useTags from "@/lib/swr/use-tags";
-import useTagsCount from "@/lib/swr/use-tags-count";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { TagProps } from "@/lib/types";
 import { TAGS_MAX_PAGE_SIZE } from "@/lib/zod/schemas/tags";
 import { LinkFormData } from "@/ui/links/link-builder/link-builder-provider";
 import TagBadge from "@/ui/links/tag-badge";
+import { useCompletion } from "@ai-sdk/react";
 import {
   AnimatedSizeContainer,
   Combobox,
@@ -14,9 +15,7 @@ import {
   Tooltip,
 } from "@dub/ui";
 import { cn } from "@dub/utils";
-import { useCompletion } from "ai/react";
-import posthog from "posthog-js";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { mutate } from "swr";
@@ -44,7 +43,7 @@ export const TagSelect = memo(() => {
   const [search, setSearch] = useState("");
   const [debouncedSearch] = useDebounce(search, 500);
 
-  const { data: tagsCount } = useTagsCount();
+  const { data: tagsCount } = useLinkTagsCount();
   const useAsync = tagsCount && tagsCount > TAGS_MAX_PAGE_SIZE;
 
   const { tags: availableTags, loading: loadingTags } = useTags({
@@ -61,6 +60,16 @@ export const TagSelect = memo(() => {
     name: ["tags", "id", "url", "title", "description"],
   });
   const [debouncedUrl] = useDebounce(url, 500);
+
+  const tagResolutionCacheRef = useRef<Map<string, TagProps>>(new Map());
+  const prevLinkIdRef = useRef<string | undefined>(undefined);
+  if (linkId !== prevLinkIdRef.current) {
+    tagResolutionCacheRef.current = new Map();
+    prevLinkIdRef.current = linkId;
+  }
+  for (const t of [...(tags ?? []), ...(availableTags ?? [])]) {
+    if (t?.id) tagResolutionCacheRef.current.set(t.id, t);
+  }
 
   const [isOpen, setIsOpen] = useState(false);
 
@@ -88,15 +97,23 @@ export const TagSelect = memo(() => {
     return false;
   };
 
-  const options = useMemo(
-    () => availableTags?.map((tag) => getTagOption(tag)),
-    [availableTags],
-  );
+  const options = useMemo(() => {
+    if (loadingTags || availableTags === undefined) return undefined;
+    const apiIds = new Set(availableTags.map((t) => t.id));
+    const notOnCurrentPage = [...tagResolutionCacheRef.current.values()].filter(
+      (t) => t?.id && !apiIds.has(t.id),
+    );
+    return [...availableTags, ...notOnCurrentPage].map((tag) =>
+      getTagOption(tag),
+    );
+  }, [availableTags, loadingTags, tags]);
 
-  const selectedTags = useMemo(
-    () => tags.map((tag) => getTagOption(tag)),
-    [tags],
-  );
+  const selectedTags = useMemo(() => {
+    const resolved = (tags ?? []).filter(
+      (tag): tag is TagProps => tag != null && tag.id != null,
+    );
+    return resolved.map((tag) => getTagOption(tag));
+  }, [tags]);
 
   useLinkBuilderKeyboardShortcut("t", () => setIsOpen(true), {
     priority: 2,
@@ -106,8 +123,9 @@ export const TagSelect = memo(() => {
 
   const { complete } = useCompletion({
     api: `/api/ai/completion?workspaceId=${workspaceId}`,
+    streamProtocol: "text",
     body: {
-      model: "claude-3-5-haiku-latest",
+      model: "claude-haiku-4-5",
     },
     onFinish: (_, completion) => {
       mutateWorkspace();
@@ -155,9 +173,7 @@ export const TagSelect = memo(() => {
       <div className="mb-1 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-neutral-700">Tags</p>
-          <InfoTooltip
-            content={`Tags are used to organize your links in your ${process.env.NEXT_PUBLIC_APP_NAME} dashboard. [Learn more.](https://dub.co/help/article/how-to-use-tags)`}
-          />
+          <InfoTooltip content="Tags are used to organize your links in your Dub dashboard. [Learn more.](https://dub.co/help/article/how-to-use-tags)" />
         </div>
         <a
           href={`/${slug}/settings/library/tags`}
@@ -172,15 +188,17 @@ export const TagSelect = memo(() => {
         selected={selectedTags}
         setSelected={(newTags) => {
           const selectedIds = newTags.map(({ value }) => value);
-          setValue(
-            "tags",
-            selectedIds.map((id) =>
-              [...(availableTags || []), ...(tags || [])]?.find(
-                (t) => t.id === id,
-              ),
-            ),
-            { shouldDirty: true },
-          );
+          const lookup = new Map<string, TagProps>();
+          for (const t of [...(availableTags ?? []), ...(tags ?? [])]) {
+            if (t?.id) lookup.set(t.id, t);
+          }
+          for (const t of tagResolutionCacheRef.current.values()) {
+            if (t?.id && !lookup.has(t.id)) lookup.set(t.id, t);
+          }
+          const nextTags = selectedIds
+            .map((id) => lookup.get(id))
+            .filter((t): t is TagProps => t != null);
+          setValue("tags", nextTags, { shouldDirty: true });
           setSuggestedTags((tags) =>
             tags.filter(({ id }) => !selectedIds.includes(id)),
           );
@@ -240,10 +258,6 @@ export const TagSelect = memo(() => {
                   setSuggestedTags((tags) =>
                     tags.filter(({ id }) => id !== tag.id),
                   );
-                  posthog.capture("ai_suggested_tag_selected", {
-                    tag: tag.name,
-                    url: url,
-                  });
                 }}
                 className="group flex items-center transition-all active:scale-95"
               >

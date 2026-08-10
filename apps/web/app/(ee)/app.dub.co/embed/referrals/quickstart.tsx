@@ -1,4 +1,6 @@
-import { Program } from "@dub/prisma/client";
+import { constructPartnerLink } from "@/lib/partners/construct-partner-link";
+import { TREMENDOUS_ENABLED_PROGRAM_IDS } from "@/lib/tremendous/constants";
+import { programEmbedSchema } from "@/lib/zod/schemas/program-embed";
 import {
   Button,
   Carousel,
@@ -11,44 +13,44 @@ import {
   useCopyToClipboard,
   useMediaQuery,
 } from "@dub/ui";
-import { cn, DUB_LOGO } from "@dub/utils";
+import { cn, DUB_LOGO, TREMENDOUS_SUPPORTED_COUNTRIES } from "@dub/utils";
 import { motion } from "motion/react";
-import { ReferralsEmbedLink } from "./types";
+import { useReferralsEmbedData } from "./page-client";
 
-const BUTTON_CLASSNAME = "h-9 rounded-lg bg-bg-inverted hover:bg-neutral-800";
+const BUTTON_CLASSNAME =
+  "bg-bg-inverted text-content-inverted h-9 rounded-lg hover:opacity-80";
 
 export function ReferralsEmbedQuickstart({
-  program,
-  links,
-  earnings,
   hasResources,
   setSelectedTab,
 }: {
-  program: Program;
-  links: ReferralsEmbedLink[];
-  earnings: {
-    upcoming: number;
-    paid: number;
-  };
   hasResources: boolean;
-  setSelectedTab: (tab: "Links" | "Resources") => void;
+  setSelectedTab: (tab: "Links" | "Resources" | "FAQ" | "Settings") => void;
 }) {
-  const [copied, copyToClipboard] = useCopyToClipboard();
   const { isMobile } = useMediaQuery();
+  const [copied, copyToClipboard] = useCopyToClipboard();
+  const { partner, program, group, links, earnings } = useReferralsEmbedData();
+
+  const programEmbedData = programEmbedSchema.parse(program.embedData);
 
   const payoutsDisabled = earnings.upcoming === 0 && earnings.paid === 0;
 
   const items = [
     {
       title: "Share your link",
-      description: `Sharing is caring! Recommend ${program.name} to all your friends, family, and social followers.`,
+      description: `Use your ${program.name} link to drive traffic and track every click, lead, and conversion.`,
       illustration: <ShareLink />,
       cta: (
         <Button
           className={BUTTON_CLASSNAME}
           onClick={() => {
             if (links.length > 0) {
-              copyToClipboard(links[0].shortLink);
+              copyToClipboard(
+                constructPartnerLink({
+                  group,
+                  link: links[0],
+                }),
+              );
             } else {
               setSelectedTab("Links");
             }
@@ -86,10 +88,10 @@ export function ReferralsEmbedQuickstart({
       ),
     },
     {
-      title: "Success kit",
+      title: "Program resources",
       description:
-        "Make sure you get setup for success with the official brand files and supportive content and documents.",
-      illustration: <SuccessKit logo={program.logo ?? DUB_LOGO} />,
+        "Access files, assets, and materials provided to support you, anywhere you share your link.",
+      illustration: <SuccessKit logo={group.logo ?? DUB_LOGO} />,
       cta: (
         <Button
           className="h-9 rounded-lg"
@@ -101,26 +103,66 @@ export function ReferralsEmbedQuickstart({
         />
       ),
     },
-    {
-      title: "Receive earnings",
-      description:
-        "After your payouts are connected, you'll get paid out automatically for all your sales.",
-      illustration: <ConnectPayouts logo={program.logo ?? DUB_LOGO} />,
-      cta: (
-        <Button
-          className={payoutsDisabled ? "h-9 rounded-lg" : BUTTON_CLASSNAME}
-          disabledTooltip={
-            payoutsDisabled
-              ? "You will be able to withdraw your earnings once you have made at least one sale."
-              : undefined
-          }
-          onClick={() =>
-            window.open("https://partners.dub.co/payouts", "_blank")
-          }
-          text="Connect payouts"
-        />
-      ),
-    },
+    ...(programEmbedData?.hideEarnings
+      ? [
+          {
+            title: "Browse the FAQ",
+            description:
+              "Find answers about this program, how referrals are tracked, and what happens after you share your link.",
+            illustration: <FaqAccordionList />,
+            cta: (
+              <Button
+                className="h-9 rounded-lg"
+                text="View FAQs"
+                onClick={() => setSelectedTab("FAQ")}
+              />
+            ),
+          },
+        ]
+      : [
+          {
+            title: "Receive earnings",
+            description:
+              "Connect payouts to get rewarded for the activity you drive, with earnings tracked automatically.",
+            illustration: <ConnectPayouts logo={group.logo ?? DUB_LOGO} />,
+            cta: (
+              <Button
+                className={
+                  payoutsDisabled ? "h-9 rounded-lg" : BUTTON_CLASSNAME
+                }
+                disabledTooltip={
+                  payoutsDisabled
+                    ? "You will be able to withdraw your earnings once you have made at least one sale."
+                    : undefined
+                }
+                onClick={() => {
+                  const isTremendousCountrySupported = Boolean(
+                    !partner.country ||
+                      TREMENDOUS_SUPPORTED_COUNTRIES.includes(partner.country),
+                  );
+
+                  const usesTremendous =
+                    partner.defaultPayoutMethod === "tremendous";
+
+                  // Show Tremendous payout settings if the partner already uses Tremendous,
+                  // or hasn't selected a payout method yet and is eligible based on country.
+                  const showTremendousSettings =
+                    TREMENDOUS_ENABLED_PROGRAM_IDS.includes(program.id) &&
+                    (usesTremendous ||
+                      (!partner.defaultPayoutMethod &&
+                        isTremendousCountrySupported));
+
+                  if (showTremendousSettings) {
+                    setSelectedTab("Settings");
+                  } else {
+                    window.open("https://partners.dub.co/payouts", "_blank");
+                  }
+                }}
+                text="Connect payouts"
+              />
+            ),
+          },
+        ]),
   ];
 
   return (
@@ -176,6 +218,146 @@ const BG_MUTED = "rgb(var(--bg-muted))";
 const BG_DEFAULT = "rgb(var(--bg-default))";
 const BORDER_SUBTLE = "rgb(var(--border-subtle))";
 const CONTENT_SUBTLE = "rgb(var(--content-subtle))";
+
+/** Accordion-style FAQ list illustration (matches 194×121 quickstart art). */
+const FaqAccordionList = () => (
+  <svg
+    width="194"
+    height="121"
+    viewBox="0 0 194 121"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className="h-auto w-full"
+    aria-hidden
+  >
+    <rect width="194" height="121" fill={BG_MUTED} />
+    <rect
+      x="20.5"
+      y="11.5"
+      width="153"
+      height="98"
+      rx="10.5"
+      fill={BG_DEFAULT}
+      stroke={BORDER_SUBTLE}
+    />
+    {/* Expanded item — header */}
+    <rect x="28" y="19" width="138" height="18" rx="5" fill={BG_MUTED} />
+    <rect
+      x="36"
+      y="25.5"
+      width="72"
+      height="3"
+      rx="1.5"
+      fill={CONTENT_SUBTLE}
+      opacity={0.45}
+    />
+    <rect
+      x="36"
+      y="31"
+      width="48"
+      height="3"
+      rx="1.5"
+      fill={CONTENT_SUBTLE}
+      opacity={0.32}
+    />
+    {/* × — expanded (rotated +) */}
+    <path
+      d="M155.25 25.25l5.5 5.5M160.75 25.25l-5.5 5.5"
+      stroke={CONTENT_SUBTLE}
+      strokeWidth="1.25"
+      strokeLinecap="round"
+    />
+    {/* Expanded item — answer body */}
+    <rect
+      x="28"
+      y="39"
+      width="138"
+      height="22"
+      rx="5"
+      fill={BG_DEFAULT}
+      stroke={BORDER_SUBTLE}
+    />
+    <rect
+      x="36"
+      y="46"
+      width="98"
+      height="2.5"
+      rx="1.25"
+      fill={CONTENT_SUBTLE}
+      opacity={0.38}
+    />
+    <rect
+      x="36"
+      y="52"
+      width="76"
+      height="2.5"
+      rx="1.25"
+      fill={CONTENT_SUBTLE}
+      opacity={0.28}
+    />
+    <rect
+      x="36"
+      y="58"
+      width="56"
+      height="2.5"
+      rx="1.25"
+      fill={CONTENT_SUBTLE}
+      opacity={0.22}
+    />
+    {/* Collapsed row 2 */}
+    <rect
+      x="28"
+      y="65"
+      width="138"
+      height="17"
+      rx="5"
+      fill={BG_DEFAULT}
+      stroke={BORDER_SUBTLE}
+    />
+    <rect
+      x="36"
+      y="72"
+      width="68"
+      height="3"
+      rx="1.5"
+      fill={CONTENT_SUBTLE}
+      opacity={0.42}
+    />
+    {/* + — collapsed */}
+    <path
+      d="M155.25 73.5h5.5M158 71.25v5.5"
+      stroke={CONTENT_SUBTLE}
+      strokeWidth="1.25"
+      strokeLinecap="round"
+    />
+    {/* Collapsed row 3 */}
+    <rect
+      x="28"
+      y="86"
+      width="138"
+      height="17"
+      rx="5"
+      fill={BG_DEFAULT}
+      stroke={BORDER_SUBTLE}
+    />
+    <rect
+      x="36"
+      y="93"
+      width="58"
+      height="3"
+      rx="1.5"
+      fill={CONTENT_SUBTLE}
+      opacity={0.38}
+    />
+    {/* + — collapsed */}
+    <path
+      d="M155.25 94.5h5.5M158 92.25v5.5"
+      stroke={CONTENT_SUBTLE}
+      strokeWidth="1.25"
+      strokeLinecap="round"
+    />
+  </svg>
+);
 
 const ShareLink = () => {
   return (

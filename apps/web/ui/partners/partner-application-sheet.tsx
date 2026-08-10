@@ -1,10 +1,8 @@
-import { approvePartnerAction } from "@/lib/actions/partners/approve-partner";
-import { rejectPartnerAction } from "@/lib/actions/partners/reject-partner";
 import { mutatePrefix } from "@/lib/swr/mutate";
-import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { EnrolledPartnerProps } from "@/lib/types";
-import { useConfirmModal } from "@/ui/modals/confirm-modal";
+import { useApprovePartnerApplicationModal } from "@/ui/modals/approve-partner-application-modal";
+import { useRejectPartnerApplicationModal } from "@/ui/modals/reject-partner-application-modal";
 import { X } from "@/ui/shared/icons";
 import {
   Button,
@@ -15,10 +13,8 @@ import {
   useKeyboardShortcut,
   useRouterStuff,
 } from "@dub/ui";
-import { useAction } from "next-safe-action/hooks";
 import Link from "next/link";
 import { Dispatch, SetStateAction, useEffect, useState } from "react";
-import { toast } from "sonner";
 import { PartnerAbout } from "./partner-about";
 import { PartnerApplicationDetails } from "./partner-application-details";
 import { PartnerComments } from "./partner-comments";
@@ -127,6 +123,7 @@ function PartnerApplicationSheetContent({
               selectedGroupId,
               setSelectedGroupId,
             })}
+            showApplicationRiskAnalysis={true}
           />
         </div>
         <div className="@3xl/sheet:order-1">
@@ -172,15 +169,11 @@ function PartnerApplicationAbout({
 }) {
   return (
     <div className="grid grid-cols-1 gap-5 text-sm text-neutral-600">
-      {partner.applicationId && (
-        <>
-          <h3 className="text-content-emphasis text-lg font-semibold">
-            Application
-          </h3>
-          <PartnerApplicationDetails applicationId={partner.applicationId} />
-          <hr className="border-neutral-200" />
-        </>
-      )}
+      <PartnerApplicationDetails
+        partnerId={partner.id}
+        preferredApplicationId={partner.applicationId ?? null}
+      />
+      <hr className="border-neutral-200" />
       <PartnerAbout partner={partner} />
     </div>
   );
@@ -208,7 +201,7 @@ export function PartnerApplicationSheet({
     <Sheet
       open={isOpen}
       onOpenChange={rest.setIsOpen}
-      onClose={() => queryParams({ del: "partnerId", scroll: false })}
+      onClose={() => queryParams({ del: "partnerId" })}
       nested={nested}
       contentProps={{
         // 540px - 1170px width based on viewport
@@ -231,42 +224,26 @@ function PartnerApproval({
   setIsOpen: Dispatch<SetStateAction<boolean>>;
   onNext?: () => void;
 }) {
-  const { id: workspaceId } = useWorkspace();
-  const { program } = useProgram();
-
-  const { executeAsync, isPending } = useAction(approvePartnerAction, {
-    onSuccess: () => {
-      onNext ? onNext() : setIsOpen(false);
-      toast.success(`Successfully approved ${partner.email} to your program.`);
-      mutatePrefix("/api/partners");
-    },
-    onError({ error }) {
-      toast.error(error.serverError || "Failed to approve partner.");
-    },
-  });
-
-  const { setShowConfirmModal, confirmModal } = useConfirmModal({
-    title: "Approve Partner",
-    description: "Are you sure you want to approve this partner application?",
-    confirmText: "Approve",
-    confirmShortcut: "a",
-    confirmShortcutOptions: { sheet: true, modal: true },
+  const {
+    ApprovePartnerApplicationModal,
+    setShowApprovePartnerApplicationModal,
+  } = useApprovePartnerApplicationModal({
+    partner,
+    groupId,
     onConfirm: async () => {
-      if (!program || !workspaceId) return;
-
-      await executeAsync({
-        workspaceId: workspaceId,
-        partnerId: partner.id,
-        groupId,
-      });
+      onNext ? onNext() : setIsOpen(false);
+      await mutatePrefix("/api/partners");
     },
+    confirmShortcutOptions: { sheet: true, modal: true },
   });
 
-  useKeyboardShortcut("a", () => setShowConfirmModal(true), { sheet: true });
+  useKeyboardShortcut("a", () => setShowApprovePartnerApplicationModal(true), {
+    sheet: true,
+  });
 
   return (
     <>
-      {confirmModal}
+      {ApprovePartnerApplicationModal}
       <div className="flex justify-end gap-2">
         {partner.status !== "rejected" && (
           <div className="flex-shrink-0">
@@ -282,8 +259,7 @@ function PartnerApproval({
           variant="primary"
           text="Approve"
           shortcut="A"
-          loading={isPending}
-          onClick={() => setShowConfirmModal(true)}
+          onClick={() => setShowApprovePartnerApplicationModal(true)}
           className="w-fit shrink-0"
         />
       </div>
@@ -300,51 +276,32 @@ function PartnerRejectButton({
   setIsOpen: Dispatch<SetStateAction<boolean>>;
   onNext?: () => void;
 }) {
-  const { id: workspaceId } = useWorkspace();
-
-  const { executeAsync: rejectPartner, isPending } = useAction(
-    rejectPartnerAction,
-    {
-      onSuccess: () => {
-        onNext ? onNext() : setIsOpen(false);
-        toast.success(
-          `Partner ${partner.email} has been rejected from your program.`,
-        );
-        mutatePrefix("/api/partners");
-      },
-      onError({ error }) {
-        toast.error(error.serverError || "Failed to reject partner.");
-      },
-    },
-  );
-
-  const { setShowConfirmModal, confirmModal } = useConfirmModal({
-    title: "Reject Application",
-    description: "Are you sure you want to reject this partner application?",
-    confirmText: "Reject",
-    confirmShortcut: "r",
-    confirmShortcutOptions: { sheet: true, modal: true },
+  const {
+    RejectPartnerApplicationModal,
+    setShowRejectPartnerApplicationModal,
+  } = useRejectPartnerApplicationModal({
+    partner,
     onConfirm: async () => {
-      await rejectPartner({
-        workspaceId: workspaceId!,
-        partnerId: partner.id,
-      });
+      onNext ? onNext() : setIsOpen(false);
+      await mutatePrefix("/api/partners");
     },
+    confirmShortcutOptions: { sheet: true, modal: true },
   });
 
-  useKeyboardShortcut("r", () => setShowConfirmModal(true), { sheet: true });
+  useKeyboardShortcut("r", () => setShowRejectPartnerApplicationModal(true), {
+    sheet: true,
+  });
 
   return (
     <>
-      {confirmModal}
+      {RejectPartnerApplicationModal}
       <Button
         type="button"
         variant="secondary"
-        text={isPending ? "" : "Reject"}
-        loading={isPending}
+        text="Reject"
         shortcut="R"
         onClick={() => {
-          setShowConfirmModal(true);
+          setShowRejectPartnerApplicationModal(true);
         }}
         className="px-4"
       />

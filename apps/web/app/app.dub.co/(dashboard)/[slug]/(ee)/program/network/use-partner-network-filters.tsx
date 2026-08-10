@@ -1,4 +1,5 @@
 import useNetworkPartnersCount from "@/lib/swr/use-network-partners-count";
+import { CountryFlag } from "@/ui/shared/country-flag";
 import { useRouterStuff } from "@dub/ui";
 import { FlagWavy } from "@dub/ui/icons";
 import { COUNTRIES, nFormatter } from "@dub/utils";
@@ -7,7 +8,7 @@ import { useCallback, useMemo } from "react";
 export function usePartnerNetworkFilters({
   status,
 }: {
-  status: "discover" | "invited" | "recruited";
+  status: "discover" | "invited" | "recruited" | "ignored";
 }) {
   const { searchParamsObj, queryParams } = useRouterStuff();
 
@@ -30,13 +31,9 @@ export function usePartnerNetworkFilters({
       {
         key: "country",
         icon: FlagWavy,
-        label: "Location",
+        label: "Partner country",
         getOptionIcon: (value) => (
-          <img
-            alt={value}
-            src={`https://flag.vercel.app/m/${value}.svg`}
-            className="h-2.5 w-4"
-          />
+          <CountryFlag countryCode={value} className="size-3.5 rounded-full" />
         ),
         getOptionLabel: (value) => COUNTRIES[value],
         options:
@@ -105,12 +102,15 @@ export function usePartnerNetworkFilters({
   const onRemoveAll = useCallback(
     () =>
       queryParams({
-        del: ["country", "starred"],
+        del: ["country", "starred", "platform", "sortBy"],
       }),
     [queryParams],
   );
 
-  const isFiltered = activeFilters.length > 0 || searchParamsObj.search;
+  const isFiltered =
+    activeFilters.length > 0 ||
+    !!searchParamsObj.platform ||
+    !!searchParamsObj.search;
 
   return {
     filters,

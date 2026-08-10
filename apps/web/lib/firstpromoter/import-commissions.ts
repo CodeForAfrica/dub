@@ -1,6 +1,6 @@
+import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@dub/email";
 import ProgramImported from "@dub/email/templates/program-imported";
-import { prisma } from "@dub/prisma";
 import { nanoid } from "@dub/utils";
 import { CommissionStatus, Customer, Link, Program } from "@prisma/client";
 import { convertCurrencyWithFxRates } from "../analytics/convert-currency";
@@ -22,7 +22,7 @@ import { FirstPromoterCommission, FirstPromoterImportPayload } from "./types";
 const toDubStatus: Record<FirstPromoterCommission["status"], CommissionStatus> =
   {
     pending: "pending",
-    approved: "processed",
+    approved: "pending",
     denied: "canceled",
   };
 
@@ -57,14 +57,29 @@ export async function importCommissions(payload: FirstPromoterImportPayload) {
       break;
     }
 
+    const commissionCustomers = commissions
+      .map(({ referral }) => referral)
+      .filter((c): c is NonNullable<typeof c> => c !== null && c !== undefined);
+
     const customersData = await prisma.customer.findMany({
       where: {
         projectId: program.workspaceId,
-        email: {
-          in: commissions
-            .map(({ referral }) => referral?.email)
-            .filter((email): email is string => email !== null),
-        },
+        OR: [
+          {
+            email: {
+              in: commissionCustomers.map(
+                ({ email }) => email.replace(" (moved)", ""), // remove the (moved) suffix
+              ),
+            },
+          },
+          {
+            externalId: {
+              in: commissionCustomers
+                .map(({ uid }) => uid)
+                .filter((c): c is NonNullable<typeof c> => c !== null),
+            },
+          },
+        ],
       },
       include: {
         link: true,
@@ -188,7 +203,6 @@ async function createCommission({
   });
 
   if (commissionFound) {
-    console.log(`Commission ${commission.id} already exists, skipping...`);
     return;
   }
 
@@ -231,12 +245,12 @@ async function createCommission({
   const chargedAt = new Date(commission.created_at);
   const trackedCommission = await prisma.commission.findFirst({
     where: {
+      customerId: customer.id,
       programId: program.id,
       createdAt: {
         gte: new Date(chargedAt.getTime() - 60 * 60 * 1000), // 1 hour before
         lte: new Date(chargedAt.getTime() + 60 * 60 * 1000), // 1 hour after
       },
-      customerId: customer.id,
       type: "sale",
       amount: saleAmount,
     },
@@ -388,6 +402,7 @@ async function createCommission({
         saleAmount: {
           increment: saleAmount,
         },
+        firstSaleAt: customer.firstSaleAt ? undefined : new Date(),
       },
     }),
   ]);

@@ -1,4 +1,6 @@
+import { generateRandomName } from "@/lib/names";
 import { LeaderboardPartnerSchema } from "@/lib/zod/schemas/partners";
+import { PartnerAvatar } from "@/ui/partners/partner-avatar";
 import { AnimatedEmptyState } from "@/ui/shared/animated-empty-state";
 import {
   Crown,
@@ -12,7 +14,7 @@ import { currencyFormatter, fetcher } from "@dub/utils";
 import { cn } from "@dub/utils/src/functions";
 import { motion } from "motion/react";
 import useSWR from "swr";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { useEmbedToken } from "../../embed/use-embed-token";
 
 export function ReferralsEmbedLeaderboard() {
@@ -65,14 +67,10 @@ export function ReferralsEmbedLeaderboard() {
         cell: ({ row }) => {
           return (
             <div className="flex items-center gap-2">
-              <img
-                src={row.original.image}
-                alt={row.original.name}
-                className="size-5 rounded-full"
-              />
+              <PartnerAvatar partner={row.original} className="size-5" />
               <Tooltip content="For privacy reasons, the name of the partner is anonymized.">
                 <span className="cursor-help text-sm font-medium decoration-dotted underline-offset-2 hover:underline">
-                  {row.original.name}
+                  {generateRandomName(row.original.id)}
                 </span>
               </Tooltip>
             </div>

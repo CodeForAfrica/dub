@@ -1,7 +1,7 @@
 import { useRouterStuff } from "@dub/ui";
 import { fetcher } from "@dub/utils";
 import useSWR from "swr";
-import { z } from "zod";
+import * as z from "zod/v4";
 import { PartnersCount } from "../types";
 import { partnersCountQuerySchema } from "../zod/schemas/partners";
 import useWorkspace from "./use-workspace";
@@ -11,7 +11,6 @@ export default function usePartnersCount<T>({
   enabled,
   ...params
 }: z.infer<typeof partnersCountQuerySchema> & {
-  programId?: string;
   ignoreParams?: boolean;
   enabled?: boolean;
 } = {}) {
@@ -21,8 +20,7 @@ export default function usePartnersCount<T>({
   const queryString = ignoreParams
     ? // @ts-ignore
       `?${new URLSearchParams({
-        ...(params.groupBy && { groupBy: params.groupBy }),
-        ...(params.status && { status: params.status }),
+        ...params,
         workspaceId,
       }).toString()}`
     : getQueryString(
@@ -35,7 +33,11 @@ export default function usePartnersCount<T>({
         },
       );
 
-  const { data: partnersCount, error } = useSWR<PartnersCount>(
+  const {
+    data: partnersCount,
+    error,
+    isValidating,
+  } = useSWR<PartnersCount>(
     enabled !== false && defaultProgramId
       ? `/api/partners/count${queryString}`
       : null,
@@ -49,5 +51,6 @@ export default function usePartnersCount<T>({
     partnersCount: partnersCount as T,
     error,
     loading: enabled !== false && !error && partnersCount === undefined,
+    isValidating,
   };
 }

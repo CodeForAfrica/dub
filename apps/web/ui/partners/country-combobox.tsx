@@ -1,3 +1,4 @@
+import { CountryFlag } from "@/ui/shared/country-flag";
 import { Combobox } from "@dub/ui";
 import { cn, COUNTRIES } from "@dub/utils";
 import { ReactNode, useMemo } from "react";
@@ -8,12 +9,16 @@ export function CountryCombobox({
   disabledTooltip,
   error,
   className,
+  open,
+  onOpenChange,
 }: {
   value: string;
   onChange: (value: string) => void;
   disabledTooltip?: string | ReactNode;
   error?: boolean;
   className?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const options = useMemo(
     () =>
@@ -21,13 +26,7 @@ export function CountryCombobox({
         // show United States first
         .sort((a, b) => (a[0] === "US" ? -1 : b[0] === "US" ? 1 : 0))
         .map(([key, value]) => ({
-          icon: (
-            <img
-              alt={value}
-              src={`https://hatscripts.github.io/circle-flags/flags/${key.toLowerCase()}.svg`}
-              className="mr-1.5 size-4"
-            />
-          ),
+          icon: <CountryFlag countryCode={key} className="mr-1.5" />,
           value: key,
           label: value,
         })),
@@ -44,11 +43,7 @@ export function CountryCombobox({
       options={options}
       icon={
         value ? (
-          <img
-            alt={COUNTRIES[value]}
-            src={`https://hatscripts.github.io/circle-flags/flags/${value.toLowerCase()}.svg`}
-            className="mr-0.5 size-4"
-          />
+          <CountryFlag countryCode={value} className="mr-0.5" />
         ) : undefined
       }
       caret={true}
@@ -67,6 +62,8 @@ export function CountryCombobox({
         ),
         disabledTooltip,
       }}
+      open={open}
+      onOpenChange={onOpenChange}
     />
   );
 }

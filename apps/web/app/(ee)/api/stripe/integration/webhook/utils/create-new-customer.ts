@@ -3,13 +3,13 @@ import { includeTags } from "@/lib/api/links/include-tags";
 import { syncPartnerLinksStats } from "@/lib/api/partners/sync-partner-links-stats";
 import { executeWorkflows } from "@/lib/api/workflows/execute-workflows";
 import { generateRandomName } from "@/lib/names";
-import { createPartnerCommission } from "@/lib/partners/create-partner-commission";
+import { constructWebhookPartner } from "@/lib/partners/constuct-webhook-partner";
+import { sendPartnerPostback } from "@/lib/postback/send-partner-postback";
+import { prisma } from "@/lib/prisma";
 import { getClickEvent, recordLead } from "@/lib/tinybird";
-import { WebhookPartner } from "@/lib/types";
+import { redis } from "@/lib/upstash";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { transformLeadEventData } from "@/lib/webhook/transform";
-import { prisma } from "@dub/prisma";
-import { WorkflowTrigger } from "@dub/prisma/client";
 import { nanoid } from "@dub/utils";
 import { waitUntil } from "@vercel/functions";
 import type Stripe from "stripe";
@@ -17,18 +17,24 @@ import type Stripe from "stripe";
 export async function createNewCustomer(event: Stripe.Event) {
   const stripeCustomer = event.data.object as Stripe.Customer;
   const stripeAccountId = event.account as string;
-  const dubCustomerExternalId = stripeCustomer.metadata?.dubCustomerId;
+  const dubCustomerExternalId =
+    stripeCustomer.metadata?.dubCustomerExternalId ||
+    stripeCustomer.metadata?.dubCustomerId;
   const clickId = stripeCustomer.metadata?.dubClickId;
 
   // The client app should always send dubClickId (dub_id) via metadata
   if (!clickId) {
-    return "Click ID not found in Stripe customer metadata, skipping...";
+    return {
+      response: "Click ID not found in Stripe customer metadata, skipping...",
+    };
   }
 
   // Find click
   const clickData = await getClickEvent({ clickId });
   if (!clickData) {
-    return `Click event with ID ${clickId} not found, skipping...`;
+    return {
+      response: `Click event with ID ${clickId} not found, skipping...`,
+    };
   }
 
   // Find link
@@ -40,19 +46,24 @@ export async function createNewCustomer(event: Stripe.Event) {
   });
 
   if (!link || !link.projectId) {
-    return `Link with ID ${linkId} not found or does not have a project, skipping...`;
+    return {
+      response: `Link with ID ${linkId} not found or does not have a project, skipping...`,
+      workspaceId: link?.projectId ? link.projectId : undefined,
+    };
   }
 
   // Create a customer
   const customer = await prisma.customer.create({
     data: {
       id: createId({ prefix: "cus_" }),
-      name: stripeCustomer.name || generateRandomName(),
+      name: stripeCustomer.name || stripeCustomer.email || generateRandomName(),
       email: stripeCustomer.email,
       stripeCustomerId: stripeCustomer.id,
       projectConnectId: stripeAccountId,
       externalId: dubCustomerExternalId,
       projectId: link.projectId,
+      programId: link.programId,
+      partnerId: link.partnerId,
       linkId,
       clickId,
       clickedAt: new Date(clickData.timestamp + "Z"),
@@ -70,9 +81,14 @@ export async function createNewCustomer(event: Stripe.Event) {
     customer_id: customer.id,
   };
 
-  const [_lead, linkUpdated, workspace] = await Promise.all([
-    // Record lead
+  const [_lead, _leadCached, linkUpdated, workspace] = await Promise.all([
+    // record lead event in Tinybird
     recordLead(leadData),
+
+    // cache lead event in Redis because the ingested event is not available immediately on Tinybird
+    redis.set(`leadCache:${customer.id}`, leadData, {
+      ex: 60 * 5,
+    }),
 
     // update link leads count + lastLeadAt date
     prisma.link.update({
@@ -101,61 +117,92 @@ export async function createNewCustomer(event: Stripe.Event) {
     }),
   ]);
 
-  let webhookPartner: WebhookPartner | undefined;
   if (link.programId && link.partnerId) {
-    const createdCommission = await createPartnerCommission({
-      event: "lead",
-      programId: link.programId,
-      partnerId: link.partnerId,
-      linkId: link.id,
-      eventId: leadData.event_id,
-      customerId: customer.id,
-      quantity: 1,
-      context: {
-        customer: {
-          country: customer.country,
-        },
-      },
-    });
-    webhookPartner = createdCommission?.webhookPartner;
+    waitUntil(
+      Promise.allSettled([
+        executeWorkflows({
+          trigger: "partnerMetricsUpdated",
+          reason: "lead",
+          identity: {
+            workspaceId: workspace.id,
+            programId: link.programId,
+            partnerId: link.partnerId,
+          },
+          metrics: {
+            current: {
+              leads: 1,
+            },
+          },
+        }),
+
+        syncPartnerLinksStats({
+          partnerId: link.partnerId,
+          programId: link.programId,
+          eventType: "lead",
+        }),
+      ]),
+    );
   }
 
   waitUntil(
-    Promise.allSettled([
-      sendWorkspaceWebhook({
-        trigger: "lead.created",
-        workspace,
-        data: transformLeadEventData({
-          ...clickData,
-          eventName,
-          link: linkUpdated,
-          customer,
-          partner: webhookPartner,
-          metadata: null,
-        }),
-      }),
+    (async () => {
+      let webhookPartner:
+        | ReturnType<typeof constructWebhookPartner>
+        | undefined;
 
-      ...(link.programId && link.partnerId
-        ? [
-            executeWorkflows({
-              trigger: WorkflowTrigger.leadRecorded,
-              context: {
-                programId: link.programId,
-                partnerId: link.partnerId,
-                current: {
-                  leads: 1,
-                },
-              },
-            }),
-            syncPartnerLinksStats({
+      if (link.programId && link.partnerId) {
+        const programEnrollment = await prisma.programEnrollment.findUnique({
+          where: {
+            partnerId_programId: {
               partnerId: link.partnerId,
               programId: link.programId,
-              eventType: "lead",
-            }),
-          ]
-        : []),
-    ]),
+            },
+          },
+          include: {
+            partner: true,
+            links: true,
+          },
+        });
+
+        webhookPartner = programEnrollment
+          ? constructWebhookPartner(programEnrollment)
+          : undefined;
+      }
+
+      await Promise.allSettled([
+        sendWorkspaceWebhook({
+          trigger: "lead.created",
+          workspace,
+          data: transformLeadEventData({
+            ...clickData,
+            eventName,
+            link: linkUpdated,
+            customer,
+            partner: webhookPartner,
+            metadata: null,
+          }),
+        }),
+
+        ...(link.partnerId
+          ? [
+              sendPartnerPostback({
+                partnerId: link.partnerId,
+                event: "lead.created",
+                data: {
+                  ...clickData,
+                  eventName,
+                  link: linkUpdated,
+                  customer,
+                },
+              }),
+            ]
+          : []),
+      ]);
+    })(),
   );
 
-  return `New Dub customer created: ${customer.id}. Lead event recorded: ${leadData.event_id}`;
+  return {
+    response: `New Dub customer created: ${customer.id}. Lead event recorded: ${leadData.event_id}`,
+    workspaceId: workspace.id,
+  };
 }

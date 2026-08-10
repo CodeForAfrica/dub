@@ -5,13 +5,13 @@ import { withWorkspace } from "@/lib/auth";
 import { exceededLimitError } from "@/lib/exceeded-limit-error";
 import { getFolders } from "@/lib/folder/get-folders";
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
+import { prisma } from "@/lib/prisma";
 import {
   createFolderSchema,
   FolderSchema,
   listFoldersQuerySchema,
 } from "@/lib/zod/schemas/folders";
-import { prisma } from "@dub/prisma";
-import { Prisma } from "@dub/prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 // GET /api/folders - get all folders for a workspace
@@ -34,15 +34,6 @@ export const GET = withWorkspace(
   },
   {
     requiredPermissions: ["folders.read"],
-    requiredPlan: [
-      "pro",
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
   },
 );
 
@@ -136,14 +127,6 @@ export const POST = withWorkspace(
   },
   {
     requiredPermissions: ["folders.write"],
-    requiredPlan: [
-      "pro",
-      "business",
-      "business plus",
-      "business extra",
-      "business max",
-      "advanced",
-      "enterprise",
-    ],
+    requiredPlan: ["pro", "business", "advanced", "enterprise"],
   },
 );

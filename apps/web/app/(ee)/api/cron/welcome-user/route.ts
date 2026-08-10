@@ -1,16 +1,20 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
+import { generateUnsubscribeToken } from "@/lib/email/unsubscribe-token";
+import { prisma } from "@/lib/prisma";
 import { sendEmail } from "@dub/email";
-import { subscribe } from "@dub/email/resend/subscribe";
 import WelcomeEmail from "@dub/email/templates/welcome-email";
 import WelcomeEmailPartner from "@dub/email/templates/welcome-email-partner";
-import { prisma } from "@dub/prisma";
+import { APP_DOMAIN, PARTNERS_DOMAIN } from "@dub/utils";
 
 export const dynamic = "force-dynamic";
 
 /*
     This route is used to send a welcome email to new users + subscribe them to the corresponding Resend audience
-    It is called by QStash 15 minutes after a user is created.
+    It is called by QStash 45 minutes after a user is created.
+
+    Trial sequence: users who later start a paid-plan trial also receive marketing emails from
+    `/api/cron/trial-emails` when due; that flow is additive (this welcome is not skipped).
 */
 export async function POST(req: Request) {
   try {
@@ -27,6 +31,24 @@ export async function POST(req: Request) {
         name: true,
         email: true,
         partners: true,
+        projects: {
+          select: {
+            project: {
+              select: {
+                slug: true,
+                name: true,
+                logo: true,
+                plan: true,
+                trialEndsAt: true,
+                defaultProgramId: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
+          take: 1,
+        },
       },
     });
 
@@ -41,30 +63,41 @@ export async function POST(req: Request) {
 
     const isPartner = user.partners.length > 0;
 
-    await Promise.allSettled([
-      sendEmail({
+    const unsubscribeUrl = `${isPartner ? PARTNERS_DOMAIN : APP_DOMAIN}/unsubscribe/${generateUnsubscribeToken(user.email)}`;
+
+    if (isPartner) {
+      await sendEmail({
         to: user.email,
-        replyTo: isPartner ? "noreply" : "steven.tey@dub.co",
-        subject: `Welcome to Dub${isPartner ? " Partners" : ""}!`,
-        react: isPartner
-          ? WelcomeEmailPartner({
-              email: user.email,
-              name: user.name,
-            })
-          : WelcomeEmail({
-              email: user.email,
-              name: user.name,
-            }),
+        replyTo: "steven.tey@dub.co",
+        subject: "Welcome to Dub Partners!",
+        react: WelcomeEmailPartner({
+          email: user.email,
+          name: user.name,
+          unsubscribeUrl,
+        }),
         variant: "marketing",
-      }),
-      // only subscribe non-partner users to the mailing list
-      !isPartner
-        ? subscribe({
-            email: user.email,
-            name: user.name || undefined,
-          })
-        : Promise.resolve(),
-    ]);
+      });
+
+      // only send WelcomeEmail if the user has a workspace that:
+      // - is not in a trial
+      // - hasn't created a program yet
+    } else if (
+      user.projects.length > 0 &&
+      user.projects[0].project.trialEndsAt === null &&
+      user.projects[0].project.defaultProgramId === null
+    ) {
+      await sendEmail({
+        to: user.email,
+        replyTo: "steven.tey@dub.co",
+        subject: "Welcome to Dub!",
+        react: WelcomeEmail({
+          email: user.email,
+          workspace: user.projects[0].project,
+          unsubscribeUrl,
+        }),
+        variant: "marketing",
+      });
+    }
 
     return new Response("Welcome email sent and user subscribed.", {
       status: 200,

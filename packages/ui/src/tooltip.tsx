@@ -4,10 +4,12 @@ import { cn } from "@dub/utils";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { HelpCircle } from "lucide-react";
 import Link from "next/link";
-import { ReactNode, useState } from "react";
+import { isValidElement, ReactNode, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Badge } from "./badge";
 import { Button, ButtonProps, buttonVariants } from "./button";
+import { useScrollProgress } from "./hooks/use-scroll-progress";
+import { PROSE_STYLES } from "./rich-text-area";
 
 export function TooltipProvider({ children }: { children: ReactNode }) {
   return (
@@ -29,17 +31,28 @@ const TooltipMarkdown = ({
       className={cn(
         "prose prose-sm prose-neutral max-w-xs text-pretty px-4 py-2 text-center leading-snug transition-all",
         "prose-a:cursor-alias prose-a:underline prose-a:decoration-dotted prose-a:underline-offset-2",
+        "prose-code:inline-block prose-code:leading-none",
+        PROSE_STYLES.condensed,
         className,
       )}
       components={{
-        a: ({ node, ...props }) => (
-          <a
-            {...props}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
+        a: ({ node, ...props }) => {
+          if (props.href?.startsWith("/")) {
+            return (
+              <Link href={props.href} onClick={(e) => e.stopPropagation()}>
+                {props.children}
+              </Link>
+            );
+          }
+          return (
+            <a
+              {...props}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            />
+          );
+        },
         code: ({ node, ...props }) => (
           <code {...props} className="rounded-md bg-neutral-100 px-1 py-0.5" />
         ),
@@ -95,7 +108,7 @@ export function Tooltip({
         <TooltipPrimitive.Content
           sideOffset={8}
           side={side}
-          className="animate-slide-up-fade pointer-events-auto z-[99] items-center overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm"
+          className="animate-slide-up-fade border-border-default bg-bg-default pointer-events-auto z-[99] items-center overflow-hidden rounded-xl border shadow-sm"
           collisionPadding={0}
           {...rest}
         >
@@ -134,7 +147,7 @@ export function TooltipContent({
         (href ? (
           <Link
             href={href}
-            {...(target ? { target } : {})}
+            {...(target ? { target, rel: "noopener noreferrer" } : {})}
             className={cn(
               buttonVariants({ variant: "primary" }),
               "flex h-8 w-full items-center justify-center whitespace-nowrap rounded-lg border px-4 text-sm",
@@ -210,9 +223,65 @@ export function DynamicTooltipWrapper({
 }) {
   return tooltipProps ? (
     <Tooltip {...tooltipProps}>
-      <div>{children}</div>
+      {isValidElement(children) ? children : <span>{children}</span>}
     </Tooltip>
   ) : (
     children
+  );
+}
+
+export function ScrollableTooltipContent({
+  children,
+  maxHeight = "240px",
+  className,
+}: {
+  children: ReactNode;
+  maxHeight?: string;
+  className?: string;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { scrollProgress, updateScrollProgress } = useScrollProgress(
+    scrollRef,
+    {
+      direction: "vertical",
+    },
+  );
+
+  const [showTopGradient, setShowTopGradient] = useState(false);
+  const [showBottomGradient, setShowBottomGradient] = useState(false);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const { scrollHeight, clientHeight } = element;
+    const canScroll = scrollHeight > clientHeight;
+
+    // Show top gradient if not at top and can scroll
+    setShowTopGradient(canScroll && scrollProgress > 0);
+    // Show bottom gradient if not at bottom and can scroll
+    setShowBottomGradient(canScroll && scrollProgress < 1);
+  }, [scrollProgress]);
+
+  return (
+    <div className="relative">
+      {showTopGradient && (
+        <div className="pointer-events-none absolute left-0 right-0 top-0 z-10 h-6 rounded-t-xl bg-gradient-to-b from-white to-transparent" />
+      )}
+      <div
+        ref={scrollRef}
+        onScroll={updateScrollProgress}
+        className={cn(
+          "flex flex-col gap-2 overflow-y-auto px-3 py-2",
+          className,
+        )}
+        style={{ maxHeight }}
+      >
+        {children}
+      </div>
+      {showBottomGradient && (
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 h-6 rounded-b-xl bg-gradient-to-t from-white to-transparent" />
+      )}
+    </div>
   );
 }

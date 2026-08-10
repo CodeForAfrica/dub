@@ -1,19 +1,26 @@
-import { combineTagIds } from "@/lib/api/tags/combine-tag-ids";
+import { FOLDER_WORKSPACE_ACCESS } from "@/lib/folder/constants";
+import { prisma } from "@/lib/prisma";
 import { tb } from "@/lib/tinybird";
-import { prisma } from "@dub/prisma";
+import { FolderAccessLevel } from "@/lib/types";
 import { linkConstructor, punyEncode } from "@dub/utils";
-import { FolderAccessLevel } from "@prisma/client";
+import * as z from "zod/v4";
 import { decodeKeyIfCaseSensitive } from "../api/links/case-sensitivity";
 import { conn } from "../planetscale";
-import z from "../zod";
 import { analyticsFilterTB } from "../zod/schemas/analytics";
 import { analyticsResponse } from "../zod/schemas/analytics-response";
 import {
   DIMENSIONAL_ANALYTICS_FILTERS,
   SINGULAR_ANALYTICS_ENDPOINTS,
 } from "./constants";
-import { queryParser } from "./query-parser";
+import {
+  buildAdvancedFilters,
+  ensureParsedFilter,
+  extractWorkspaceLinkFilters,
+  prepareFiltersForPipe,
+} from "./filter-helpers";
+import { metadataQueryParser } from "./metadata-query-parser";
 import { AnalyticsFilters } from "./types";
+import { formatUTCDateTimeClickhouse } from "./utils/format-utc-datetime-clickhouse";
 import { getStartEndDates } from "./utils/get-start-end-dates";
 
 // Fetch data for /api/analytics
@@ -23,7 +30,6 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
     groupBy,
     workspaceId,
     linkId,
-    linkIds,
     interval,
     start,
     end,
@@ -37,16 +43,16 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
     query,
   } = params;
 
-  const tagIds = combineTagIds(params);
+  const normalizedLinkId = ensureParsedFilter(linkId);
 
   // get all-time clicks count if:
-  // 1. linkId or linkIds is defined
+  // 1. linkId is defined
   // 2. type is count
   // 3. interval is all
   // 4. no custom start or end date is provided
   // 5. no other dimensional filters are applied
   if (
-    (linkId || linkIds) &&
+    normalizedLinkId &&
     groupBy === "count" &&
     interval === "all" &&
     !start &&
@@ -55,45 +61,23 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
       (filter) => !params[filter as keyof AnalyticsFilters],
     )
   ) {
-    const columns =
+    const linkIdPlaceholders = normalizedLinkId.values.map(() => "?").join(",");
+    const aggregateColumns =
       event === "composite"
-        ? `clicks, leads, sales, saleAmount`
+        ? `SUM(clicks) as clicks, SUM(leads) as leads, SUM(sales) as sales, SUM(saleAmount) as saleAmount`
         : event === "sales"
-          ? `sales, saleAmount`
-          : `${event}`;
+          ? `SUM(sales) as sales, SUM(saleAmount) as saleAmount`
+          : `SUM(${event}) as ${event}`;
 
-    // Handle single linkId
-    if (linkId) {
-      const response = await conn.execute(
-        `SELECT ${columns} FROM Link WHERE id = ?`,
-        [linkId],
-      );
+    const response = await conn.execute(
+      `SELECT ${aggregateColumns} FROM Link WHERE id IN (${linkIdPlaceholders}) AND projectId = ?`,
+      [...normalizedLinkId.values, workspaceId],
+    );
 
-      return analyticsResponse["count"].parse(response.rows[0]);
-    }
-
-    // Handle multiple linkIds with aggregation
-    if (linkIds && linkIds.length > 0) {
-      const linkIdsToFilter = linkIds.map(() => "?").join(",");
-      const aggregateColumns =
-        event === "composite"
-          ? `SUM(clicks) as clicks, SUM(leads) as leads, SUM(sales) as sales, SUM(saleAmount) as saleAmount`
-          : event === "sales"
-            ? `SUM(sales) as sales, SUM(saleAmount) as saleAmount`
-            : `SUM(${event}) as ${event}`;
-
-      const response = await conn.execute(
-        `SELECT ${aggregateColumns} FROM Link WHERE id IN (${linkIdsToFilter})`,
-        linkIds,
-      );
-
-      return analyticsResponse["count"].parse(response.rows[0]);
-    }
+    return analyticsResponse["count"].parse(response.rows[0]);
   }
 
-  if (groupBy === "trigger") {
-    groupBy = "triggers";
-  }
+  if (groupBy === "trigger") groupBy = "triggers";
 
   const { startDate, endDate, granularity } = getStartEndDates({
     interval,
@@ -103,29 +87,28 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
     timezone,
   });
 
-  if (qr) {
-    trigger = "qr";
-  }
-
-  if (region) {
-    const split = region.split("-");
-    country = split[0];
-    region = split[1];
-  }
+  const { triggerForPipe, countryForPipe, regionForPipe } =
+    prepareFiltersForPipe({
+      qr,
+      trigger,
+      region,
+      country,
+    });
 
   // Create a Tinybird pipe
   const pipe = tb.buildPipe({
-    pipe: ["count", "timeseries"].includes(groupBy)
-      ? `v3_${groupBy}`
+    pipe: ["count", "timeseries"].includes(groupBy!)
+      ? `v4_${groupBy}`
       : [
             "top_folders",
             "top_link_tags",
             "top_domains",
             "top_partners",
+            "top_partner_tags",
             "top_groups",
-          ].includes(groupBy)
-        ? "v3_group_by_link_metadata"
-        : "v3_group_by",
+          ].includes(groupBy!)
+        ? "v4_group_by_link_metadata"
+        : "v4_group_by",
     parameters: analyticsFilterTB,
     data: z.object({
       groupByField: z.string(),
@@ -139,29 +122,84 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
     }),
   });
 
-  const filters = queryParser(query);
+  const metadataFilters = metadataQueryParser(query) || [];
 
-  const response = await pipe({
+  const advancedFilters = buildAdvancedFilters({
     ...params,
+    country: countryForPipe,
+    trigger: triggerForPipe,
+  });
+
+  const allFilters = [...metadataFilters, ...advancedFilters];
+
+  const folderIdFilter = ensureParsedFilter(params.folderId);
+  const partnerIdFilter = ensureParsedFilter(params.partnerId);
+  const partnerTagIdFilter = ensureParsedFilter(params.partnerTagId);
+
+  let {
+    domain: domainParam,
+    domainOperator,
+    linkId: linkIdParam,
+    linkIdOperator,
+    folderId: folderIdParam,
+    folderIdOperator,
+    tagId: tagIdParam,
+    tagIdOperator,
+    partnerId: partnerIdParam,
+    partnerIdOperator,
+    partnerTagId: partnerTagIdParam,
+    partnerTagIdOperator,
+    groupId: groupIdParam,
+    groupIdOperator,
+    tenantId: tenantIdParam,
+    tenantIdOperator,
+  } = extractWorkspaceLinkFilters({
+    ...params,
+    partnerId: partnerIdFilter,
+    partnerTagId: partnerTagIdFilter,
+    linkId: normalizedLinkId,
+    folderId: folderIdFilter,
+  });
+
+  const tinybirdParams: any = {
+    workspaceId,
+    customerId: params.customerId,
+    programId: params.programId,
+    partnerId: partnerIdParam,
+    partnerIdOperator,
+    partnerTagId: partnerTagIdParam,
+    partnerTagIdOperator,
+    tenantId: tenantIdParam,
+    tenantIdOperator,
+    groupId: groupIdParam,
+    groupIdOperator,
+    linkId: linkIdParam,
+    linkIdOperator,
+    domain: domainParam,
+    domainOperator,
+    folderId: folderIdParam,
+    folderIdOperator,
+    tagId: tagIdParam,
+    tagIdOperator,
     groupBy,
     eventType: event,
-    workspaceId,
-    tagIds,
-    trigger,
-    start: startDate.toISOString().replace("T", " ").replace("Z", ""),
-    end: endDate.toISOString().replace("T", " ").replace("Z", ""),
+    start: formatUTCDateTimeClickhouse(startDate),
+    end: formatUTCDateTimeClickhouse(endDate),
     granularity,
     timezone,
-    country,
-    region,
-    filters: filters ? JSON.stringify(filters) : undefined,
-  });
+    region: typeof regionForPipe === "string" ? regionForPipe : undefined,
+    root: params.root,
+    saleType: params.saleType,
+    filters: allFilters.length > 0 ? JSON.stringify(allFilters) : undefined,
+  };
+
+  const response = await pipe(tinybirdParams);
 
   if (groupBy === "count") {
     const { groupByField, ...rest } = response.data[0];
     // Return the count value for deprecated count endpoints
     if (isDeprecatedClicksEndpoint) {
-      return rest[event];
+      return rest[event!];
       // Return the object for regular count endpoints
     } else {
       return rest;
@@ -178,8 +216,10 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
         domain: true,
         key: true,
         url: true,
-        comments: true,
         title: true,
+        comments: true,
+        folderId: true,
+        partnerId: true,
         createdAt: true,
       },
     });
@@ -197,17 +237,13 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
         });
 
         return analyticsResponse[groupBy].parse({
-          id: link.id,
+          ...link,
           link: link.id,
-          domain: link.domain,
           key: punyEncode(link.key),
-          url: link.url,
           shortLink: linkConstructor({
             domain: link.domain,
             key: punyEncode(link.key),
           }),
-          comments: link.comments,
-          title: link.title || null,
           createdAt: link.createdAt.toISOString(),
           ...item,
         });
@@ -223,6 +259,7 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
       select: {
         id: true,
         name: true,
+        email: true,
         image: true,
         country: true,
         payoutsEnabledAt: true,
@@ -284,7 +321,14 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
         return analyticsResponse.top_folders
           .extend({
             folder: analyticsResponse.top_folders.shape.folder.extend({
-              accessLevel: z.nativeEnum(FolderAccessLevel).nullish(),
+              accessLevel: z
+                .enum(
+                  Object.keys(FOLDER_WORKSPACE_ACCESS) as [
+                    FolderAccessLevel,
+                    ...FolderAccessLevel[],
+                  ],
+                )
+                .nullish(),
             }),
           })
           .parse({
@@ -292,6 +336,27 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
             folderId: item.groupByField,
             folder,
           });
+      })
+      .filter((d) => d !== null);
+  } else if (groupBy === "top_partner_tags") {
+    const partnerTags = await prisma.partnerTag.findMany({
+      where: {
+        id: { in: response.data.map((item) => item.groupByField) },
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+    return response.data
+      .map((item) => {
+        const partnerTag = partnerTags.find((t) => t.id === item.groupByField);
+        if (!partnerTag) return null;
+        return analyticsResponse[groupBy].parse({
+          ...item,
+          partnerTagId: item.groupByField,
+          partnerTag,
+        });
       })
       .filter((d) => d !== null);
   } else if (groupBy === "top_groups") {
@@ -325,12 +390,12 @@ export const getAnalytics = async (params: AnalyticsFilters) => {
   }
 
   // Return array for other endpoints
-  const schema = analyticsResponse[groupBy];
+  const schema = analyticsResponse[groupBy!];
 
   return response.data.map((item) =>
     schema.parse({
       ...item,
-      [SINGULAR_ANALYTICS_ENDPOINTS[groupBy]]: item.groupByField,
+      [SINGULAR_ANALYTICS_ENDPOINTS[groupBy!]]: item.groupByField,
     }),
   );
 };

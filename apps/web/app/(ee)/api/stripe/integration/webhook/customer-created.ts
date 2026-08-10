@@ -1,25 +1,51 @@
-import { prisma } from "@dub/prisma";
+import { prisma } from "@/lib/prisma";
 import type Stripe from "stripe";
 import { createNewCustomer } from "./utils/create-new-customer";
 
 // Handle event "customer.created"
-export async function customerCreated(event: Stripe.Event) {
-  const stripeCustomer = event.data.object as Stripe.Customer;
+export async function customerCreated(event: Stripe.CustomerCreatedEvent) {
+  const stripeCustomer = event.data.object;
   const stripeAccountId = event.account as string;
-  const dubCustomerExternalId = stripeCustomer.metadata?.dubCustomerId; // TODO: need to update to dubCustomerExternalId in the future for consistency
+  const dubCustomerExternalId =
+    stripeCustomer.metadata?.dubCustomerExternalId ||
+    stripeCustomer.metadata?.dubCustomerId;
 
   if (!dubCustomerExternalId) {
-    return "External ID not found in Stripe customer metadata, skipping...";
+    return {
+      response:
+        "External ID not found in Stripe customer metadata, skipping...",
+    };
   }
 
-  // Check the customer is not already created
-  // Find customer using projectConnectId and externalId (the customer's ID in the client app)
-  const customer = await prisma.customer.findUnique({
+  const workspace = await prisma.project.findUnique({
     where: {
-      projectConnectId_externalId: {
-        projectConnectId: stripeAccountId,
-        externalId: dubCustomerExternalId,
-      },
+      stripeConnectId: stripeAccountId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!workspace) {
+    return {
+      response: `Workspace not found for Stripe account ${stripeAccountId}, skipping...`,
+    };
+  }
+
+  const workspaceId = workspace.id;
+
+  // Check the customer is not already created
+  const customer = await prisma.customer.findFirst({
+    where: {
+      OR: [
+        {
+          projectId: workspace.id,
+          externalId: dubCustomerExternalId,
+        },
+        {
+          stripeCustomerId: stripeCustomer.id,
+        },
+      ],
     },
   });
 
@@ -32,14 +58,22 @@ export async function customerCreated(event: Stripe.Event) {
           id: customer.id,
         },
         data: {
+          externalId: dubCustomerExternalId,
           stripeCustomerId: stripeCustomer.id,
+          projectConnectId: stripeAccountId,
         },
       });
 
-      return `Dub customer with ID ${customer.id} updated with Stripe customer ID ${stripeCustomer.id}`;
+      return {
+        response: `Dub customer with ID ${customer.id} updated with Stripe customer ID ${stripeCustomer.id}`,
+        workspaceId,
+      };
     } catch (error) {
       console.error(error);
-      return `Error updating Dub customer with ID ${customer.id}: ${error}`;
+      return {
+        response: `Error updating Dub customer with ID ${customer.id}: ${error}`,
+        workspaceId,
+      };
     }
   }
 
