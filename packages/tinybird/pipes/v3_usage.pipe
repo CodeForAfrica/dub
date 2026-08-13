@@ -1,11 +1,7 @@
-DESCRIPTION >
-	Timeseries data
-
-
 NODE day_intervals
 SQL >
 
-    %
+%
         WITH
             toStartOfDay(
                 toDateTime64({{ DateTime64(start, '2025-09-03 00:00:00.000') }}, 3),
@@ -31,15 +27,17 @@ SQL >
 NODE usage_events_data
 SQL >
 
-    %
+%
     SELECT
         toDateTime64(toStartOfDay(timestamp, {{ String(timezone, 'UTC') }}), 3) AS interval,
+        {% if defined(groupBy) %} {% if groupBy == 'folder_id' %} folder_id {% else %} domain {% end %}, {% end %}
         uniq(*) AS events
     FROM
         (
             -- Click events
-            SELECT timestamp
-            FROM dub_click_events_mv
+            SELECT e.timestamp{% if defined(groupBy) %}, {% if groupBy == 'folder_id' %} m.folder_id {% else %} e.domain {% end %}, {% end %}
+            FROM dub_click_events_mv e
+            {% if groupBy == 'folder_id' or defined(folderId) %} LEFT JOIN dub_links_metadata_latest m ON m.link_id = e.link_id {% end %}
             WHERE
                 workspace_id
                 = {{
@@ -52,28 +50,32 @@ SQL >
                 }}
                 AND timestamp >= {{ DateTime(start, '2025-09-03 00:00:00') }}
                 AND timestamp < {{ DateTime(end, '2025-10-03 00:00:00') }}
-
+                {% if defined(folderId) %} AND folder_id = {{ folderId }} {% end %}
+                {% if defined(domain) %} AND domain IN {{ Array(domain, 'String') }} {% end %}
             UNION ALL
-
             -- Lead events
-            SELECT timestamp
-            FROM dub_lead_events_mv
+            SELECT e.timestamp{% if defined(groupBy) %}, {% if groupBy == 'folder_id' %} m.folder_id {% else %} e.domain {% end %}, {% end %}
+            FROM dub_lead_events_mv e
+            {% if groupBy == 'folder_id' or defined(folderId) %} LEFT JOIN dub_links_metadata_latest m ON m.link_id = e.link_id {% end %}
             WHERE
                 workspace_id = {{ String(workspaceId, 'cl7pj5kq4006835rbjlt2ofka') }}
                 AND timestamp >= {{ DateTime(start, '2025-09-03 00:00:00') }}
                 AND timestamp < {{ DateTime(end, '2025-10-03 00:00:00') }}
-
+                {% if defined(folderId) %} AND folder_id = {{ folderId }} {% end %}
+                {% if defined(domain) %} AND domain IN {{ Array(domain, 'String') }} {% end %}
             UNION ALL
-
             -- Sale events
-            SELECT timestamp
-            FROM dub_sale_events_mv
+            SELECT e.timestamp{% if defined(groupBy) %}, {% if groupBy == 'folder_id' %} m.folder_id {% else %} e.domain {% end %}, {% end %}
+            FROM dub_sale_events_mv e
+            {% if groupBy == 'folder_id' or defined(folderId) %} LEFT JOIN dub_links_metadata_latest m ON m.link_id = e.link_id {% end %}
             WHERE
                 workspace_id = {{ String(workspaceId, 'cl7pj5kq4006835rbjlt2ofka') }}
                 AND timestamp >= {{ DateTime(start, '2025-09-03 00:00:00') }}
                 AND timestamp < {{ DateTime(end, '2025-10-03 00:00:00') }}
+                {% if defined(folderId) %} AND folder_id = {{ folderId }} {% end %}
+                {% if defined(domain) %} AND domain IN {{ Array(domain, 'String') }} {% end %}
         )
-    GROUP BY interval
+    GROUP BY interval{% if defined(groupBy) %}, {% if groupBy == 'folder_id' %} folder_id {% else %} domain {% end %} {% end %}
     ORDER BY interval
 
 
@@ -81,22 +83,23 @@ SQL >
 NODE usage_events
 SQL >
 
-    %
-        SELECT formatDateTime(interval, '%FT%T.000%z') as date, events as value
+%
+        SELECT
+            formatDateTime(interval, '%FT%T.000%z') as date,
+            {% if defined(groupBy) %} {% if groupBy == 'folder_id' %} folder_id {% else %} domain {% end %}, {% end %}
+            events as value
         FROM day_intervals
         LEFT JOIN usage_events_data USING interval
 
 
 
 NODE usage_links_data
-DESCRIPTION >
-    undefined
-
 SQL >
 
-    %
+%
     SELECT
         toDateTime64(toStartOfDay(timestamp, {{ String(timezone, 'UTC') }}), 3) AS interval,
+        {% if defined(groupBy) %} {% if groupBy == 'folder_id' %} folder_id {% else %} domain {% end %}, {% end %}
         uniq(*) as links
     FROM dub_links_metadata_latest FINAL
     WHERE
@@ -109,12 +112,12 @@ SQL >
                 required=True,
             )
         }}
-        AND created_at >= {{ DateTime(start, '2025-09-03 00:00:00') }}
-        AND created_at < {{ DateTime(end, '2025-10-03 00:00:00') }}
+        AND toDateTime64(timestamp, 3) >= {{ DateTime(start, '2025-09-03 00:00:00') }}
+        AND toDateTime64(timestamp, 3) < {{ DateTime(end, '2025-10-03 00:00:00') }}
         {% if defined(folderId) %} AND folder_id = {{ folderId }}
         {% end %}
         {% if defined(domain) %} AND domain IN {{ Array(domain, 'String') }} {% end %}
-    GROUP BY interval
+    GROUP BY interval{% if defined(groupBy) %}, {% if groupBy == 'folder_id' %} folder_id {% else %} domain {% end %} {% end %}
     ORDER BY interval
 
 
@@ -122,8 +125,11 @@ SQL >
 NODE usage_links
 SQL >
 
-    %
-        SELECT formatDateTime(interval, '%FT%T.000%z') as date, links as value
+%
+        SELECT
+          formatDateTime(interval, '%FT%T.000%z') as date,
+          {% if defined(groupBy) %} {% if groupBy == 'folder_id' %} folder_id {% else %} domain {% end %}, {% end %}
+          links as value
         FROM day_intervals
         LEFT JOIN usage_links_data USING interval
 
@@ -132,7 +138,7 @@ SQL >
 NODE endpoint
 SQL >
 
-    %
+%
     SELECT * FROM {% if resource == 'events' %} usage_events {% else %} usage_links {% end %}
 
-
+TYPE ENDPOINT

@@ -33,6 +33,14 @@ export function useCustomerFilters(
     selectedFilter === "partnerId" ? debouncedSearch : "",
   );
 
+  const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch] = useDebounce(search, 500);
+
+  const { partners } = usePartnerFilterOptions(
+    selectedFilter === "partnerId" ? debouncedSearch : "",
+  );
+
   const { data: countriesCount } = useCustomersCount<
     | {
         country: string;
