@@ -17,21 +17,10 @@ import { useDebounce } from "use-debounce";
 
 export function useCustomerFilters(
   extraSearchParams: Record<string, string>,
-  {
-    enabled = true,
-    isProgramPage = false,
-  }: { enabled?: boolean; isProgramPage?: boolean } = {},
+  { enabled = true }: { enabled?: boolean } = {},
 ) {
   const { searchParamsObj, queryParams } = useRouterStuff();
-  const { id: workspaceId, slug, defaultProgramId } = useWorkspace();
-
-  const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [debouncedSearch] = useDebounce(search, 500);
-
-  const { partners } = usePartnerFilterOptions(
-    selectedFilter === "partnerId" ? debouncedSearch : "",
-  );
+  const { id: workspaceId, slug } = useWorkspace();
 
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -50,10 +39,6 @@ export function useCustomerFilters(
   >({
     query: {
       groupBy: "country",
-      ...(isProgramPage &&
-        defaultProgramId && {
-          programId: defaultProgramId,
-        }),
     },
     enabled,
   });
@@ -69,10 +54,6 @@ export function useCustomerFilters(
   >({
     query: {
       groupBy: "linkId",
-      ...(isProgramPage &&
-        defaultProgramId && {
-          programId: defaultProgramId,
-        }),
     },
     enabled,
   });

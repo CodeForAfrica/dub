@@ -19,9 +19,7 @@ export default function LoginPage() {
         <div className="mt-8">
           <LoginForm />
         </div>
-
-        {/* Temp disable SignUp */}
-        {/* <p className="mt-6 text-center text-sm font-medium text-neutral-500">
+        <p className="mt-6 text-center text-sm font-medium text-neutral-500">
           Don't have an account?&nbsp;
           <Link
             href="register"
@@ -29,15 +27,15 @@ export default function LoginPage() {
           >
             Sign up
           </Link>
-        </p> */}
+        </p>
 
-        {/* <div className="mt-12 w-full">
+        <div className="mt-12 w-full">
           <AuthAlternativeBanner
             text="Looking for your Dub partner account?"
             cta="Log in at partners.dub.co"
             href="https://partners.dub.co/login"
           />
-        </div> */}
+        </div>
       </div>
     </AuthLayout>
   );

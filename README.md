@@ -52,19 +52,7 @@ Our platform powers 100M+ clicks and 2M+ links monthly, and is used by world-cla
 
 ## Self-Hosting
 
-You can self-host Dub for greater control over your data and design.
-
-**📖 [Read the comprehensive self-hosting guide](./docs/SELF-HOSTING.md)**
-
-This guide includes:
-- Quick start with Docker for local development
-- Production deployment options (Vercel, Docker, Railway, etc.)
-- Step-by-step configuration for all required services
-- Environment variables reference
-- Cron job setup for self-hosted deployments
-- Troubleshooting and common issues
-
-For the latest updates, also check the [official documentation](https://dub.co/docs/self-hosting/guide).
+You can self-host Dub for greater control over your data and design. [Read this guide](https://dub.co/docs/self-hosting/guide) to learn more.
 
 ## Contributing
 
