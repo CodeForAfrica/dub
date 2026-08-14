@@ -106,7 +106,7 @@
     "luxon": "^3.5.0",
     "minimatch": "^10.1.1",
     "motion": "^12.23.22",
-    "nanoid": "^5.0.1",
+    "nanoid": "^5.1.16",
     "next": "15.5.8",
     "next-auth": "4.24.11",
     "next-plausible": "^4.0.0",
