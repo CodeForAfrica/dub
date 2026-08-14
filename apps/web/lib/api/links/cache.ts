@@ -47,18 +47,13 @@ class LinkCache {
     return await pipeline.exec();
   }
 
-  async set(
-    link: ExpandedLink,
-    { skipRevalidateTag = false }: { skipRevalidateTag?: boolean } = {},
-  ) {
+  async set(link: ExpandedLink) {
     const redisLink = formatRedisLink(link);
     const cacheKey = this._createKey({ domain: link.domain, key: link.key });
 
     // Update LRU cache immediately to prevent stale reads
     linkLRUCache.set(cacheKey, redisLink);
-    if (!skipRevalidateTag) {
-      revalidateTag(`static:${link.domain.toLowerCase()}:${link.key}`);
-    }
+    revalidateTag(`static:${link.domain.toLowerCase()}:${link.key}`);
 
     await Promise.all([
       redisGlobal.set(cacheKey, redisLink, {

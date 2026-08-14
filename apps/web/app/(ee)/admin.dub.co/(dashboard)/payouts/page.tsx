@@ -85,16 +85,12 @@ function PayoutsPageClient() {
   const { interval, start, end, status, programId, tab } = searchParamsObj;
   const selectedTab = isPayoutTab(tab) ? tab : "payouts";
 
-  const { pagination, setPagination } = usePagination();
-
-  const { data: { invoices, timeseriesData, totalInvoices } = {}, isLoading } =
-    useSWR<{
-      invoices: InvoiceData[];
-      timeseriesData: TimeseriesData[];
-      totalInvoices: number;
-    }>(`/api/admin/payouts${getQueryString()}`, fetcher, {
-      keepPreviousData: true,
-    });
+  const { data: { invoices, timeseriesData } = {}, isLoading } = useSWR<{
+    invoices: InvoiceData[];
+    timeseriesData: TimeseriesData[];
+  }>(`/api/admin/payouts${getQueryString()}`, fetcher, {
+    keepPreviousData: true,
+  });
 
   const previousPeriodQueryString = useMemo(() => {
     if (!timeseriesData || timeseriesData.length === 0) {
@@ -231,7 +227,7 @@ function PayoutsPageClient() {
   const onRemoveAll = useCallback(
     () =>
       queryParams({
-        del: ["status", "programId", "page"],
+        del: ["status", "programId"],
       }),
     [queryParams],
   );
@@ -300,6 +296,8 @@ function PayoutsPageClient() {
       total: getPercentChange("total"),
     };
   }, [isPreviousPeriodLoading, previousPeriodTimeseriesData, timeseriesData]);
+
+  const { pagination, setPagination } = usePagination();
 
   const { table, ...tableProps } = useTable({
     data: invoices ?? [],
@@ -378,7 +376,7 @@ function PayoutsPageClient() {
     pagination,
     onPaginationChange: setPagination,
     resourceName: (plural) => `invoice${plural ? "s" : ""}`,
-    rowCount: totalInvoices ?? 0,
+    rowCount: invoices?.length ?? 0,
     loading: isLoading,
     cellRight: (cell) => {
       const meta = cell.column.columnDef.meta as

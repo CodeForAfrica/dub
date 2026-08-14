@@ -54,7 +54,7 @@ async function main() {
       await publishPartnerActivityEvent({
         partnerId: partnerLink.partnerId!,
         programId: partnerLink.programId!,
-        eventType: "lead",
+        eventType: "click",
         timestamp: new Date().toISOString(),
       });
     }),

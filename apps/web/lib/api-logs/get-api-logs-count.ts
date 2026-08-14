@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 import {
   apiLogCountAggregateRowSchemaTB,
   apiLogCountFilterSchemaTB,
-  apiLogCountRowSchemas,
+  apiLogsCountResponseSchema,
   getApiLogsCountQuerySchema,
 } from "./schemas";
 
@@ -33,10 +33,10 @@ export async function getApiLogsCount(params: GetApiLogsCountParams) {
   const baseParams = {
     workspaceId,
     ...(groupBy && { groupBy }),
-    // if we're grouping by a dimension, omit that filter so all values are returned
+    // if we're grouping by routePattern, omit routePattern filter (so all routes are returned)
     ...(routePattern && groupBy !== "routePattern" && { routePattern }),
-    ...(method && groupBy !== "method" && { method }),
-    ...(statusCode && groupBy !== "statusCode" && { statusCode }),
+    ...(method && { method }),
+    ...(statusCode && { statusCode }),
     ...(tokenId && { tokenId }),
     ...(requestId && { requestId }),
     ...(requestType && { requestType }),
@@ -52,14 +52,12 @@ export async function getApiLogsCount(params: GetApiLogsCountParams) {
 
   const result = await pipe(baseParams);
 
-  if (groupBy) {
-    return z.array(apiLogCountRowSchemas[groupBy]).parse(result.data);
+  if (groupBy === "routePattern") {
+    return apiLogsCountResponseSchema.parse(result.data);
   }
 
   const aggregate = apiLogCountAggregateRowSchemaTB.safeParse(result.data[0]);
   const count = aggregate.success ? aggregate.data.count : 0;
 
-  return z
-    .array(apiLogCountRowSchemas.routePattern)
-    .parse([{ routePattern: "all", count }]);
+  return apiLogsCountResponseSchema.parse([{ routePattern: "all", count }]);
 }

@@ -2,8 +2,8 @@
 
 import { clientAccessCheck } from "@/lib/client-access-check";
 import useWorkspace from "@/lib/swr/use-workspace";
-import { useRetryPaymentModal } from "@/ui/modals/retry-payment-modal";
 import { useStartPaidPlanModal } from "@/ui/modals/start-paid-plan-modal";
+import ManageSubscriptionButton from "@/ui/workspaces/manage-subscription-button";
 import {
   AnimatedSizeContainer,
   Button,
@@ -63,8 +63,6 @@ function UsageInner() {
 
   const { StartPaidPlanModal, setShowStartPaidPlanModal } =
     useStartPaidPlanModal();
-  const { RetryPaymentModal, setShowRetryPaymentModal } =
-    useRetryPaymentModal();
 
   const trialDaysLeft = useMemo(() => {
     if (!trialEndsAt || !isWorkspaceBillingTrialActive(trialEndsAt)) {
@@ -119,7 +117,6 @@ function UsageInner() {
   return loading || usage !== undefined ? (
     <>
       {isTrial ? <StartPaidPlanModal /> : null}
-      {paymentFailedAt ? <RetryPaymentModal /> : null}
       <AnimatedSizeContainer height>
         <div className="border-t border-neutral-300/80 p-3">
           {isTrial ? (
@@ -144,7 +141,7 @@ function UsageInner() {
               href={`/${slug}/settings/billing`}
             >
               Usage
-              <ChevronRight className="size-3 text-neutral-400 transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-neutral-500" />
+              <ChevronRight className="size-2 text-neutral-400 transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-neutral-500" />
             </Link>
           )}
 
@@ -217,7 +214,7 @@ function UsageInner() {
                   paymentFailedAt && "text-red-600",
                 )}
               >
-                {paymentFailedAt && plan !== "free"
+                {paymentFailedAt
                   ? "Your last payment failed. Please update your payment method to continue using Dub."
                   : isTrial && trialEndsAt
                     ? null
@@ -228,26 +225,18 @@ function UsageInner() {
             )}
           </div>
 
-          {paymentFailedAt && plan !== "free" ? (
-            <DynamicTooltipWrapper
-              tooltipProps={
-                permissionsError ? { content: permissionsError } : undefined
-              }
-            >
-              <Button
-                text="Retry payment"
-                variant="primary"
-                className="mt-4 h-8 w-full rounded-lg"
-                disabled={Boolean(permissionsError)}
-                onClick={() => setShowRetryPaymentModal(true)}
-                onMouseEnter={() => {
-                  setHovered(true);
-                }}
-                onMouseLeave={() => {
-                  setHovered(false);
-                }}
-              />
-            </DynamicTooltipWrapper>
+          {paymentFailedAt ? (
+            <ManageSubscriptionButton
+              text="Update Payment Method"
+              variant="primary"
+              className="mt-4 w-full"
+              onMouseEnter={() => {
+                setHovered(true);
+              }}
+              onMouseLeave={() => {
+                setHovered(false);
+              }}
+            />
           ) : isTrial ? (
             <DynamicTooltipWrapper
               tooltipProps={

@@ -1,8 +1,6 @@
-import {
-  SEND_CAMPAIGN_ATTRIBUTE_KEYS,
-  SEND_CAMPAIGN_ATTRIBUTES,
-} from "@/lib/api/workflows/send-campaign/schema";
 import { handleMoneyInputChange, handleMoneyKeyDown } from "@/lib/form-utils";
+import { CAMPAIGN_WORKFLOW_ATTRIBUTE_CONFIG } from "@/lib/zod/schemas/campaigns";
+import { WORKFLOW_ATTRIBUTES } from "@/lib/zod/schemas/workflows";
 import { DurationPopoverContent } from "@/ui/shared/duration-popover-content";
 import {
   InlineBadgePopover,
@@ -21,7 +19,9 @@ export function TransactionalCampaignLogic() {
   const value = watch("triggerCondition.value");
   const prevAttributeRef = useRef(attribute);
 
-  const config = attribute ? SEND_CAMPAIGN_ATTRIBUTES[attribute] : null;
+  const config = attribute
+    ? CAMPAIGN_WORKFLOW_ATTRIBUTE_CONFIG[attribute]
+    : null;
 
   // Reset value when attribute changes
   useEffect(() => {
@@ -55,7 +55,7 @@ export function TransactionalCampaignLogic() {
               <InlineBadgePopover
                 text={
                   field.value
-                    ? SEND_CAMPAIGN_ATTRIBUTES[field.value].label
+                    ? CAMPAIGN_WORKFLOW_ATTRIBUTE_CONFIG[field.value].label
                     : "activity"
                 }
                 invalid={!field.value}
@@ -63,8 +63,8 @@ export function TransactionalCampaignLogic() {
                 <InlineBadgePopoverMenu
                   selectedValue={field.value}
                   onSelect={field.onChange}
-                  items={SEND_CAMPAIGN_ATTRIBUTE_KEYS.map((attr) => ({
-                    text: SEND_CAMPAIGN_ATTRIBUTES[attr].label,
+                  items={WORKFLOW_ATTRIBUTES.map((attr) => ({
+                    text: CAMPAIGN_WORKFLOW_ATTRIBUTE_CONFIG[attr].label,
                     value: attr,
                   }))}
                 />
@@ -91,7 +91,7 @@ export function TransactionalCampaignLogic() {
 function DropdownValueInput({
   config,
 }: {
-  config: { dropdownValues?: readonly number[] };
+  config: { dropdownValues?: number[] };
 }) {
   const { control } = useCampaignFormContext();
 
@@ -112,9 +112,7 @@ function DropdownValueInput({
             <DurationPopoverContent
               value={field.value ?? undefined}
               onChange={field.onChange}
-              presetDurations={
-                config.dropdownValues ? Array.from(config.dropdownValues) : []
-              }
+              presetDurations={config.dropdownValues || []}
               presetsOnly
               unit="days"
               minValue={1}

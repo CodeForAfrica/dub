@@ -1,5 +1,4 @@
 import { handleAndReturnErrorResponse } from "@/lib/api/errors";
-import { PRISMA_UPDATEMANY_LIMIT } from "@/lib/cron";
 import { verifyQstashSignature } from "@/lib/cron/verify-qstash";
 import { prisma } from "@/lib/prisma";
 import { log } from "@dub/utils";
@@ -36,7 +35,7 @@ export async function POST(req: Request) {
               none: {},
             },
           },
-          take: PRISMA_UPDATEMANY_LIMIT,
+          take: 250,
         });
 
       if (rejectedProgramEnrollments.length === 0) {

@@ -1,6 +1,6 @@
 import { withCron } from "@/lib/cron/with-cron";
 import { createDiscountCode } from "@/lib/discounts/create-discount-code";
-import { isNonRecoverableDiscountError } from "@/lib/discounts/discount-error";
+import { isDiscountIntegrationNotAvailableError } from "@/lib/discounts/discount-error";
 import { prisma } from "@/lib/prisma";
 import * as z from "zod/v4";
 import { logAndRespond } from "../../utils";
@@ -90,7 +90,20 @@ export const POST = withCron(async ({ rawBody }) => {
       discount,
     });
   } catch (error) {
-    if (isNonRecoverableDiscountError(error)) {
+    if (isDiscountIntegrationNotAvailableError(error)) {
+      return logAndRespond(
+        `Workspace has not installed the ${discount.provider} integration. Skipping...`,
+      );
+    }
+
+    // Eg: This application does not have the required permissions for this endpoint on account 'acct_xxx'.
+    // Having the 'read_write' scope would allow this request to continue.
+    if (
+      error instanceof Error &&
+      error.message.includes(
+        "This application does not have the required permissions",
+      )
+    ) {
       return logAndRespond(error.message, { logLevel: "warn" });
     }
 

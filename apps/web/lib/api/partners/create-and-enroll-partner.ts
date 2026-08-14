@@ -8,13 +8,12 @@ import { CreatePartnerProps, ProgramProps, WorkspaceProps } from "@/lib/types";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import { EnrolledPartnerSchema } from "@/lib/zod/schemas/partners";
 import { nanoid } from "@dub/utils";
-import { ProgramEnrollmentStatus } from "@prisma/client";
+import { Prisma, ProgramEnrollmentStatus } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { DubApiError } from "../errors";
 import { getGroupOrThrow } from "../groups/get-group-or-throw";
-import { createOrGetProgramEnrollment } from "./create-or-get-program-enrollment";
 import { createPartnerDefaultLinks } from "./create-partner-default-links";
-import { getOrCreatePartner } from "./get-or-create-partner";
+import { generatePartnerUsername } from "./generate-partner-username";
 import { throwIfExistingTenantEnrollmentExists } from "./throw-if-existing-tenant-id-exists";
 
 interface CreateAndEnrollPartnerInput {
@@ -143,41 +142,53 @@ export const createAndEnrollPartner = async ({
     includeExpandedFields: true,
   });
 
-  const { partner: existingOrNewPartner } = await getOrCreatePartner({
-    email: partner.email,
+  const payload: Pick<Prisma.PartnerUpdateInput, "programs"> = {
+    programs: {
+      create: {
+        id: createId({ prefix: "pge_" }),
+        programId: program.id,
+        tenantId: partner.tenantId,
+        status,
+        groupId: group.id,
+        clickRewardId: group.clickRewardId,
+        leadRewardId: group.leadRewardId,
+        saleRewardId: group.saleRewardId,
+        referralRewardId: group.referralRewardId,
+        discountId: group.discountId,
+        ...(enrolledAt && {
+          createdAt: enrolledAt,
+        }),
+      },
+    },
+  };
+
+  const upsertedPartner = await prisma.partner.upsert({
+    where: {
+      email: partner.email,
+    },
+    update: payload,
     create: {
+      ...payload,
       id: createId({ prefix: "pn_" }),
       name: partner.name || partner.email,
       email: partner.email,
+      username: await generatePartnerUsername({
+        email: partner.email,
+        name: partner.name,
+      }),
       image: partner.image && !isStored(partner.image) ? null : partner.image,
       country: partner.country,
       description: partner.description,
     },
+    include: {
+      platforms: true,
+      programs: {
+        where: {
+          programId: program.id,
+        },
+      },
+    },
   });
-
-  const { programEnrollment, created } = await createOrGetProgramEnrollment({
-    partnerId: existingOrNewPartner.id,
-    programId: program.id,
-    tenantId: partner.tenantId ?? null,
-    status,
-    groupId: group.id,
-    clickRewardId: group.clickRewardId,
-    leadRewardId: group.leadRewardId,
-    saleRewardId: group.saleRewardId,
-    referralRewardId: group.referralRewardId,
-    discountId: group.discountId,
-    enrolledAt,
-  });
-
-  if (!created) {
-    return EnrolledPartnerSchema.parse({
-      ...programEnrollment.partner,
-      ...programEnrollment,
-      id: programEnrollment.partner.id,
-      links: programEnrollment.links,
-      ...polyfillSocialMediaFields(programEnrollment.partner.platforms),
-    });
-  }
 
   // Create the partner links based on group defaults
   const links = await createPartnerDefaultLinks({
@@ -190,7 +201,7 @@ export const createAndEnrollPartner = async ({
       defaultFolderId: program.defaultFolderId,
     },
     partner: {
-      id: existingOrNewPartner.id,
+      id: upsertedPartner.id,
       name: partner.name,
       email: partner.email,
       username: partner.username,
@@ -205,11 +216,11 @@ export const createAndEnrollPartner = async ({
   });
 
   const enrolledPartner = EnrolledPartnerSchema.parse({
-    ...programEnrollment.partner,
-    ...programEnrollment,
-    id: programEnrollment.partner.id,
+    ...upsertedPartner,
+    ...upsertedPartner.programs[0],
+    id: upsertedPartner.id,
     links,
-    ...polyfillSocialMediaFields(programEnrollment.partner.platforms),
+    ...polyfillSocialMediaFields(upsertedPartner.platforms),
   });
 
   waitUntil(
@@ -231,13 +242,13 @@ export const createAndEnrollPartner = async ({
         !isStored(partner.image) &&
         storage
           .upload({
-            key: `partners/${existingOrNewPartner.id}/image_${nanoid(7)}`,
+            key: `partners/${upsertedPartner.id}/image_${nanoid(7)}`,
             body: partner.image,
           })
           .then(async ({ url }) => {
             await prisma.partner.update({
               where: {
-                id: existingOrNewPartner.id,
+                id: upsertedPartner.id,
               },
               data: {
                 image: url,

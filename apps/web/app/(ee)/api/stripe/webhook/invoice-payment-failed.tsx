@@ -61,13 +61,11 @@ export async function invoicePaymentFailed(
       sendEmail({
         to: user.email as string,
         subject: `${
-          attemptCount === 1
-            ? ""
-            : attemptCount == 2
-              ? "2nd notice: "
-              : attemptCount == 3
-                ? "3rd notice: "
-                : "Final notice: "
+          attemptCount == 2
+            ? "2nd notice: "
+            : attemptCount == 3
+              ? "3rd notice: "
+              : ""
         }Your payment for Dub.co failed`,
         react: (
           <FailedPayment

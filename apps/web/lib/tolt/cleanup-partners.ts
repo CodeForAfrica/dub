@@ -1,4 +1,3 @@
-import { bulkDeleteLinks } from "@/lib/api/links/bulk-delete-links";
 import { prisma } from "@/lib/prisma";
 import { toltImporter } from "./importer";
 
@@ -40,24 +39,24 @@ export async function cleanupPartners({ programId }: { programId: string }) {
       .filter((partnerId): partnerId is string => partnerId !== null);
 
     if (partnerIdsToRemove.length > 0) {
-      const linksToDelete = await prisma.link.findMany({
-        where: {
-          programId,
-          partnerId: {
-            in: partnerIdsToRemove,
+      await prisma.$transaction(async (tx) => {
+        await tx.programEnrollment.deleteMany({
+          where: {
+            programId,
+            partnerId: {
+              in: partnerIdsToRemove,
+            },
           },
-        },
-      });
+        });
 
-      await bulkDeleteLinks(linksToDelete);
-
-      await prisma.programEnrollment.deleteMany({
-        where: {
-          programId,
-          partnerId: {
-            in: partnerIdsToRemove,
+        await tx.link.deleteMany({
+          where: {
+            programId,
+            partnerId: {
+              in: partnerIdsToRemove,
+            },
           },
-        },
+        });
       });
 
       // Remove partners that are not enrolled in any other program

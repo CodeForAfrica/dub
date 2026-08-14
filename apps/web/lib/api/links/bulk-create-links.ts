@@ -148,12 +148,9 @@ export async function bulkCreateLinks({
 
         if (tagNames && tagNames.length > 0) {
           tagNames.filter(Boolean).forEach((tagName, tagIdx) => {
-            const resolvedTagId = tagNameToIdMap[tagName.toLowerCase()];
-            if (!resolvedTagId) return;
-
             linkTagsToCreate.push({
               linkId: link.id,
-              tagId: resolvedTagId,
+              tagId: tagNameToIdMap[tagName.toLowerCase()],
               createdAt: new Date(new Date().getTime() + tagIdx * 100),
             });
           });

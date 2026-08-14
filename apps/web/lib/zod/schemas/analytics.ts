@@ -5,7 +5,6 @@ import {
   OLD_TO_NEW_ANALYTICS_ENDPOINTS,
   VALID_ANALYTICS_ENDPOINTS,
 } from "@/lib/analytics/constants";
-import { sanitizeTimezone } from "@/lib/analytics/utils/sanitize-timezone";
 import {
   DEFAULT_PAGINATION_LIMIT,
   DUB_FOUNDING_DATE,
@@ -14,7 +13,7 @@ import {
   parseFilterValue,
 } from "@dub/utils";
 import * as z from "zod/v4";
-import { booleanQuerySchema, getPaginationQuerySchema } from "./misc";
+import { booleanQuerySchema } from "./misc";
 import { parseDateSchema } from "./utils";
 
 const analyticsEvents = z
@@ -168,7 +167,6 @@ export const analyticsQuerySchema = z.object({
   timezone: z
     .string()
     .optional()
-    .overwrite((v) => (v === undefined ? undefined : sanitizeTimezone(v)))
     .describe(
       "The IANA time zone code for aligning timeseries granularity (e.g. America/New_York). Defaults to UTC.",
     )
@@ -528,11 +526,6 @@ const sortOrder = z
   .optional()
   .describe("The sort order. The default is `desc`.");
 
-const eventsPaginationQuerySchema = getPaginationQuerySchema({
-  pageSize: DEFAULT_PAGINATION_LIMIT,
-  maxPageSize: 1000,
-});
-
 export const eventsQuerySchema = analyticsQuerySchema
   .omit({ groupBy: true })
   .extend({
@@ -542,8 +535,11 @@ export const eventsQuerySchema = analyticsQuerySchema
       .describe(
         "The type of event to retrieve analytics for. Defaults to 'clicks'.",
       ),
-    page: eventsPaginationQuerySchema.page.default(1),
-    limit: eventsPaginationQuerySchema.pageSize,
+    page: z.coerce.number().default(1),
+    limit: z.coerce
+      .number()
+      .max(1000, { message: "Max pagination limit is 1000 items per page." })
+      .default(DEFAULT_PAGINATION_LIMIT),
     sortOrder,
     sortBy: z
       .enum(["timestamp"])

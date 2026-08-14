@@ -1,6 +1,5 @@
 "use client";
 
-import { parseActionError } from "@/lib/actions/parse-action-errors";
 import { onboardProgramAction } from "@/lib/actions/partners/onboard-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { ProgramData } from "@/lib/types";
@@ -39,18 +38,17 @@ export function Form() {
       mutate();
     },
     onError: ({ error }) => {
-      toast.error(parseActionError(error, "Failed to save program settings."));
+      toast.error(error.serverError as string);
       setHasSubmitted(false);
     },
   });
 
   const onSubmit = async (data: ProgramData) => {
-    if (!workspaceId || !data.supportEmail) return;
+    if (!workspaceId) return;
 
     setHasSubmitted(true);
     await executeAsync({
       ...data,
-      supportEmail: data.supportEmail,
       workspaceId,
       step: "get-started",
     });
@@ -187,7 +185,6 @@ export function Form() {
         <Controller
           control={control}
           name="supportEmail"
-          rules={{ required: "Please enter a support email." }}
           render={({ field }) => (
             <Input
               value={field.value || ""}

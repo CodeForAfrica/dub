@@ -271,7 +271,12 @@ export function buildProgramEnrollmentWhereForList(
         in: partnerIds,
       },
     }),
-    status,
+    status:
+      status === "approved_invited"
+        ? {
+            in: ["approved", "invited"],
+          }
+        : status,
     ...(groupIdWhere ?? {}),
     ...(hasPartnerWhere ? { partner: partnerWhere } : {}),
     ...(referredByPartnerId && {

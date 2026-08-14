@@ -1,4 +1,3 @@
-import { bulkDeleteLinks } from "@/lib/api/links/bulk-delete-links";
 import { prisma } from "@/lib/prisma";
 import "dotenv-flow/config";
 import { conn } from "../../lib/planetscale";
@@ -58,49 +57,19 @@ async function main() {
   });
   console.log("Deleted payouts", deletedPayouts);
 
-  // Delete per enrollment so each bulkDeleteLinks call stays single-workspace
-  for (const { links } of partner.programs) {
-    if (links.length > 0) {
-      await bulkDeleteLinks(links);
-    }
-  }
-
-  // delete messages for partnerId
-  const deletedMessages = await prisma.message.deleteMany({
+  const deletedLinks = await prisma.link.deleteMany({
     where: {
       partnerId: partner.id,
     },
   });
-  console.log(`Deleted ${deletedMessages.count} messages`);
-
-  // delete fraud event groups and alerts for partnerId
-  const deletedFraudEventGroups = await prisma.fraudEventGroup.deleteMany({
-    where: {
-      partnerId: partner.id,
-    },
-  });
-  console.log(`Deleted ${deletedFraudEventGroups.count} fraud event groups`);
-
-  const deletedFraudAlerts = await prisma.fraudAlert.deleteMany({
-    where: {
-      partnerId: partner.id,
-    },
-  });
-  console.log(`Deleted ${deletedFraudAlerts.count} fraud alerts`);
+  console.log("Deleted links", deletedLinks);
 
   const deletedProgramEnrollments = await prisma.programEnrollment.deleteMany({
     where: {
       partnerId: partner.id,
     },
   });
-  console.log(`Deleted ${deletedProgramEnrollments.count} program enrollments`);
-
-  const deletedPartnerUsers = await prisma.partnerUser.deleteMany({
-    where: {
-      partnerId: partner.id,
-    },
-  });
-  console.log(`Deleted ${deletedPartnerUsers.count} partner users`);
+  console.log("Deleted program enrollments", deletedProgramEnrollments);
 
   // using conn.execute here since Prisma is throwing a weird error
   const res = await conn.execute(`DELETE FROM Partner WHERE id = ?`, [

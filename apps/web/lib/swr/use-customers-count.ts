@@ -1,4 +1,4 @@
-import { useCurrentProduct, useRouterStuff } from "@dub/ui";
+import { useRouterStuff } from "@dub/ui";
 import { fetcher } from "@dub/utils";
 import useSWR from "swr";
 import * as z from "zod/v4";
@@ -14,23 +14,14 @@ export default function useCustomersCount<T = number>({
   enabled?: boolean;
   includeParams?: string[];
 } = {}) {
-  const { id: workspaceId, defaultProgramId } = useWorkspace();
+  const { id: workspaceId } = useWorkspace();
   const { getQueryString } = useRouterStuff();
-  const { product } = useCurrentProduct();
 
   const { data, error, isLoading } = useSWR<T>(
     enabled &&
       workspaceId &&
-      product &&
       `/api/customers/count${getQueryString(
-        {
-          workspaceId,
-          ...(product === "program" &&
-            defaultProgramId && {
-              programId: defaultProgramId,
-            }),
-          ...query,
-        },
+        { workspaceId, ...query },
         {
           include: includeParams,
         },

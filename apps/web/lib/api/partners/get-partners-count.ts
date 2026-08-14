@@ -104,7 +104,12 @@ export async function getPartnersCount<T>(
           some: {
             ...enrollmentScope,
             ...(groupIdWhere ?? {}),
-            status,
+            status:
+              status === "approved_invited"
+                ? {
+                    in: ["approved", "invited"],
+                  }
+                : status,
             ...enrollmentMetricWhere,
           },
         },
@@ -157,7 +162,12 @@ export async function getPartnersCount<T>(
       where: {
         ...enrollmentScope,
         partner: partnerWhereWithCountry,
-        status,
+        status:
+          status === "approved_invited"
+            ? {
+                in: ["approved", "invited"],
+              }
+            : status,
         ...enrollmentMetricWhere,
       },
       _count: true,
@@ -205,7 +215,12 @@ export async function getPartnersCount<T>(
         programEnrollment: {
           ...enrollmentScope,
           ...(groupIdWhere ?? {}),
-          status,
+          status:
+            status === "approved_invited"
+              ? {
+                  in: ["approved", "invited"],
+                }
+              : status,
           partner: partnerWhereWithCountry,
           ...enrollmentMetricWhere,
         },

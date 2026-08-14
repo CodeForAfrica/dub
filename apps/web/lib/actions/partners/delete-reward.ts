@@ -7,28 +7,23 @@ import { serializeReward } from "@/lib/api/partners/serialize-reward";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { queueRewardProcessing } from "@/lib/api/rewards/queue-reward-processing";
 import { prisma } from "@/lib/prisma";
-import {
-  REWARD_EVENT_COLUMN_MAPPING,
-  rewardActivityDescriptionSchema,
-} from "@/lib/zod/schemas/rewards";
+import { REWARD_EVENT_COLUMN_MAPPING } from "@/lib/zod/schemas/rewards";
 import { formatRewardDescription } from "@/ui/partners/format-reward-description";
 import { waitUntil } from "@vercel/functions";
 import * as z from "zod/v4";
 import { authActionClient } from "../safe-action";
 import { throwIfNoPermission } from "../throw-if-no-permission";
 
-const deleteRewardSchema = z
-  .object({
-    workspaceId: z.string(),
-    rewardId: z.string(),
-  })
-  .extend(rewardActivityDescriptionSchema.shape);
+const deleteRewardSchema = z.object({
+  workspaceId: z.string(),
+  rewardId: z.string(),
+});
 
 export const deleteRewardAction = authActionClient
   .inputSchema(deleteRewardSchema)
   .action(async ({ parsedInput, ctx }) => {
     const { workspace, user } = ctx;
-    const { rewardId, activityDescription } = parsedInput;
+    const { rewardId } = parsedInput;
 
     throwIfNoPermission({
       role: workspace.role,
@@ -83,7 +78,6 @@ export const deleteRewardAction = authActionClient
         description: formatRewardDescription(serializeReward(deletedReward), {
           includeEarnPrefix: false,
         }),
-        activityDescription,
       },
     });
 
@@ -113,7 +107,6 @@ export const deleteRewardAction = authActionClient
           parentResourceId: partnerGroup.id,
           old: reward,
           new: null,
-          description: activityDescription,
         }),
       ]),
     );

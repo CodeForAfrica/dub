@@ -5,19 +5,16 @@ import { NextResponse } from "next/server";
 
 export const POST = withWorkspace(
   async ({ workspace }) => {
-    const { inviteCode } = await prisma.project.update({
+    const response = await prisma.project.update({
       where: {
         id: workspace.id,
       },
       data: {
         inviteCode: nanoid(24),
       },
-      select: {
-        inviteCode: true,
-      },
     });
 
-    return NextResponse.json({ inviteCode });
+    return NextResponse.json(response);
   },
   {
     requiredPermissions: ["workspaces.write"],

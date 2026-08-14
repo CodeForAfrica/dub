@@ -72,7 +72,7 @@ const DeleteFolderModal = ({
                 <p className="block text-sm text-neutral-500">
                   To verify, type{" "}
                   <span className="font-medium text-neutral-700">
-                    confirm delete folder
+                    {folder.name}
                   </span>{" "}
                   below
                 </p>
@@ -88,7 +88,7 @@ const DeleteFolderModal = ({
                       className="block w-full rounded-md border-0 text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-0 sm:text-sm"
                       aria-invalid="true"
                       autoFocus={!isMobile}
-                      pattern="confirm delete folder"
+                      pattern={folder.name}
                     />
                   </div>
                 </div>

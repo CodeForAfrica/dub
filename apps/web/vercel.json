@@ -21,7 +21,7 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/streams/update-click-stats",
+      "path": "/api/cron/streams/update-workspace-clicks",
       "schedule": "* * * * *"
     },
     {
@@ -51,10 +51,6 @@
     {
       "path": "/api/cron/payouts/aggregate-due-commissions",
       "schedule": "0 * * * *"
-    },
-    {
-      "path": "/api/cron/payouts/reconcile-amounts",
-      "schedule": "* * * * *"
     },
     {
       "path": "/api/cron/trigger-withdrawal",
@@ -87,10 +83,6 @@
     {
       "path": "/api/cron/webhooks/sync-click-workspaces",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/queue/retry",
-      "schedule": "* * * * *"
     }
   ],
   "functions": {

@@ -3,14 +3,11 @@
 import { trackActivityLog } from "@/lib/api/activity-log/track-activity-log";
 import { createId } from "@/lib/api/create-id";
 import { DubApiError } from "@/lib/api/errors";
+import { getProgramEnrollmentOrThrow } from "@/lib/api/programs/get-program-enrollment-or-throw";
 import { prisma } from "@/lib/prisma";
-import {
-  SUBMITTED_LEAD_FORM_REQUIRED_FIELD_KEYS,
-  SUBMITTED_LEADS_ENABLED_PROGRAM_IDS,
-} from "@/lib/submitted-leads/constants";
+import { SUBMITTED_LEAD_FORM_REQUIRED_FIELD_KEYS } from "@/lib/submitted-leads/constants";
 import { notifyPartnerLeadSubmitted } from "@/lib/submitted-leads/notify-partner-lead-submitted";
 import { SubmittedLeadFormDataField } from "@/lib/types";
-import { ratelimit } from "@/lib/upstash";
 import {
   formFieldSchema,
   submittedLeadFormSchema,
@@ -22,7 +19,6 @@ import { Prisma } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import * as z from "zod/v4";
 import { authPartnerActionClient } from "../actions/safe-action";
-import { ACTIVE_ENROLLMENT_STATUSES } from "../zod/schemas/partners";
 
 /**
  * Converts field values based on field type:
@@ -68,46 +64,14 @@ export const submitLeadAction = authPartnerActionClient
     const { partner, user } = ctx;
     const { programId, formData: rawFormData } = parsedInput;
 
-    if (!SUBMITTED_LEADS_ENABLED_PROGRAM_IDS.includes(programId)) {
-      throw new DubApiError({
-        code: "forbidden",
-        message: "This program does not accept submitted leads.",
-      });
-    }
-
-    const { success } = await ratelimit(10, "1 m").limit(
-      `rl:submitted-lead:${partner.id}`,
-    );
-
-    if (!success) {
-      throw new DubApiError({
-        code: "rate_limit_exceeded",
-        message: "Too many leads submitted. Please try again later.",
-      });
-    }
-
-    const programEnrollment = await prisma.programEnrollment.findUnique({
-      where: {
-        partnerId_programId: {
-          partnerId: partner.id,
-          programId,
-        },
-        status: {
-          in: ACTIVE_ENROLLMENT_STATUSES,
-        },
-      },
+    const programEnrollment = await getProgramEnrollmentOrThrow({
+      partnerId: partner.id,
+      programId,
       include: {
         program: true,
         partner: true,
       },
     });
-
-    if (!programEnrollment) {
-      throw new DubApiError({
-        code: "not_found",
-        message: "Partner is not eligible to submit leads in this program.",
-      });
-    }
 
     // Make sure required fields are present
     const requiredFieldsResult =
@@ -160,14 +124,13 @@ export const submitLeadAction = authPartnerActionClient
 
       // Get field schema to extract label and handle value conversion
       const fieldSchema = fieldMap.get(key);
-
-      if (!fieldSchema) continue;
+      const label = fieldSchema?.label || key;
 
       customFormData.push({
         key,
-        label: fieldSchema.label || key,
+        label,
         value: convertFieldValue(value, fieldSchema),
-        type: fieldSchema.type,
+        type: fieldSchema?.type ?? "text",
       });
     }
 

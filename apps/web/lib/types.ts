@@ -29,13 +29,13 @@ import {
   User,
   UtmTemplate,
   Webhook,
+  WorkflowTrigger,
   WorkspaceRole,
 } from "@prisma/client";
 import * as z from "zod/v4";
 import { RESOURCE_COLORS } from "../ui/colors";
 import {
-  apiLogCountGroupBySchema,
-  apiLogCountRowSchemas,
+  apiLogCountRowSchema,
   apiLogEnrichedSchema,
   apiLogSchemaTB,
   requestTypeSchema,
@@ -71,6 +71,7 @@ import {
 import { adminNetworkPartnerSchema } from "./zod/schemas/admin";
 import {
   BountyListSchema,
+  bountyPerformanceConditionSchema,
   BountySchema,
   bountySocialContentIncrementalBonusSchema,
   BountySubmissionExtendedSchema,
@@ -83,6 +84,7 @@ import {
   CampaignListSchema,
   CampaignSchema,
   campaignSummarySchema,
+  campaignTriggerConditionSchema,
   EMAIL_TEMPLATE_VARIABLES,
   updateCampaignSchema,
 } from "./zod/schemas/campaigns";
@@ -200,6 +202,12 @@ import {
   webhookEventSchemaTB,
   WebhookSchema,
 } from "./zod/schemas/webhooks";
+import {
+  WORKFLOW_ATTRIBUTES,
+  WORKFLOW_COMPARISON_OPERATORS,
+  workflowActionSchema,
+  workflowConditionSchema,
+} from "./zod/schemas/workflows";
 import { workspacePreferencesSchema } from "./zod/schemas/workspace-preferences";
 import { workspaceUserSchema } from "./zod/schemas/workspaces";
 
@@ -273,9 +281,7 @@ export type UtmTemplateWithUserProps = UtmTemplateProps & {
 
 export type PlanProps = (typeof plans)[number];
 
-export type BetaFeatures =
-  | "analyticsSettingsSiteVisitTracking"
-  | "noProrationUpgrade";
+export type BetaFeatures = "analyticsSettingsSiteVisitTracking";
 
 export type PartnerBetaFeatures = "postbacks";
 
@@ -712,9 +718,31 @@ export type BountySubmissionRequirement =
 export type SocialMetricsChannel =
   (typeof BOUNTY_SOCIAL_PLATFORMS)[number]["value"];
 
+export type WorkflowCondition = z.infer<typeof workflowConditionSchema>;
+
+export type BountyPerformanceCondition = z.infer<
+  typeof bountyPerformanceConditionSchema
+>;
+
 export type BountySocialMetricsIncrementalBonus = z.infer<
   typeof bountySocialContentIncrementalBonusSchema
 >;
+
+export type CampaignTriggerCondition = z.infer<
+  typeof campaignTriggerConditionSchema
+>;
+
+export type WorkflowConditionAttribute = (typeof WORKFLOW_ATTRIBUTES)[number];
+
+export type WorkflowComparisonOperator =
+  (typeof WORKFLOW_COMPARISON_OPERATORS)[number];
+
+export type WorkflowAction = z.infer<typeof workflowActionSchema>;
+
+export type OperatorFn = (
+  aV: number,
+  cV: number | { min: number; max?: number },
+) => boolean;
 
 export type BountySubmissionsQueryFilters = z.infer<
   typeof getBountySubmissionsQuerySchema
@@ -746,6 +774,14 @@ export interface TiptapNode {
   content?: TiptapNode[];
   marks?: Array<{ type: string; attrs?: Record<string, any> }>;
 }
+
+export interface CampaignWorkflowAttributeConfig {
+  label: string;
+  inputType: "number" | "currency" | "dropdown" | "none";
+  dropdownValues?: number[];
+}
+
+export type WorkflowAttribute = (typeof WORKFLOW_ATTRIBUTES)[number];
 
 export type EmailDomainProps = z.infer<typeof EmailDomainSchema>;
 
@@ -803,6 +839,32 @@ export type CreateFraudEventInput = Pick<
   > & {
     metadata?: Record<string, unknown> | null;
   };
+
+interface WorkflowIdentity {
+  workspaceId: string;
+  programId: string;
+  partnerId: string;
+  groupId?: string;
+  customerId?: string;
+  customerFirstSaleAt?: Date;
+}
+
+interface PartnerMetrics {
+  leads?: number;
+  conversions?: number;
+  saleAmount?: number;
+  commissions?: number;
+}
+
+export interface WorkflowContext {
+  trigger: WorkflowTrigger;
+  reason?: "lead" | "sale" | "commission";
+  identity: WorkflowIdentity;
+  metrics?: {
+    current?: PartnerMetrics;
+    aggregated?: PartnerMetrics;
+  };
+}
 
 export type SubmittedLeadProps = z.infer<typeof submittedLeadSchema>;
 
@@ -870,19 +932,9 @@ export type CommissionActivitySnapshot = Pick<
 
 export type EnrichedApiLog = z.infer<typeof apiLogEnrichedSchema>;
 
-export type ApiLogsCountRow = z.infer<
-  typeof apiLogCountRowSchemas.routePattern
->;
+export type ApiLogsCountRow = z.infer<typeof apiLogCountRowSchema>;
 
 export type ApiLogsCountByRoutePattern = ApiLogsCountRow;
-
-export type ApiLogsCountByStatusCode = z.infer<
-  typeof apiLogCountRowSchemas.statusCode
->;
-
-export type ApiLogsCountByMethod = z.infer<typeof apiLogCountRowSchemas.method>;
-
-export type ApiLogsCountGroupBy = z.infer<typeof apiLogCountGroupBySchema>;
 
 export type RequestType = z.infer<typeof requestTypeSchema>;
 

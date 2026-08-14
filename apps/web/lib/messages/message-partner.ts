@@ -52,66 +52,49 @@ export const messagePartnerAction = authActionClient
     }
 
     // Make sure partner is either approved or trusted in the partner network, enrolled in the program, or already has a message with the program
-    const {
-      _count,
-      programs,
-      messages: partnerReplies,
-      ...partner
-    } = await prisma.partner.findFirstOrThrow({
-      where: {
-        id: partnerId,
-        ...partnerReachableByProgramWhereInput(programId),
-      },
-      include: {
-        _count: {
-          select: {
-            messages: {
-              where: {
-                programId,
-                senderPartnerId: null,
+    const { _count, programs, ...partner } =
+      await prisma.partner.findFirstOrThrow({
+        where: {
+          id: partnerId,
+          ...partnerReachableByProgramWhereInput(programId),
+        },
+        include: {
+          _count: {
+            select: {
+              messages: {
+                where: {
+                  programId,
+                },
               },
             },
           },
-        },
-        // Any partner reply unlocks further program messages
-        messages: {
-          where: {
-            programId,
-            senderPartnerId: { not: null },
-          },
-          take: 1,
-          select: { id: true },
-        },
-        programs: {
-          where: {
-            programId,
-          },
-          select: {
-            status: true,
+          programs: {
+            where: {
+              programId,
+            },
+            select: {
+              status: true,
+            },
           },
         },
-      },
-    });
+      });
 
+    // if the partner is not enrolled / is in invited status, cap at one message
     const enrollment = programs[0];
-    const programMessageCount = _count.messages;
-    const partnerHasReplied = partnerReplies.length > 0;
-
-    // Cap unsolicited outreach while invited / not enrolled; unlock once partner replies
     if (
       (!enrollment || enrollment.status === "invited") &&
-      !partnerHasReplied &&
-      programMessageCount >= 1
+      _count.messages >= 1
     ) {
       throw new DubApiError({
         code: "forbidden",
-        message: "You can only send one message until the partner replies.",
+        message:
+          "You can only send one initial message to a partner you've invited.",
       });
     }
 
-    // if partner is not enrolled in the program and it's the first program message
+    // if partner is not enrolled in the program and it's the first message
     // it means the program is reaching out via the partner network
-    if (!enrollment && programMessageCount === 0) {
+    if (!enrollment && _count.messages === 0) {
       const networkInvitesUsage = await getNetworkInvitesUsage(workspace);
 
       if (networkInvitesUsage >= workspace.networkInvitesLimit) {

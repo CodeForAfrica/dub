@@ -27,15 +27,14 @@ const getLogLevelFromStatusCode = (statusCode: number) => {
 };
 
 export const logger = new Logger({
-  transports:
-    isAxiomEnabled && axiomClient
-      ? [
-          new AxiomJSTransport({
-            axiom: axiomClient,
-            dataset: process.env.AXIOM_DATASET!,
-          }),
-        ]
-      : [new ConsoleTransport()],
+  transports: isAxiomEnabled
+    ? [
+        new AxiomJSTransport({
+          axiom: axiomClient,
+          dataset: process.env.AXIOM_DATASET!,
+        }),
+      ]
+    : [new ConsoleTransport()],
   formatters: nextJsFormatters,
 });
 
@@ -62,18 +61,3 @@ export const withAxiomBodyLog = createAxiomRouteHandler(logger, {
 });
 
 export const withAxiom = createAxiomRouteHandler(logger);
-
-export function toErrorFields(error: unknown) {
-  const response =
-    error && typeof error === "object" && "response" in error
-      ? (error as { response?: { status?: number; data?: unknown } }).response
-      : undefined;
-
-  return {
-    name: error instanceof Error ? error.name : undefined,
-    message: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
-    status: response?.status,
-    response: response?.data,
-  };
-}

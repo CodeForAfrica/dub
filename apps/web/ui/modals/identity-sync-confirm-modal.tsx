@@ -50,23 +50,21 @@ function IdentitySyncPreviewRow({
         />
       )}
       <div>
-        {showName && (
+        {showName && snapshot.name && (
           <div
             className={
-              snapshot.name
-                ? isNameContextOnly
-                  ? "text-[14px] font-semibold leading-4 text-neutral-900 opacity-50"
-                  : "text-[14px] font-semibold leading-4 text-neutral-900"
-                : "text-[14px] font-medium leading-4 text-neutral-500"
+              isNameContextOnly
+                ? "text-[14px] font-semibold leading-4 text-neutral-900 opacity-50"
+                : "text-[14px] font-semibold leading-4 text-neutral-900"
             }
           >
-            {snapshot.name || "No name set"}
+            {snapshot.name}
           </div>
         )}
         {showEmail && snapshot.email && (
           <div
             className={
-              showName
+              showName && snapshot.name
                 ? "mt-1 text-sm font-medium leading-5 text-neutral-500"
                 : "text-sm font-medium leading-5 text-neutral-900"
             }

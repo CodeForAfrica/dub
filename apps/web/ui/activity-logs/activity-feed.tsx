@@ -1,5 +1,5 @@
 import { ActivityLog, ActivityLogResourceType } from "@/lib/types";
-import { PartnerEnrollmentActivityItem } from "@/ui/activity-logs/partner-enrollment-activity-item";
+import { PartnerGroupActivityItem } from "@/ui/activity-logs/partner-group-activity-item";
 import { RewardActivityItem } from "@/ui/activity-logs/reward-activity-item";
 import { SubmittedLeadActivityItem } from "@/ui/activity-logs/submitted-lead-activity-item";
 import { ComponentType } from "react";
@@ -8,7 +8,7 @@ const ACTIVITY_ITEM_MAP: Record<
   Exclude<ActivityLogResourceType, "commission">,
   ComponentType<{ log: ActivityLog; isLast?: boolean }>
 > = {
-  partner: PartnerEnrollmentActivityItem,
+  partner: PartnerGroupActivityItem,
   submittedLead: SubmittedLeadActivityItem,
   clickReward: RewardActivityItem,
   leadReward: RewardActivityItem,

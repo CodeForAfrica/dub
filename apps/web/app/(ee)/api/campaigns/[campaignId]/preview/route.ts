@@ -1,19 +1,12 @@
 import { getCampaignOrThrow } from "@/lib/api/campaigns/get-campaign-or-throw";
-import { renderCampaignEmailHTML } from "@/lib/api/campaigns/render-campaign-email-html";
 import { DubApiError } from "@/lib/api/errors";
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { getProgramOrThrow } from "@/lib/api/programs/get-program-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
+import { renderCampaignEmailHTML } from "@/lib/api/workflows/render-campaign-email-html";
 import { withWorkspace } from "@/lib/auth";
-import {
-  parseCampaignFromAddress,
-  resolveCampaignFromAddress,
-} from "@/lib/email/parse-campaign-from-address";
 import { TiptapNode } from "@/lib/types";
-import {
-  CampaignSchema,
-  campaignFromSchema,
-} from "@/lib/zod/schemas/campaigns";
+import { CampaignSchema } from "@/lib/zod/schemas/campaigns";
 import { sendBatchEmail } from "@dub/email";
 import CampaignEmail from "@dub/email/templates/campaign-email";
 import { NextResponse } from "next/server";
@@ -24,7 +17,7 @@ const sendPreviewEmailSchema = CampaignSchema.pick({
   preview: true,
   bodyJson: true,
 }).extend({
-  from: campaignFromSchema.optional(),
+  from: z.email().optional(),
   emailAddresses: z
     .array(z.email())
     .min(1)
@@ -61,33 +54,23 @@ export const POST = withWorkspace(
     ]);
 
     // check if from email is a valid email domain
-    if (from) {
-      const parsed = parseCampaignFromAddress(from);
-      const domainPart = parsed?.email.split("@")[1];
-
-      if (
-        !parsed ||
-        !program.emailDomains.some(
-          ({ slug: emailDomain }) => domainPart === emailDomain,
-        )
-      ) {
-        throw new DubApiError({
-          code: "bad_request",
-          message: "Invalid domain. You can only send from a verified domain.",
-        });
-      }
+    if (
+      from &&
+      !program.emailDomains.some(
+        ({ slug: emailDomain }) => from.split("@")[1] === emailDomain,
+      )
+    ) {
+      throw new DubApiError({
+        code: "bad_request",
+        message: "Invalid `from` email address.",
+      });
     }
 
     const { data, error } = await sendBatchEmail(
       emailAddresses.map((email) => ({
         variant: campaign.type === "marketing" ? "marketing" : "notifications",
         to: email,
-        ...(from && {
-          from: resolveCampaignFromAddress({
-            from,
-            programName: program.name,
-          }),
-        }),
+        ...(from && { from: `${program.name} <${from}>` }),
         ...(program.supportEmail ? { replyTo: program.supportEmail } : {}),
         subject: `[TEST] ${subject}`,
         react: CampaignEmail({

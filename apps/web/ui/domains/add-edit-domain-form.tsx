@@ -120,14 +120,12 @@ export function AddEditDomainForm({
   enableDomainConfig = true,
   initialDomain,
   fixedDomainSuffix,
-  isOnboardingSubdomainFlow = false,
 }: {
   props?: DomainProps;
   onSuccess?: (data: DomainProps) => void;
   enableDomainConfig?: boolean;
   fixedDomainSuffix?: string;
   initialDomain?: string;
-  isOnboardingSubdomainFlow?: boolean;
 }) {
   const { id: workspaceId, plan } = useWorkspace();
   const [lockDomain, setLockDomain] = useState(true);
@@ -142,15 +140,13 @@ export function AddEditDomainForm({
     Record<string, boolean>
   >({});
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
   const {
     register,
     control,
     handleSubmit,
     watch,
     setValue,
-    formState: { isDirty },
+    formState: { isSubmitting, isSubmitSuccessful, isDirty },
   } = useForm<FormData>({
     defaultValues: {
       slug:
@@ -305,9 +301,7 @@ export function AddEditDomainForm({
   const { handleKeyDown } = useEnterSubmit(formRef);
 
   const onSubmit = async (formData: FormData) => {
-    if (isSubmitting) return;
     try {
-      setIsSubmitting(true);
       const res = await fetch(endpoint.url, {
         method: endpoint.method,
         headers: {
@@ -327,7 +321,6 @@ export function AddEditDomainForm({
           ...(formData.deepviewData !== undefined && {
             deepviewData: sanitizeJson(formData.deepviewData),
           }),
-          isOnboardingSubdomainFlow,
         }),
       });
 
@@ -340,7 +333,6 @@ export function AddEditDomainForm({
         toast.success(endpoint.successMessage);
         onSuccess?.(data);
       } else {
-        setIsSubmitting(false);
         const { error } = await res.json();
         if (res.status === 422) {
           setDomainStatus("conflict");
@@ -357,7 +349,6 @@ export function AddEditDomainForm({
         }
       }
     } catch (error) {
-      setIsSubmitting(false);
       toast.error(`Failed to ${props ? "update" : "add"} domain`);
     }
   };
@@ -742,7 +733,7 @@ export function AddEditDomainForm({
         <Button
           text={props ? "Save changes" : "Add domain"}
           disabled={saveDisabled}
-          loading={isSubmitting}
+          loading={isSubmitting || isSubmitSuccessful}
         />
       </div>
     </form>

@@ -28,7 +28,6 @@ export default function usePartnerEarningsCount<T>(opts?: {
             "linkId",
             "customerId",
             "status",
-            "payoutId",
             "interval",
             "start",
             "end",

@@ -2,9 +2,8 @@ import { getStartEndDates } from "@/lib/analytics/utils/get-start-end-dates";
 import { withAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { analyticsQuerySchema } from "@/lib/zod/schemas/analytics";
-import { getPaginationQuerySchema } from "@/lib/zod/schemas/misc";
 import { ACME_PROGRAM_ID } from "@dub/utils";
-import { InvoiceStatus, Prisma } from "@prisma/client";
+import { InvoiceStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import * as z from "zod/v4";
 import { getPayoutsTimeseries } from "./get-payouts-timeseries";
@@ -16,8 +15,7 @@ const adminPayoutsQuerySchema = z
   })
   .extend(
     analyticsQuerySchema.pick({ interval: true, start: true, end: true }).shape,
-  )
-  .extend(getPaginationQuerySchema({ pageSize: 100 }));
+  );
 
 export const GET = withAdmin(async ({ searchParams }) => {
   const {
@@ -26,8 +24,6 @@ export const GET = withAdmin(async ({ searchParams }) => {
     interval = "mtd",
     start,
     end,
-    page,
-    pageSize,
   } = adminPayoutsQuerySchema.parse(searchParams);
 
   const timezone = "UTC";
@@ -36,56 +32,47 @@ export const GET = withAdmin(async ({ searchParams }) => {
     start,
     end,
     timezone,
-    dataAvailableFrom: new Date("2024-11-01"),
   });
 
-  const invoiceWhere: Prisma.InvoiceWhereInput = {
-    ...(programId
-      ? { programId }
-      : {
-          AND: [
-            {
-              programId: {
-                not: ACME_PROGRAM_ID,
+  // Fetch invoices
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      ...(programId
+        ? { programId }
+        : {
+            AND: [
+              {
+                programId: {
+                  not: ACME_PROGRAM_ID,
+                },
               },
-            },
-            {
-              program: {
-                isNot: null,
+              {
+                program: {
+                  isNot: null,
+                },
               },
-            },
-          ],
-        }),
-    status: status || {
-      not: "failed",
+            ],
+          }),
+      status: status || {
+        not: "failed",
+      },
+      createdAt: {
+        gte: startDate,
+        lte: endDate,
+      },
     },
-    createdAt: {
-      gte: startDate,
-      lte: endDate,
-    },
-  };
-
-  const [invoices, totalInvoices] = await Promise.all([
-    prisma.invoice.findMany({
-      where: invoiceWhere,
-      include: {
-        program: {
-          select: {
-            name: true,
-            logo: true,
-          },
+    include: {
+      program: {
+        select: {
+          name: true,
+          logo: true,
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
-      skip: ((page ?? 1) - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.invoice.count({
-      where: invoiceWhere,
-    }),
-  ]);
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
 
   const timeseriesData = await getPayoutsTimeseries({
     programId,
@@ -111,6 +98,5 @@ export const GET = withAdmin(async ({ searchParams }) => {
   return NextResponse.json({
     invoices: formattedInvoices,
     timeseriesData,
-    totalInvoices,
   });
 });

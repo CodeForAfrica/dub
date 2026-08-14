@@ -13,7 +13,6 @@ import {
   getGroupsQuerySchema,
   GroupSchema,
   GroupSchemaExtended,
-  sanitizeAdditionalLinks,
 } from "@/lib/zod/schemas/groups";
 import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
@@ -94,7 +93,6 @@ export const POST = withWorkspace(
           code: "exceeded_limit",
           message: exceededLimitError({
             plan: workspace.plan,
-            planPeriod: workspace.planPeriod,
             limit: workspace.groupsLimit,
             type: "groups",
           }),
@@ -128,9 +126,7 @@ export const POST = withWorkspace(
           brandColor,
           holdingPeriodDays,
           autoApprovePartnersEnabledAt,
-          ...(additionalLinks && {
-            additionalLinks: sanitizeAdditionalLinks(additionalLinks),
-          }),
+          ...(additionalLinks && { additionalLinks }),
           ...(maxPartnerLinks && { maxPartnerLinks }),
           ...(linkStructure && { linkStructure }),
           ...(applicationFormData && { applicationFormData }),

@@ -5,14 +5,13 @@ import { throwIfInvalidGroupIds } from "@/lib/api/groups/throw-if-invalid-group-
 import { getDefaultProgramIdOrThrow } from "@/lib/api/programs/get-default-program-id-or-throw";
 import { getProgramEnrollmentOrThrow } from "@/lib/api/programs/get-program-enrollment-or-throw";
 import { parseRequestBody } from "@/lib/api/utils";
-import { WorkflowAction } from "@/lib/api/workflows/types";
-import { validateWorkflowConditions } from "@/lib/api/workflows/validate-workflow-conditions";
 import { withWorkspace } from "@/lib/auth";
 import { generatePerformanceBountyName } from "@/lib/bounty/api/generate-performance-bounty-name";
 import { validateBounty } from "@/lib/bounty/api/validate-bounty";
 import { qstash } from "@/lib/cron";
 import { getPlanCapabilities } from "@/lib/plan-capabilities";
 import { prisma } from "@/lib/prisma";
+import { WorkflowAction } from "@/lib/types";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import {
   BountyListSchema,
@@ -175,13 +174,6 @@ export const POST = withWorkspace(
 
     validateBounty(parsedBody);
 
-    if (type === "performance" && performanceCondition) {
-      await validateWorkflowConditions({
-        conditions: [performanceCondition],
-        workflowType: "awardBounty",
-      });
-    }
-
     const { canUseBountySocialMetrics, canSendEmailCampaigns } =
       getPlanCapabilities(workspace.plan);
 
@@ -321,7 +313,7 @@ export const POST = withWorkspace(
 
         shouldScheduleDraftSubmissions &&
           qstash.publishJSON({
-            url: `${APP_DOMAIN_WITH_NGROK}/api/cron/bounties/upsert-draft-submissions`,
+            url: `${APP_DOMAIN_WITH_NGROK}/api/cron/bounties/create-draft-submissions`,
             body: {
               bountyId: bounty.id,
             },

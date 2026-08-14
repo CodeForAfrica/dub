@@ -3,8 +3,7 @@ import { jackson } from "@/lib/jackson";
 import { prisma } from "@/lib/prisma";
 import { isStored, storage } from "@/lib/storage";
 import { UserProps } from "@/lib/types";
-import { assertRateLimit } from "@/lib/upstash/assert-rate-limit";
-import { RATELIMIT_POLICIES } from "@/lib/upstash/ratelimit-policies";
+import { ratelimit } from "@/lib/upstash";
 import { sendEmail } from "@dub/email";
 import LoginLink from "@dub/email/templates/login-link";
 import { APP_DOMAIN_WITH_NGROK } from "@dub/utils";
@@ -19,7 +18,7 @@ import EmailProvider from "next-auth/providers/email";
 import GithubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
 import { createId } from "../api/create-id";
-import { isProduction } from "../api/environment";
+import { isProduction, shouldApplyRateLimit } from "../api/environment";
 import { isSamlEnforcedForEmailDomain } from "../api/workspaces/is-saml-enforced-for-email-domain";
 import { qstash } from "../cron";
 import { completeProgramApplications } from "../partners/complete-program-applications";
@@ -96,12 +95,7 @@ const CustomPrismaAdapter = (p: PrismaClient) => {
 export const authOptions: NextAuthOptions = {
   providers: [
     EmailProvider({
-      async sendVerificationRequest({ identifier, url }) {
-        await assertRateLimit({
-          policy: RATELIMIT_POLICIES.loginLinkSend,
-          identifier,
-        });
-
+      sendVerificationRequest({ identifier, url }) {
         if (!isProduction) {
           console.log(`Login link: ${url}`);
           return;
@@ -272,10 +266,15 @@ export const authOptions: NextAuthOptions = {
           throw new Error("no-credentials");
         }
 
-        await assertRateLimit({
-          policy: RATELIMIT_POLICIES.login,
-          identifier: email.trim().toLowerCase(),
-        });
+        if (shouldApplyRateLimit) {
+          const { success } = await ratelimit(5, "1 m").limit(
+            `login-attempts:${email}`,
+          );
+
+          if (!success) {
+            throw new Error("too-many-login-attempts");
+          }
+        }
 
         // SSO enforcement check
         const ssoEnforced = await isSamlEnforcedForEmailDomain(email);
@@ -383,7 +382,9 @@ export const authOptions: NextAuthOptions = {
         sameSite: "lax",
         path: "/",
         // When working on localhost, the cookie domain must be omitted entirely (https://stackoverflow.com/a/1188145)
-        domain: VERCEL_DEPLOYMENT ? ".dub.co" : undefined,
+        domain: VERCEL_DEPLOYMENT
+        ? process.env.NEXTAUTH_COOKIE_DOMAIN || ".dub.co"
+        : undefined,
         secure: VERCEL_DEPLOYMENT,
       },
     },

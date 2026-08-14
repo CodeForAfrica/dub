@@ -253,7 +253,7 @@ export function ProfileMembersPageClient() {
               />
               {inviteCount && status !== "invited" ? (
                 <Button
-                  text="Pending invites"
+                  text="View pending invites"
                   variant="secondary"
                   className="w-fit"
                   right={

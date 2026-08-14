@@ -1,6 +1,6 @@
 import useWorkspaces from "@/lib/swr/use-workspaces";
-import { BlurImage, Button, Combobox } from "@dub/ui";
-import { cn } from "@dub/utils";
+import { Button, Combobox } from "@dub/ui";
+import { OG_AVATAR_URL, cn } from "@dub/utils";
 import { useMemo, useState } from "react";
 import { useAddWorkspaceModal } from "../modals/add-workspace-modal";
 
@@ -24,11 +24,9 @@ export function WorkspaceSelector({
       value: workspace.slug,
       label: workspace.name,
       icon: (
-        <BlurImage
-          src={workspace.logo || `https://avatar.vercel.sh/${workspace.id}`}
-          alt={workspace.id}
-          width={16}
-          height={16}
+        <img
+          src={workspace.logo || `${OG_AVATAR_URL}${workspace.name}`}
+          alt={workspace.name}
           className="size-4 rounded-full"
         />
       ),
@@ -50,11 +48,9 @@ export function WorkspaceSelector({
       value: workspace.slug,
       label: workspace.name,
       icon: (
-        <BlurImage
-          src={workspace.logo || `https://avatar.vercel.sh/${workspace.id}`}
-          alt={workspace.id}
-          width={16}
-          height={16}
+        <img
+          src={workspace.logo || `${OG_AVATAR_URL}${workspace.name}`}
+          alt={workspace.name}
           className="size-4 rounded-full"
         />
       ),

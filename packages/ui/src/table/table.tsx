@@ -900,10 +900,7 @@ function HeaderWithTooltip({
   }
 
   return (
-    <Tooltip
-      content={tooltip}
-      delayDuration={400} // longer delay to avoid tooltip colliding with search box
-    >
+    <Tooltip content={tooltip}>
       <span className="cursor-help underline decoration-dotted underline-offset-2">
         {children}
       </span>

@@ -1,8 +1,9 @@
-import { withCron } from "@/lib/cron/with-cron";
+import { handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { verifyVercelSignature } from "@/lib/cron/verify-vercel";
 import { prisma } from "@/lib/prisma";
 import { sendBatchEmail } from "@dub/email";
 import DomainRenewalReminder from "@dub/email/templates/domain-renewal-reminder";
-import { chunk } from "@dub/utils";
+import { chunk, log } from "@dub/utils";
 import {
   differenceInCalendarDays,
   endOfDay,
@@ -26,98 +27,109 @@ export const dynamic = "force-dynamic";
 const REMINDER_WINDOWS = [30, 23, 16];
 
 // GET /api/cron/domains/renewal-reminders
-export const GET = withCron(async () => {
-  const now = new Date();
+export async function GET(req: Request) {
+  try {
+    await verifyVercelSignature(req);
 
-  const targetDates = REMINDER_WINDOWS.map((days) => {
-    const date = subDays(now, -days);
+    const now = new Date();
 
-    return {
-      start: startOfDay(date),
-      end: endOfDay(date),
-      days,
-    };
-  });
+    const targetDates = REMINDER_WINDOWS.map((days) => {
+      const date = subDays(now, -days);
 
-  console.log("targetDates", targetDates);
+      return {
+        start: startOfDay(date),
+        end: endOfDay(date),
+        days,
+      };
+    });
 
-  // Find all domains that are eligible for renewal reminders
-  const domains = await prisma.registeredDomain.findMany({
-    where: {
-      autoRenewalDisabledAt: null,
-      OR: targetDates.map((t) => ({
-        expiresAt: {
-          gte: t.start,
-          lte: t.end,
-        },
-      })),
-    },
-    include: {
-      project: {
-        include: {
-          users: {
-            where: {
-              role: "owner",
-            },
-            include: {
-              user: true,
+    console.log("targetDates", targetDates);
+
+    // Find all domains that are eligible for renewal reminders
+    const domains = await prisma.registeredDomain.findMany({
+      where: {
+        autoRenewalDisabledAt: null,
+        OR: targetDates.map((t) => ({
+          expiresAt: {
+            gte: t.start,
+            lte: t.end,
+          },
+        })),
+      },
+      include: {
+        project: {
+          include: {
+            users: {
+              where: {
+                role: "owner",
+              },
+              include: {
+                user: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    });
 
-  if (domains.length === 0) {
-    console.log("No domains found to send reminders for. Skipping...");
-    return NextResponse.json("No domains found to send reminders for.");
-  }
+    if (domains.length === 0) {
+      console.log("No domains found to send reminders for. Skipping...");
+      return NextResponse.json("No domains found to send reminders for.");
+    }
 
-  const reminderDomains = domains.flatMap(
-    ({ slug, expiresAt, renewalFee, project }) => {
-      const reminderWindow = differenceInCalendarDays(expiresAt, now);
+    const reminderDomains = domains.flatMap(
+      ({ slug, expiresAt, renewalFee, project }) => {
+        const reminderWindow = differenceInCalendarDays(expiresAt, now);
 
-      // we charge 14 days before the expiration date to ensure timely processing
-      const chargeAt: Date = subDays(expiresAt, 14);
+        // we charge 14 days before the expiration date to ensure timely processing
+        const chargeAt: Date = subDays(expiresAt, 14);
 
-      return project.users.map(({ user }) => ({
-        domain: {
-          slug,
-          renewalFee,
-          expiresAt,
-          reminderWindow,
-          chargeAt,
-          chargeAtInText: formatDistanceStrict(chargeAt, now),
-        },
-        workspace: {
-          slug: project.slug,
-        },
-        user: {
-          email: user.email,
-        },
-      }));
-    },
-  );
-
-  console.table(reminderDomains);
-
-  const reminderDomainsChunks = chunk(reminderDomains, 100);
-
-  for (const reminderDomainsChunk of reminderDomainsChunks) {
-    const res = await sendBatchEmail(
-      reminderDomainsChunk.map(({ workspace, user, domain }) => ({
-        to: user.email!,
-        subject: "Your domain is expiring soon",
-        variant: "notifications",
-        react: DomainRenewalReminder({
-          email: user.email!,
-          workspace,
-          domain,
-        }),
-      })),
+        return project.users.map(({ user }) => ({
+          domain: {
+            slug,
+            renewalFee,
+            expiresAt,
+            reminderWindow,
+            chargeAt,
+            chargeAtInText: formatDistanceStrict(chargeAt, now),
+          },
+          workspace: {
+            slug: project.slug,
+          },
+          user: {
+            email: user.email,
+          },
+        }));
+      },
     );
-    console.log(`Sent ${reminderDomainsChunk.length} emails`, res);
-  }
 
-  return NextResponse.json(reminderDomains);
-});
+    console.table(reminderDomains);
+
+    const reminderDomainsChunks = chunk(reminderDomains, 100);
+
+    for (const reminderDomainsChunk of reminderDomainsChunks) {
+      const res = await sendBatchEmail(
+        reminderDomainsChunk.map(({ workspace, user, domain }) => ({
+          to: user.email!,
+          subject: "Your domain is expiring soon",
+          variant: "notifications",
+          react: DomainRenewalReminder({
+            email: user.email!,
+            workspace,
+            domain,
+          }),
+        })),
+      );
+      console.log(`Sent ${reminderDomainsChunk.length} emails`, res);
+    }
+
+    return NextResponse.json(reminderDomains);
+  } catch (error) {
+    await log({
+      message: "Domains renewal reminders cron failed. Error: " + error.message,
+      type: "errors",
+    });
+
+    return handleAndReturnErrorResponse(error);
+  }
+}

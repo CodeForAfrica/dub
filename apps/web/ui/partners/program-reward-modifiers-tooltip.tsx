@@ -36,7 +36,7 @@ export function ProgramRewardModifiersTooltip({
   if (!reward?.modifiers?.length && !reward?.tooltipDescription) return null;
 
   return (
-    <span className="inline-block align-text-top">
+    <div className="inline-block align-text-top">
       <InfoTooltip
         content={
           reward.tooltipDescription || (
@@ -49,7 +49,7 @@ export function ProgramRewardModifiersTooltip({
         }
         contentClassName={reward.tooltipDescription ? "text-left" : undefined}
       />
-    </span>
+    </div>
   );
 }
 

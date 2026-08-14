@@ -48,7 +48,7 @@ export default function SubscriptionMenu() {
     })
       .then(async (res) => {
         if (res.ok) {
-          const { url } = await res.json();
+          const url = await res.json();
           router.push(url);
         } else {
           const { error } = await res.json();
@@ -60,7 +60,7 @@ export default function SubscriptionMenu() {
       });
   };
 
-  const handleCancellation = async () => {
+  const cancelSubscription = async () => {
     setIsOpen(false);
     setClicked(true);
     return fetch(`/api/workspaces/${workspaceId}/billing/cancel`, {
@@ -96,7 +96,7 @@ export default function SubscriptionMenu() {
       newPeriod: "monthly",
       newTier: 1,
       onConfirm: async () => {
-        await handleCancellation();
+        await cancelSubscription();
         setShowPlanChangeConfirmationModal(false);
       },
     });
@@ -126,11 +126,11 @@ export default function SubscriptionMenu() {
     cancelText: "Not now",
     confirmText: "Cancel subscription",
     onConfirm: async () => {
-      await handleCancellation();
+      await cancelSubscription();
     },
   });
 
-  const handlehandleCancellation = () => {
+  const handleCancelSubscription = () => {
     setIsOpen(false);
     if (losesPartnerAccess) {
       setShowPlanChangeConfirmationModal(true);
@@ -138,10 +138,6 @@ export default function SubscriptionMenu() {
       setShowConfirmModal(true);
     }
   };
-
-  if (plan === "enterprise") {
-    return null;
-  }
 
   return (
     <>
@@ -159,16 +155,18 @@ export default function SubscriptionMenu() {
                 onSelect={() => openBillingPortal()}
                 disabledTooltip={permissionsError}
               />
-              <MenuItem
-                icon={SquareXmark}
-                label="Cancel subscription"
-                onSelect={handlehandleCancellation}
-                disabledTooltip={
-                  subscriptionCanceledAt
-                    ? "Your subscription has already been scheduled for cancellation."
-                    : permissionsError
-                }
-              />
+              {plan !== "enterprise" && (
+                <MenuItem
+                  icon={SquareXmark}
+                  label="Cancel subscription"
+                  onSelect={handleCancelSubscription}
+                  disabledTooltip={
+                    subscriptionCanceledAt
+                      ? "Your subscription has already been scheduled for cancellation."
+                      : permissionsError
+                  }
+                />
+              )}
             </Command.List>
           </Command>
         }

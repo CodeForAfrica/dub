@@ -3,7 +3,7 @@ import { groupRulesSchema } from "@/lib/zod/schemas/groups";
 
 export const getGroupMoveRules = async (programId: string) => {
   const groups = await prisma.partnerGroup.findMany({
-    where: { programId, workflow: { isNot: null } },
+    where: { programId },
     select: {
       id: true,
       name: true,

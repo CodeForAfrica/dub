@@ -1,5 +1,4 @@
 import { trackCommissionStatusUpdate } from "@/lib/api/commissions/track-commission-update-activity-log";
-import { PRISMA_UPDATEMANY_LIMIT } from "@/lib/cron";
 import { retallyPayoutsAmount } from "@/lib/payouts/retally-payouts-amount";
 import { prisma } from "@/lib/prisma";
 import { chunk, groupBy } from "@dub/utils";
@@ -73,7 +72,7 @@ export async function holdProcessedCommissions(
             },
           },
         },
-        take: PRISMA_UPDATEMANY_LIMIT,
+        take: 250,
       });
 
       if (processedCommissions.length === 0) {

@@ -10,7 +10,6 @@ import { prisma } from "@/lib/prisma";
 import { PlanProps } from "@/lib/types";
 import { emailSchema } from "@/lib/zod/schemas/auth";
 import { anthropic } from "@ai-sdk/anthropic";
-import { PlanPeriod } from "@prisma/client";
 import { generateText, Output } from "ai";
 import * as z from "zod/v4";
 import { authActionClient } from "../actions/safe-action";
@@ -90,7 +89,6 @@ export const generatePartnerNetworkInviteEmailAction = authActionClient
       workspaceId: workspace.id,
       aiLimit: workspace.aiLimit,
       plan: workspace.plan,
-      planPeriod: workspace.planPeriod,
     });
 
     try {
@@ -231,12 +229,10 @@ async function reserveAIUsageCredit({
   workspaceId,
   aiLimit,
   plan,
-  planPeriod,
 }: {
   workspaceId: string;
   aiLimit: number;
   plan: PlanProps;
-  planPeriod: PlanPeriod | null;
 }) {
   const { count } = await prisma.project.updateMany({
     where: {
@@ -257,7 +253,6 @@ async function reserveAIUsageCredit({
       code: "forbidden",
       message: exceededLimitError({
         plan,
-        planPeriod,
         limit: aiLimit,
         type: "AI",
       }),

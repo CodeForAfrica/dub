@@ -1,7 +1,7 @@
 import { CRON_BATCH_SIZE, qstash } from "@/lib/cron";
 import { enqueueBatchJobs } from "@/lib/cron/enqueue-batch-jobs";
 import { withCron } from "@/lib/cron/with-cron";
-import { isNonRecoverableDiscountError } from "@/lib/discounts/discount-error";
+import { isDiscountIntegrationNotAvailableError } from "@/lib/discounts/discount-error";
 import { getDiscountProvider } from "@/lib/discounts/discount-provider";
 import { prisma } from "@/lib/prisma";
 import { ACTIVE_ENROLLMENT_STATUSES } from "@/lib/zod/schemas/partners";
@@ -55,12 +55,14 @@ export const POST = withCron(async ({ rawBody }) => {
   const discountProvider = getDiscountProvider(discount.provider);
 
   try {
-    await discountProvider.assertDiscountIntegration({
+    await discountProvider.assertDiscountIntegrationAvailable({
       workspace: program.workspace,
     });
   } catch (error) {
-    if (isNonRecoverableDiscountError(error)) {
-      return logAndRespond(error.message, { logLevel: "warn" });
+    if (isDiscountIntegrationNotAvailableError(error)) {
+      return logAndRespond(
+        `Workspace has not installed the ${discount.provider} integration. Skipping...`,
+      );
     }
 
     throw error;

@@ -19,7 +19,6 @@ export const GET = withWorkspace(
     const events = await getCampaignEvents({
       ...getCampaignsEventsQuerySchema.parse(searchParams),
       campaignId,
-      programId,
     });
 
     return NextResponse.json(events);

@@ -1,20 +1,19 @@
-import { WorkflowCondition } from "@/lib/api/workflows/types";
-import { WorkflowAttributeKey } from "./attribute-definitions";
-import { WORKFLOW_OPERATORS } from "./operator-definitions";
+import { WorkflowCondition, WorkflowConditionAttribute } from "@/lib/types";
+import { OPERATOR_FUNCTIONS } from "@/lib/zod/schemas/workflows";
 
 export function evaluateWorkflowConditions({
   conditions,
   attributes,
 }: {
   conditions: WorkflowCondition[];
-  attributes: Partial<Record<WorkflowAttributeKey, number | string | null>>;
+  attributes: Partial<Record<WorkflowConditionAttribute, number | null>>;
 }): boolean {
   if (conditions.length === 0) return false;
 
   for (const condition of conditions) {
-    const operator = WORKFLOW_OPERATORS[condition.operator];
+    const operatorFn = OPERATOR_FUNCTIONS[condition.operator];
 
-    if (!operator) {
+    if (!operatorFn) {
       console.error(`Operator ${condition.operator} is not supported.`);
       return false;
     }
@@ -26,12 +25,7 @@ export function evaluateWorkflowConditions({
       return false;
     }
 
-    if (condition.value == null) {
-      console.error(`Value is required for ${condition.attribute}.`);
-      return false;
-    }
-
-    if (!operator.evaluate(attributeValue, condition.value)) {
+    if (!operatorFn(attributeValue, condition.value)) {
       return false;
     }
   }

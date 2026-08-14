@@ -1,6 +1,7 @@
 import { COMMON_CORS_HEADERS } from "@/lib/api/cors";
 import { createId } from "@/lib/api/create-id";
 import { DubApiError, handleAndReturnErrorResponse } from "@/lib/api/errors";
+import { syncPartnerLinksStats } from "@/lib/api/partners/sync-partner-links-stats";
 import { parseRequestBody } from "@/lib/api/utils";
 import { getIP } from "@/lib/api/utils/get-ip";
 import {
@@ -18,7 +19,6 @@ import {
   recordClickZodSchema,
 } from "@/lib/tinybird/record-click-zod";
 import { ratelimit } from "@/lib/upstash";
-import { publishLinkClickEvent } from "@/lib/upstash/redis-streams/link-click-events";
 import { MARKETPLACE_RESERVED_SLUGS } from "@/ui/program-marketplace/utils/urls";
 import {
   capitalize,
@@ -281,17 +281,25 @@ async function trackVisitEvent({
           `Tracked click event for network partner ${referredByPartner.id}`,
         );
 
-        await publishLinkClickEvent({
-          linkId: networkReferralLink.id,
-          timestamp: new Date().toISOString(),
-          workspaceId: NETWORK_WORKSPACE_ID,
-          programId: NETWORK_PROGRAM_ID,
-          partnerId: referredByPartner.id,
+        await prisma.link.update({
+          where: {
+            id: networkReferralLink.id,
+          },
+          data: {
+            clicks: { increment: 1 },
+            lastClicked: new Date(),
+          },
         });
-
         console.log(
-          `Published link click event for network referral link ${networkReferralLink.id}`,
+          `Updated link ${networkReferralLink.id} to ${networkReferralLink.clicks + 1} clicks`,
         );
+
+        await syncPartnerLinksStats({
+          partnerId: referredByPartner.id,
+          programId: NETWORK_PROGRAM_ID,
+          eventType: "click",
+        });
+        console.log(`Synced click stats for partner ${referredByPartner.id}`);
       })(),
     );
   }

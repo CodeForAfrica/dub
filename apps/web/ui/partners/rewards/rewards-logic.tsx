@@ -296,23 +296,6 @@ const formatValue = (
   return truncate(value!.toString(), 20);
 };
 
-function getConditionMenuSelectedValue(
-  value: string | number | string[] | number[] | undefined,
-  isArrayValue: boolean,
-): string | string[] | undefined {
-  if (isArrayValue) {
-    if (Array.isArray(value)) {
-      return value as string[];
-    }
-    if (value != null && value !== "") {
-      return [String(value)];
-    }
-    return [];
-  }
-
-  return value as string | undefined;
-}
-
 function MetadataConditionOperatorMenu({
   selectedValue,
   onSelect,
@@ -724,15 +707,14 @@ function ConditionLogic({
                             "rounded-r-none",
                         )}
                       >
-                        {/* Country selection */}
-                        {condition.attribute === "country" ? (
+                        {/* Country selection (single value only) */}
+                        {condition.attribute === "country" && !isArrayValue ? (
                           // Country selector
                           <InlineBadgePopoverMenu
                             search
-                            selectedValue={getConditionMenuSelectedValue(
-                              condition.value,
-                              isArrayValue,
-                            )}
+                            selectedValue={
+                              condition.value as string | undefined
+                            }
                             items={Object.entries(COUNTRIES).map(
                               ([key, name]) => ({
                                 text: name,
@@ -748,31 +730,17 @@ function ConditionLogic({
                             onSelect={(value) => {
                               setValue(conditionKey, {
                                 ...condition,
-                                value: isArrayValue
-                                  ? Array.isArray(condition.value)
-                                    ? (condition.value as string[]).includes(
-                                        value,
-                                      )
-                                      ? (condition.value.filter(
-                                          (v) => v !== value,
-                                        ) as string[])
-                                      : ([
-                                          ...condition.value,
-                                          value,
-                                        ] as string[])
-                                    : [value]
-                                  : value,
+                                value,
                               });
                             }}
                           />
-                        ) : attribute?.options ? (
+                        ) : attribute?.options && !isArrayValue ? (
                           // Select option selector
                           <InlineBadgePopoverMenu
                             search={attribute.options.length > 4}
-                            selectedValue={getConditionMenuSelectedValue(
-                              condition.value,
-                              isArrayValue,
-                            )}
+                            selectedValue={
+                              condition.value as string | undefined
+                            }
                             items={attribute.options.map(({ id, label }) => ({
                               text: label,
                               value: id,
@@ -780,20 +748,7 @@ function ConditionLogic({
                             onSelect={(value) => {
                               setValue(conditionKey, {
                                 ...condition,
-                                value: isArrayValue
-                                  ? Array.isArray(condition.value)
-                                    ? (condition.value as string[]).includes(
-                                        value,
-                                      )
-                                      ? (condition.value.filter(
-                                          (v) => v !== value,
-                                        ) as string[])
-                                      : ([
-                                          ...condition.value,
-                                          value,
-                                        ] as string[])
-                                    : [value]
-                                  : value,
+                                value,
                               });
                             }}
                           />

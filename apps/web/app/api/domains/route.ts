@@ -1,6 +1,5 @@
 import { createId } from "@/lib/api/create-id";
 import { addDomainToVercel } from "@/lib/api/domains/add-domain-vercel";
-import { parseDomainJsonConfig } from "@/lib/api/domains/parse-domain-json-config";
 import { transformDomain } from "@/lib/api/domains/transform-domain";
 import { validateDomain } from "@/lib/api/domains/utils";
 import { DubApiError } from "@/lib/api/errors";
@@ -106,7 +105,6 @@ export const POST = withWorkspace(
       assetLinks,
       appleAppSiteAssociation,
       deepviewData,
-      isOnboardingSubdomainFlow,
     } = await createDomainBodySchemaExtended.parseAsync(body);
 
     if (workspace.plan === "free") {
@@ -135,21 +133,6 @@ export const POST = withWorkspace(
         });
       }
     }
-
-    const parsedAssetLinks = parseDomainJsonConfig({
-      value: assetLinks,
-      field: "assetLinks",
-    });
-
-    const parsedAppleAppSiteAssociation = parseDomainJsonConfig({
-      value: appleAppSiteAssociation,
-      field: "appleAppSiteAssociation",
-    });
-
-    const parsedDeepviewData = parseDomainJsonConfig({
-      value: deepviewData,
-      field: "deepviewData",
-    });
 
     const validDomain = await validateDomain(slug);
 
@@ -183,32 +166,6 @@ export const POST = withWorkspace(
 
     const domainRecord = await prisma.$transaction(
       async (tx) => {
-        if (slug.endsWith(".dub.link")) {
-          if (!isOnboardingSubdomainFlow && !workspace.defaultProgramId) {
-            throw new DubApiError({
-              code: "forbidden",
-              message:
-                "You are not allowed to claim a .dub.link subdomain. Please contact support if you think this is an error: dub.co/support",
-            });
-          }
-
-          const alreadyClaimed = await tx.domain.count({
-            where: {
-              projectId: workspace.id,
-              slug: {
-                endsWith: ".dub.link",
-              },
-            },
-          });
-          if (alreadyClaimed) {
-            throw new DubApiError({
-              code: "forbidden",
-              message:
-                "You can only claim one .dub.link subdomain per workspace.",
-            });
-          }
-        }
-
         const totalDomains = await tx.domain.count({
           where: {
             projectId: workspace.id,
@@ -220,11 +177,28 @@ export const POST = withWorkspace(
             code: "exceeded_limit",
             message: exceededLimitError({
               plan: workspace.plan,
-              planPeriod: workspace.planPeriod,
               limit: workspace.domainsLimit,
               type: "domains",
             }),
           });
+        }
+
+        if (slug.endsWith(".dub.link")) {
+          const alreadyClaimed = await tx.domain.count({
+            where: {
+              projectId: workspace.id,
+              slug: {
+                endsWith: ".dub.link",
+              },
+            },
+          });
+          if (alreadyClaimed >= 1) {
+            throw new DubApiError({
+              code: "forbidden",
+              message:
+                "You can only claim one .dub.link subdomain per workspace.",
+            });
+          }
         }
 
         return await tx.domain.create({
@@ -240,14 +214,12 @@ export const POST = withWorkspace(
             expiredUrl,
             notFoundUrl,
             ...(logoUploaded && { logo: logoUploaded.url }),
-            ...(parsedAssetLinks !== undefined && {
-              assetLinks: parsedAssetLinks,
+            ...(assetLinks && { assetLinks: JSON.parse(assetLinks) }),
+            ...(appleAppSiteAssociation && {
+              appleAppSiteAssociation: JSON.parse(appleAppSiteAssociation),
             }),
-            ...(parsedAppleAppSiteAssociation !== undefined && {
-              appleAppSiteAssociation: parsedAppleAppSiteAssociation,
-            }),
-            ...(parsedDeepviewData !== undefined && {
-              deepviewData: parsedDeepviewData,
+            ...(deepviewData && {
+              deepviewData: JSON.parse(deepviewData),
             }),
           },
         });

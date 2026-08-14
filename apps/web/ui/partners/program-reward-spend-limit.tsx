@@ -37,13 +37,7 @@ export function ProgramRewardSpendLimit({
     return null;
   }
 
-  return [
-    `, up to ${parts.amount}`,
-    parts.interval,
-    event === "sale" ? "per customer" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  return `, up to ${parts.amount} ${parts.interval} ${event === "sale" ? "per customer" : ""}`;
 }
 
 export function buildCommissionDescription({

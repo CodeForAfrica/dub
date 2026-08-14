@@ -107,7 +107,6 @@ export const POST = withWorkspace(
         code: "exceeded_limit",
         message: exceededLimitError({
           plan: workspace.plan,
-          planPeriod: workspace.planPeriod,
           limit: workspace.tagsLimit,
           type: "tags",
         }),
@@ -116,30 +115,33 @@ export const POST = withWorkspace(
 
     const { tag, color, name } = createTagBodySchema.parse(await req.json());
 
-    try {
-      const createdTag = await prisma.tag.create({
-        data: {
-          id: createId({ prefix: "tag_" }),
-          name: tag || name!,
-          color: color || randomBadgeColor(),
-          projectId: workspace.id,
-        },
-      });
+    const existingTag = await prisma.tag.findFirst({
+      where: {
+        projectId: workspace.id,
+        name: name || tag,
+      },
+    });
 
-      return NextResponse.json(LinkTagSchema.parse(createdTag), {
-        headers,
-        status: 201,
+    if (existingTag) {
+      throw new DubApiError({
+        code: "conflict",
+        message: "A tag with that name already exists.",
       });
-    } catch (error) {
-      if (error.code === "P2002") {
-        throw new DubApiError({
-          code: "conflict",
-          message: "A tag with that name already exists.",
-        });
-      }
-
-      throw error;
     }
+
+    const response = await prisma.tag.create({
+      data: {
+        id: createId({ prefix: "tag_" }),
+        name: tag || name!,
+        color: color || randomBadgeColor(),
+        projectId: workspace.id,
+      },
+    });
+
+    return NextResponse.json(LinkTagSchema.parse(response), {
+      headers,
+      status: 201,
+    });
   },
   {
     requiredPermissions: ["tags.write"],

@@ -19,23 +19,6 @@ export const tapfiliateImportPayloadSchema = z.object({
   startingAfter: z.string().optional(), // Dub pagination
 });
 
-// GET /affiliates/
-export const tapfiliateListPartnersInputSchema = z.object({
-  page: z.number(),
-});
-
-// GET /customers
-export const tapfiliateListCustomersInputSchema = z.object({
-  program_id: z.string(),
-  page: z.number(),
-});
-
-// GET /conversions/
-export const tapfiliateListConversionsInputSchema = z.object({
-  program_id: z.string(),
-  page: z.number(),
-});
-
 export const tapfiliateGroupSchema = z.object({
   id: z.string(),
   title: z.string(),

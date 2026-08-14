@@ -15,13 +15,11 @@ export function parseWorkflowConfig(
   const actions = z.array(workflowActionSchema).parse(workflow.actions);
 
   if (conditions.length === 0) {
-    throw new Error(
-      `[Workflows] No conditions found in workflow ${workflow.id}.`,
-    );
+    throw new Error("No conditions found in workflow.");
   }
 
   if (actions.length === 0) {
-    throw new Error(`[Workflows] No actions found in workflow ${workflow.id}.`);
+    throw new Error("No actions found in workflow.");
   }
 
   return {
