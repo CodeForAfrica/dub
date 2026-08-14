@@ -81,9 +81,7 @@ async function PayoutRSC() {
 
   return (
     <>
-      <PayoutMethodSelector
-        payoutMethods={payoutMethods.filter((m) => m.type !== "tremendous")} // hide gift card payouts in onboarding flow (even if connected)
-      />
+      <PayoutMethodSelector payoutMethods={payoutMethods} />
       <Link
         href="/programs"
         className="mt-6 block text-center text-sm font-medium text-neutral-500 transition-colors hover:text-neutral-800"

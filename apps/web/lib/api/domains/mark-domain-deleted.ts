@@ -1,24 +1,33 @@
-import { domainDeletedJob } from "@/lib/jobs/handlers/domain-deleted-job";
 import { prisma } from "@/lib/prisma";
+import { queueDomainDeletion } from "./queue-domain-update";
+import { removeDomainFromVercel } from "./remove-domain-vercel";
 
 // Mark the domain as deleted
-// We'll delete the domain and its links via a background job
+// We'll delete the domain and its links via a cron job
 export async function markDomainAsDeleted({ domain }: { domain: string }) {
-  await prisma.domain.update({
-    where: {
-      slug: domain,
-    },
-    data: {
-      projectId: null,
-    },
+  const response = await Promise.allSettled([
+    removeDomainFromVercel(domain),
+
+    prisma.domain.update({
+      where: {
+        slug: domain,
+      },
+      data: {
+        projectId: null,
+      },
+    }),
+  ]);
+
+  await queueDomainDeletion({
+    domain,
   });
 
-  await domainDeletedJob.dispatch(
-    {
-      domain,
-    },
-    {
-      label: domain,
-    },
-  );
+  response.forEach((promise) => {
+    if (promise.status === "rejected") {
+      console.error("markDomainAsDeleted", {
+        reason: promise.reason,
+        domain,
+      });
+    }
+  });
 }

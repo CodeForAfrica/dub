@@ -9,7 +9,6 @@ export const throwIfClicksUsageExceeded = (workspace: WorkspaceWithUsers) => {
       code: "forbidden",
       message: exceededLimitError({
         plan: workspace.plan,
-        planPeriod: workspace.planPeriod,
         limit: workspace.usageLimit,
         type: "clicks",
       }),
@@ -27,7 +26,6 @@ export const throwIfLinksUsageExceeded = (workspace: WorkspaceWithUsers) => {
       code: "forbidden",
       message: exceededLimitError({
         plan: workspace.plan,
-        planPeriod: workspace.planPeriod,
         limit: workspace.linksLimit,
         type: "links",
       }),
@@ -41,7 +39,6 @@ export const throwIfAIUsageExceeded = (workspace: WorkspaceWithUsers) => {
       code: "forbidden",
       message: exceededLimitError({
         plan: workspace.plan,
-        planPeriod: workspace.planPeriod,
         limit: workspace.aiLimit,
         type: "AI",
       }),

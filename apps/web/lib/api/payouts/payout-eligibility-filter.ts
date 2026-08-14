@@ -1,7 +1,4 @@
-import {
-  TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
-  TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS,
-} from "@/lib/tremendous/constants";
+import { TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS } from "@/lib/tremendous/constants";
 import { Prisma, Program } from "@prisma/client";
 
 export function getPayoutEligibilityFilter({
@@ -16,15 +13,14 @@ export function getPayoutEligibilityFilter({
     amount: {
       gte: program.minPayoutAmount,
     },
-    // Gift card payouts must be within the Tremendous allowed range
+    // Gift card payouts are capped at $2,000 per payout
     NOT: {
       partner: {
         defaultPayoutMethod: "tremendous",
       },
-      OR: [
-        { amount: { lt: TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS } },
-        { amount: { gt: TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS } },
-      ],
+      amount: {
+        gt: TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
+      },
     },
   };
 

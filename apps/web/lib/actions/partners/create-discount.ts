@@ -67,7 +67,7 @@ export const createDiscountAction = authActionClient
         });
       }
     } else if (provider === DiscountProvider.shopify) {
-      await discountProvider.assertDiscountIntegration({
+      await discountProvider.assertDiscountIntegrationAvailable({
         workspace,
       });
     }

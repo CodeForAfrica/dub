@@ -15,10 +15,7 @@ import { enqueueBatchJobs } from "../cron/enqueue-batch-jobs";
 import { createPayoutsIdempotencyKey } from "../payouts/create-payouts-idempotency-key";
 import { markPayoutsAsProcessed } from "../payouts/mark-payouts-as-processed";
 import { tremendousConfiguration } from "./configuration";
-import {
-  TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
-  TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS,
-} from "./constants";
+import { TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS } from "./constants";
 
 export async function sendTremendousPayouts({
   partnerId,
@@ -76,7 +73,6 @@ export async function sendTremendousPayouts({
           mode: "internal",
           method: "tremendous",
           amount: {
-            gte: TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS,
             lte: TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
           },
         },
@@ -95,7 +91,6 @@ export async function sendTremendousPayouts({
               method: "tremendous",
               tremendousOrderId: null,
               amount: {
-                gte: TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS,
                 lte: TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
               },
             },
@@ -125,15 +120,9 @@ export async function sendTremendousPayouts({
     return;
   }
 
-  if (totalTransferableAmount < TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS) {
-    throw new Error(
-      `Tremendous payout amount is less than the minimum amount of ${currencyFormatter(TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS)}.`,
-    );
-  }
-
   if (totalTransferableAmount > TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS) {
     throw new Error(
-      `Tremendous payout amount is greater than the maximum amount of ${currencyFormatter(TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS)}.`,
+      `Tremendous payout amount is greater than the maximum allowed amount of ${currencyFormatter(TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS)}.`,
     );
   }
 

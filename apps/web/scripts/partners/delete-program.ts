@@ -1,16 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { R2_URL } from "@dub/utils";
 import "dotenv-flow/config";
-import { workspaceProductCache } from "../../lib/api/workspaces/workspace-product-cache";
 import { storage } from "../../lib/storage";
 
 async function main() {
   const program = await prisma.program.findUniqueOrThrow({
     where: {
       id: "prog_xxx",
-    },
-    include: {
-      workspace: true,
     },
   });
 
@@ -76,12 +72,11 @@ async function main() {
       });
       console.log("Updated links", updatedLinks);
 
-      const updatedProject = await tx.project.update({
+      const updatedProject = await prisma.project.update({
         where: {
           id: program.workspaceId,
         },
         data: {
-          defaultProduct: "links",
           defaultProgramId: null,
         },
       });
@@ -92,11 +87,6 @@ async function main() {
       timeout: 20000, // default: 5000
     },
   );
-
-  await workspaceProductCache.set({
-    slug: program.workspace.slug,
-    product: "links",
-  });
 
   if (program.logo) {
     const deletedLogo = await storage.delete({

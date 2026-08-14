@@ -110,7 +110,10 @@ export function LogsTable() {
           id: "path",
           header: "Endpoint",
           cell: ({ row }: { row: Row<EnrichedApiLog> }) => (
-            <span className="block min-w-0 truncate" title={row.original.path}>
+            <span
+              className="truncate"
+              title={row.original.route_pattern || undefined}
+            >
               {row.original.path}
             </span>
           ),
@@ -120,7 +123,6 @@ export function LogsTable() {
             }),
           },
           size: 300,
-          maxSize: 360,
         },
         {
           id: "method",

@@ -69,8 +69,6 @@ export const getNetworkProgramsQuerySchema = z
 
 export const getNetworkProgramsCountQuerySchema = getNetworkProgramsQuerySchema
   .omit({
-    sortBy: true,
-    sortOrder: true,
     page: true,
     pageSize: true,
   })

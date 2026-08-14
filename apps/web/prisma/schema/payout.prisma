@@ -52,7 +52,6 @@ model Payout {
   @@index(partnerId)
   @@index(invoiceId)
   @@index(status)
-  @@index([updatedAt, status]) // used for reconcile-amounts cron job
   @@index(method)
   @@index(userId)
   @@index(stripePayoutId)

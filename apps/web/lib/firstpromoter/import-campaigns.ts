@@ -3,10 +3,7 @@ import { RESOURCE_COLORS } from "@/ui/colors";
 import { randomValue } from "@dub/utils";
 import slugify from "@sindresorhus/slugify";
 import { createId } from "../api/create-id";
-import {
-  DEFAULT_PARTNER_GROUP,
-  sanitizeAdditionalLinks,
-} from "../zod/schemas/groups";
+import { DEFAULT_PARTNER_GROUP } from "../zod/schemas/groups";
 import { FirstPromoterApi } from "./api";
 import { firstPromoterImporter, MAX_BATCHES } from "./importer";
 import { FirstPromoterImportPayload } from "./types";
@@ -91,9 +88,7 @@ export async function importCampaigns(payload: FirstPromoterImportPayload) {
           brandColor,
           holdingPeriodDays,
           autoApprovePartnersEnabledAt,
-          ...(additionalLinks && {
-            additionalLinks: sanitizeAdditionalLinks(additionalLinks),
-          }),
+          ...(additionalLinks && { additionalLinks }),
           ...(maxPartnerLinks && { maxPartnerLinks }),
           ...(linkStructure && { linkStructure }),
           ...(applicationFormData && { applicationFormData }),

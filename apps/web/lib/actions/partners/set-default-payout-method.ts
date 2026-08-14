@@ -11,10 +11,8 @@ import {
 import { getPayoutMethodLabel } from "@/ui/partners/payouts/payout-method-config";
 import { sendEmail } from "@dub/email";
 import DefaultPayoutMethodChanged from "@dub/email/templates/default-payout-method-changed";
-import { PartnerPayoutMethod } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { authPartnerActionClient } from "../safe-action";
-import { throwIfNegativeNetworkBalance } from "./throw-if-negative-network-balance";
 
 export const setDefaultPayoutMethodAction = authPartnerActionClient
   .inputSchema(setDefaultPayoutMethodSchema)
@@ -42,10 +40,6 @@ export const setDefaultPayoutMethodAction = authPartnerActionClient
 
     if (payoutMethod.default) {
       throw new Error("This is already your default payout method.");
-    }
-
-    if (payoutMethod.type === PartnerPayoutMethod.paypal) {
-      await throwIfNegativeNetworkBalance(partner.id);
     }
 
     const { activePayoutMethods } = await recomputePartnerPayoutState(partner);

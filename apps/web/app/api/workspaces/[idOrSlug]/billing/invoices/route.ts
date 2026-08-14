@@ -11,7 +11,6 @@ const querySchema = z.object({
     .enum(["subscription", "partnerPayout", "domainRenewal"])
     .optional()
     .default("subscription"),
-  stripeStatus: z.enum(["open"]).optional(), // only for Stripe subscription invoices
 });
 
 // TODO: move to GET /invoices
@@ -21,14 +20,12 @@ export const GET = withWorkspace(
       return NextResponse.json([]);
     }
 
-    const { type, stripeStatus } = querySchema.parse(searchParams);
+    const { type } = querySchema.parse(searchParams);
 
     const invoices =
       type === "subscription"
-        ? await getSubscriptionInvoices(workspace.stripeId, {
-            status: stripeStatus,
-          })
-        : await getOtherInvoices({
+        ? await subscriptionInvoices(workspace.stripeId)
+        : await otherInvoices({
             workspaceId: workspace.id,
             type,
           });
@@ -40,32 +37,29 @@ export const GET = withWorkspace(
   },
 );
 
-const getSubscriptionInvoices = async (
-  stripeId: string,
-  { status }: { status?: "open" } = {},
-) => {
+const subscriptionInvoices = async (stripeId: string) => {
   try {
     const invoices = await stripe.invoices.list({
       customer: stripeId,
       limit: 100,
-      ...(status && { status }),
     });
 
-    return invoices.data.map((invoice) => ({
-      id: invoice.id,
-      total: invoice.total ?? invoice.amount_due,
-      stripeStatus: invoice.status,
-      createdAt: new Date(invoice.created * 1000),
-      description: "Dub subscription",
-      pdfUrl: invoice.invoice_pdf,
-    }));
+    return invoices.data.map((invoice) => {
+      return {
+        id: invoice.id,
+        total: invoice.amount_paid,
+        createdAt: new Date(invoice.created * 1000),
+        description: "Dub subscription",
+        pdfUrl: invoice.invoice_pdf,
+      };
+    });
   } catch (error) {
     console.log(error);
     return [];
   }
 };
 
-const getOtherInvoices = async ({
+const otherInvoices = async ({
   workspaceId,
   type,
 }: {
@@ -84,8 +78,6 @@ const getOtherInvoices = async ({
       status: true,
       paymentMethod: true,
       failedReason: true,
-      refundedAmount: true,
-      refundReason: true,
     },
     orderBy: {
       createdAt: "desc",

@@ -1,5 +1,5 @@
 import { withCron } from "@/lib/cron/with-cron";
-import { isNonRecoverableDiscountError } from "@/lib/discounts/discount-error";
+import { isDiscountIntegrationNotAvailableError } from "@/lib/discounts/discount-error";
 import { getDiscountProvider } from "@/lib/discounts/discount-provider";
 import { prisma } from "@/lib/prisma";
 import { DiscountProvider } from "@prisma/client";
@@ -37,10 +37,8 @@ export const POST = withCron(async ({ rawBody }) => {
       code,
     });
   } catch (error) {
-    if (isNonRecoverableDiscountError(error)) {
-      return logAndRespond(`Skipping ${code}: ${error.message}`, {
-        logLevel: "warn",
-      });
+    if (isDiscountIntegrationNotAvailableError(error)) {
+      return logAndRespond(`Skipping ${code}: ${error.message}`);
     }
 
     throw error;

@@ -122,15 +122,11 @@ export function useLinkBuilderSubmit({
           const { error } = await res.json();
 
           if (error) {
-            if (error.message.includes("Upgrade to ")) {
-              const planToUpgradeTo =
-                error.message.split("Upgrade to ")[1].split(" ")[0] ||
-                workspace?.nextPlan?.name;
+            if (error.message.includes("Upgrade to")) {
               toast.custom(() => (
                 <UpgradeRequiredToast
-                  title={`You've discovered a ${planToUpgradeTo} feature!`}
+                  title={`You've discovered a ${workspace?.nextPlan?.name} feature!`}
                   message={error.message}
-                  planToUpgradeTo={planToUpgradeTo}
                 />
               ));
             } else {

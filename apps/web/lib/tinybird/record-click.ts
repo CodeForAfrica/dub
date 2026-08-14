@@ -12,9 +12,11 @@ import { recordClickCache } from "../api/links/record-click-cache";
 import { detectBot } from "../middleware/utils/detect-bot";
 import { detectQr } from "../middleware/utils/detect-qr";
 import { getIdentityHash } from "../middleware/utils/get-identity-hash";
+import { conn } from "../planetscale";
 import { redis } from "../upstash";
-import { publishLinkClickEvent } from "../upstash/redis-streams/link-click-events";
+import { publishPartnerActivityEvent } from "../upstash/redis-streams/partner-activity";
 import { publishWorkspaceClickEvent } from "../upstash/redis-streams/workspace-click-events";
+import { publishWorkspaceClicksUsageEvent } from "../upstash/redis-streams/workspace-clicks-usage";
 
 /**
  * Recording clicks with geo, ua, referer and timestamp data
@@ -181,19 +183,44 @@ export async function recordClick({
         ).then((res) => res.json()),
 
         // cache the recorded click for the corresponding IP address in Redis for 1 hour
-        recordClickCache.set({
-          domain,
-          key,
-          identityHash,
-          clickId,
-        }),
+        recordClickCache.set({ domain, key, identityHash, clickId }),
 
-        publishLinkClickEvent({
-          linkId,
-          timestamp: clickData.timestamp,
-          ...(workspaceId && url && { workspaceId }),
-          ...(programId && partnerId && { programId, partnerId }),
-        }),
+        // increment the click count for the link (based on their ID)
+        // we have to use planetscale connection directly (not prismaEdge) because of connection pooling
+        conn.execute(
+          "UPDATE Link SET clicks = clicks + 1, lastClicked = NOW() WHERE id = ?",
+          [linkId],
+        ),
+        // if the link is associated with a workspace + has a destination URL
+        // increment the usage count for the workspace
+        workspaceId &&
+          url &&
+          publishWorkspaceClicksUsageEvent({
+            linkId,
+            workspaceId,
+            timestamp: clickData.timestamp,
+          }).catch(() => {
+            // Fallback on writing directly to the database
+            return conn.execute(
+              "UPDATE Project p JOIN Link l ON p.id = l.projectId SET p.usage = p.usage + 1, p.totalClicks = p.totalClicks + 1 WHERE l.id = ?",
+              [linkId],
+            );
+          }),
+
+        programId &&
+          partnerId &&
+          publishPartnerActivityEvent({
+            programId,
+            partnerId,
+            eventType: "click",
+            timestamp: new Date().toISOString(),
+          }).catch(() => {
+            // Fallback on writing directly to the database
+            return conn.execute(
+              "UPDATE ProgramEnrollment SET totalClicks = totalClicks + 1 WHERE programId = ? AND partnerId = ?",
+              [programId, partnerId],
+            );
+          }),
 
         // Publish the click event
         publishWorkspaceClickEvent(clickData),
@@ -207,7 +234,9 @@ export async function recordClick({
               const operations = [
                 "Tinybird click event ingestion",
                 "recordClickCache set",
-                "Click stats stream publish",
+                "Link clicks increment",
+                "Workspace usage increment",
+                "Program enrollment totalClicks increment",
                 "Workspace click event publish",
               ];
               return {

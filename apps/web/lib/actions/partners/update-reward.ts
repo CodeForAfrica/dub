@@ -33,7 +33,6 @@ export const updateRewardAction = authActionClient
       rewardId,
       spendLimitAmount,
       spendLimitInterval,
-      activityDescription,
     } = parsedInput;
 
     throwIfNoPermission({
@@ -146,7 +145,6 @@ export const updateRewardAction = authActionClient
         description: formatRewardDescription(serializeReward(updatedReward), {
           includeEarnPrefix: false,
         }),
-        activityDescription,
       },
     });
 
@@ -176,7 +174,6 @@ export const updateRewardAction = authActionClient
           parentResourceId: partnerGroup.id,
           old: reward,
           new: updatedReward,
-          description: activityDescription,
         }),
 
         // we only cache default group pages for now so we need to invalidate them

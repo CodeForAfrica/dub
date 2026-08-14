@@ -1,5 +1,5 @@
 import { DubApiError } from "@/lib/api/errors";
-import { requestEmailChange } from "@/lib/auth/request-email-change";
+import { confirmEmailChange } from "@/lib/auth/confirm-email-change";
 import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import { nanoid } from "@dub/utils";
@@ -167,11 +167,10 @@ export async function requestSyncedEmailChange({
   hostName: string;
   redirectTo: "/profile" | "/account/settings";
 }) {
-  await requestEmailChange({
+  await confirmEmailChange({
     email: currentEmail,
     newEmail,
     identifier: userId,
-    userId,
     hostName,
     syncIdentity: true,
     partnerId,

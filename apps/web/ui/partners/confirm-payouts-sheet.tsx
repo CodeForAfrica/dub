@@ -23,7 +23,7 @@ import useCommissionsCount from "@/lib/swr/use-commissions-count";
 import usePaymentMethods from "@/lib/swr/use-payment-methods";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
-import { PayoutResponse } from "@/lib/types";
+import { PayoutResponse, PlanProps } from "@/lib/types";
 import { X } from "@/ui/shared/icons";
 import {
   Button,
@@ -84,7 +84,6 @@ function ConfirmPayoutsSheetContent() {
     id: workspaceId,
     slug,
     plan,
-    planPeriod,
     role,
     defaultProgramId,
     payoutsUsage,
@@ -517,7 +516,7 @@ function ConfirmPayoutsSheetContent() {
             )}
 
             <a
-              href={`/${slug}/settings/billing#payment-methods`}
+              href={`/${slug}/settings/billing`}
               className={cn(
                 buttonVariants({ variant: "secondary" }),
                 "flex items-center rounded-md border border-neutral-200 p-1.5 text-sm",
@@ -917,20 +916,18 @@ function ConfirmPayoutsSheetContent() {
             amount === 0
           }
           disabledTooltip={
-            plan &&
-            typeof payoutsUsage === "number" &&
-            typeof payoutsLimit === "number" &&
-            typeof amount === "number" &&
+            payoutsUsage &&
+            payoutsLimit &&
+            amount &&
             payoutsUsage + amount > payoutsLimit ? (
               <TooltipContent
                 title={exceededLimitError({
-                  plan,
-                  planPeriod,
+                  plan: plan as PlanProps,
                   limit: payoutsLimit,
                   type: "payouts",
                 })}
                 cta="Upgrade"
-                href={`/${slug}/settings/billing/upgrade?planPeriod=yearly`}
+                href={`/${slug}/settings/billing/upgrade`}
               />
             ) : amount && amount < INVOICE_MIN_PAYOUT_AMOUNT_CENTS ? (
               "Your payout total is less than the minimum invoice amount of $10."

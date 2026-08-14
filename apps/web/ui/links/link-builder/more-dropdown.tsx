@@ -1,6 +1,6 @@
 import useWorkspace from "@/lib/swr/use-workspace";
 import { useABTestingModal } from "@/ui/modals/link-builder/ab-testing-modal";
-import { useAdvancedLinkFeaturesModal } from "@/ui/modals/link-builder/advanced-link-features-modal";
+import { useAdvancedModal } from "@/ui/modals/link-builder/advanced-modal";
 import { useExpirationModal } from "@/ui/modals/link-builder/expiration-modal";
 import { usePartnersModal } from "@/ui/modals/link-builder/partners-modal";
 import { usePasswordModal } from "@/ui/modals/link-builder/password-modal";
@@ -47,8 +47,7 @@ export function MoreDropdown({
   const { PasswordModal, setShowPasswordModal } = usePasswordModal();
   const { TargetingModal, setShowTargetingModal } = useTargetingModal();
   const { ExpirationModal, setShowExpirationModal } = useExpirationModal();
-  const { AdvancedLinkFeaturesModal, setShowAdvancedLinkFeaturesModal } =
-    useAdvancedLinkFeaturesModal();
+  const { AdvancedModal, setShowAdvancedModal } = useAdvancedModal();
   const { PartnersModal, setShowPartnerModal } = usePartnersModal();
 
   const modalCallbacks = {
@@ -56,7 +55,7 @@ export function MoreDropdown({
     password: setShowPasswordModal,
     targeting: setShowTargetingModal,
     expiresAt: setShowExpirationModal,
-    advanced: setShowAdvancedLinkFeaturesModal,
+    advanced: setShowAdvancedModal,
     partnerId: setShowPartnerModal,
   };
 
@@ -87,7 +86,7 @@ export function MoreDropdown({
       <PasswordModal />
       <TargetingModal />
       <ExpirationModal />
-      <AdvancedLinkFeaturesModal />
+      <AdvancedModal />
       <PartnersModal />
       <Popover
         align="start"

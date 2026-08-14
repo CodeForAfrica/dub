@@ -1,5 +1,5 @@
 export function logAndRespond(
-  body: string | Record<string, unknown>,
+  message: string,
   {
     status = 200,
     logLevel = "info",
@@ -8,20 +8,8 @@ export function logAndRespond(
     logLevel?: "error" | "warn" | "info";
   } = {},
 ) {
-  // When string
-  if (typeof body === "string") {
-    console[logLevel](body);
-    return new Response(body, { status });
-  }
-
-  // When object
-  console[logLevel](body);
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  console[logLevel](message);
+  return new Response(message, { status });
 }
 
 export function logAndReturn<T>(value: T): T {

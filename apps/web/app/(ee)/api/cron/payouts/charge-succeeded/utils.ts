@@ -35,10 +35,9 @@ export async function scheduleDelayedPayouts({
     url: `${APP_DOMAIN_WITH_NGROK}/api/cron/payouts/charge-succeeded`,
     delay: delaySeconds + 5 * 60, // 5 minutes delay to give some buffer for the card charge to settle fully
     deduplicationId: `retry-delayed-payouts-${invoice.id}`, // The deduplication window is 10 minutes
-    label: invoice.id,
     flowControl: {
       key: invoice.id,
-      parallelism: 1,
+      rate: 1,
     },
     body: {
       invoiceId: invoice.id,

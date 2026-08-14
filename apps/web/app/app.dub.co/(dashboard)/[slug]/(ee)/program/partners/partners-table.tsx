@@ -136,7 +136,7 @@ export function PartnersTable() {
   const status = (
     searchParams.get("status") || searchParams.get("search")
       ? undefined
-      : ProgramEnrollmentStatus.approved
+      : "approved_invited"
   ) as ProgramEnrollmentStatus;
 
   const sortBy =
@@ -187,9 +187,30 @@ export function PartnersTable() {
           enableHiding: false,
           minSize: 150,
           maxSize: 250,
-          cell: ({ row }) => (
-            <PartnerRowItem partner={row.original} showPermalink={false} />
-          ),
+          cell: ({ row }) => {
+            const showInvitedInline =
+              columnVisibility.status === false &&
+              row.original.status === ProgramEnrollmentStatus.invited &&
+              searchParams.get("status") !== ProgramEnrollmentStatus.invited;
+
+            return (
+              <PartnerRowItem
+                partner={row.original}
+                showPermalink={false}
+                suffix={
+                  showInvitedInline ? (
+                    <StatusBadge
+                      size="sm"
+                      icon={null}
+                      variant={PartnerStatusBadges.invited.variant}
+                    >
+                      {PartnerStatusBadges.invited.label}
+                    </StatusBadge>
+                  ) : null
+                }
+              />
+            );
+          },
         },
         {
           id: "group",
@@ -427,7 +448,7 @@ export function PartnersTable() {
           ),
         },
       ].filter((c) => c.id === "menu" || partnersColumns.all.includes(c.id)),
-    [workspaceId, groups, workspaceSlug],
+    [workspaceId, groups, columnVisibility, searchParams, workspaceSlug],
   );
 
   const { table, ...tableProps } = useTable({
@@ -537,12 +558,6 @@ function PartnersFilters({
   sortOrder: "asc" | "desc";
   status: ProgramEnrollmentStatus;
 }) {
-  const { queryParams, searchParams } = useRouterStuff();
-
-  const { partnersCount: inviteCount } = usePartnersCount<number>({
-    status: ProgramEnrollmentStatus.invited,
-  });
-
   const {
     filters,
     activeFilters,
@@ -553,41 +568,17 @@ function PartnersFilters({
     onToggleOperator,
   } = usePartnerFilters({ sortBy, sortOrder, status });
 
-  const showPendingInvitesButton =
-    inviteCount > 0 &&
-    searchParams.get("status") !== ProgramEnrollmentStatus.invited;
-
   return (
     <div>
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2">
-          <Filter.Select
-            className="w-full md:w-fit"
-            filters={filters}
-            activeFilters={activeFilters}
-            onSelect={onSelect}
-            onRemove={onRemove}
-            onRemoveFilter={onRemoveFilter}
-          />
-          {showPendingInvitesButton ? (
-            <Button
-              text="Pending invites"
-              variant="secondary"
-              className="w-fit"
-              right={
-                <span className="rounded-full bg-neutral-200 px-1.5 py-0.5 text-xs font-medium text-neutral-700">
-                  {inviteCount}
-                </span>
-              }
-              onClick={() =>
-                queryParams({
-                  set: { status: ProgramEnrollmentStatus.invited },
-                  del: "page",
-                })
-              }
-            />
-          ) : null}
-        </div>
+        <Filter.Select
+          className="w-full md:w-fit"
+          filters={filters}
+          activeFilters={activeFilters}
+          onSelect={onSelect}
+          onRemove={onRemove}
+          onRemoveFilter={onRemoveFilter}
+        />
         <SearchBoxPersisted
           placeholder="Search by name, email, or company"
           inputClassName="md:w-80"

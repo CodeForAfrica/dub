@@ -2,12 +2,10 @@
 
 import { onboardProgramAction } from "@/lib/actions/partners/onboard-program";
 import { getLinkStructureOptions } from "@/lib/partners/get-link-structure-options";
-import { getPlanCapabilities } from "@/lib/plan-capabilities";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { ProgramData, RewardProps } from "@/lib/types";
 import { ProgramRewardDescription } from "@/ui/partners/program-reward-description";
-import { Button, TooltipContent } from "@dub/ui";
-import { isLegacyBusinessPlan } from "@dub/utils";
+import { Button } from "@dub/ui";
 import { RewardStructure } from "@prisma/client";
 import { Pencil } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
@@ -22,14 +20,7 @@ export function PageClient() {
     formState: { isSubmitting, isSubmitSuccessful },
   } = useFormContext<ProgramData>();
 
-  const {
-    id: workspaceId,
-    slug: workspaceSlug,
-    plan,
-    partnersLimit,
-  } = useWorkspace();
-
-  const { canManageProgram } = getPlanCapabilities(plan);
+  const { id: workspaceId, slug: workspaceSlug } = useWorkspace();
 
   const data = getValues();
 
@@ -122,17 +113,11 @@ export function PageClient() {
         loading={isPending || isSubmitting || isSubmitSuccessful}
         type="button"
         onClick={onClick}
+        disabled={!isValid}
         disabledTooltip={
-          !isValid ? (
-            "Please fill all the required fields to create a program."
-          ) : !canManageProgram ||
-            isLegacyBusinessPlan({ plan, partnersLimit }) ? (
-            <TooltipContent
-              title="You can only create a partner program on a Business plan and above."
-              cta="Upgrade to Business"
-              href={`/${workspaceSlug}/settings/billing/upgrade?plan=business`}
-            />
-          ) : undefined
+          !isValid
+            ? "Please fill all the required fields to create a program."
+            : undefined
         }
       />
     </div>

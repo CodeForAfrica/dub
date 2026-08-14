@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import { ratelimit } from "@/lib/upstash";
 import { submissionRequirementsSchema } from "@/lib/zod/schemas/bounties";
-import { ACTIVE_ENROLLMENT_STATUSES } from "@/lib/zod/schemas/partners";
 import { nanoid, R2_URL } from "@dub/utils";
 import { ProgramEnrollment } from "@prisma/client";
 
@@ -17,7 +16,7 @@ type GetBountySubmissionUploadUrlParams = {
   contentLength: number;
   programEnrollment: Pick<
     ProgramEnrollment,
-    "programId" | "partnerId" | "groupId" | "status"
+    "programId" | "partnerId" | "groupId"
   >;
 };
 
@@ -36,14 +35,7 @@ export async function getBountySubmissionUploadUrl({
   contentLength,
   programEnrollment,
 }: GetBountySubmissionUploadUrlParams) {
-  const { programId, partnerId, status } = programEnrollment;
-
-  if (!ACTIVE_ENROLLMENT_STATUSES.includes(status)) {
-    throw new DubApiError({
-      code: "forbidden",
-      message: "You are not allowed to submit a bounty for this program.",
-    });
-  }
+  const { programId, partnerId } = programEnrollment;
 
   if (!fileName.trim()) {
     throw new DubApiError({

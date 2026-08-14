@@ -12,10 +12,7 @@ import {
   stripeCouponToDubDiscount,
   validateStripeCouponForDubDiscount,
 } from "../stripe/coupon-discount-converter";
-import {
-  DEFAULT_PARTNER_GROUP,
-  sanitizeAdditionalLinks,
-} from "../zod/schemas/groups";
+import { DEFAULT_PARTNER_GROUP } from "../zod/schemas/groups";
 import { RewardfulApi } from "./api";
 import { rewardfulImporter } from "./importer";
 import { RewardfulImportPayload } from "./types";
@@ -103,9 +100,7 @@ export async function importCampaigns(payload: RewardfulImportPayload) {
         brandColor,
         holdingPeriodDays,
         autoApprovePartnersEnabledAt,
-        ...(additionalLinks && {
-          additionalLinks: sanitizeAdditionalLinks(additionalLinks),
-        }),
+        ...(additionalLinks && { additionalLinks }),
         ...(maxPartnerLinks && { maxPartnerLinks }),
         ...(linkStructure && { linkStructure }),
         ...(applicationFormData && { applicationFormData }),

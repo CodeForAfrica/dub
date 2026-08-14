@@ -5,7 +5,7 @@ import useGroups from "@/lib/swr/use-groups";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { CommissionResponse } from "@/lib/types";
-import { formatCommissionDescriptionTooltip } from "@/lib/commissions/format-commission-description-tooltip";
+import { CLAWBACK_REASONS_MAP } from "@/lib/zod/schemas/commissions";
 import { CustomerRowItem } from "@/ui/customers/customer-row-item";
 import { useBulkEditCommissionsModal } from "@/ui/partners/bulk-edit-commissions-modal";
 import { CommissionRowMenu } from "@/ui/partners/commission-row-menu";
@@ -38,6 +38,7 @@ import {
   currencyFormatter,
   fetcher,
   formatDateTimeSmart,
+  nFormatter,
 } from "@dub/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -224,9 +225,11 @@ export function CommissionsTable() {
         },
         {
           id: "amount",
-          header: "Sale Amount",
+          header: "Amount",
           accessorFn: (d) =>
-            d.type === "sale" ? currencyFormatter(d.amount) : "-",
+            d.type === "sale"
+              ? currencyFormatter(d.amount)
+              : nFormatter(d.quantity),
         },
         {
           id: "commission",
@@ -237,13 +240,12 @@ export function CommissionsTable() {
             const earnings = currencyFormatter(commission.earnings);
 
             if (commission.description) {
+              const reason =
+                CLAWBACK_REASONS_MAP[commission.description]?.description ??
+                commission.description;
+
               return (
-                <Tooltip
-                  content={formatCommissionDescriptionTooltip(
-                    commission.description,
-                    { variant: "program", workspaceSlug: slug! },
-                  )}
-                >
+                <Tooltip content={reason}>
                   <span
                     className={cn(
                       "cursor-help truncate underline decoration-dotted underline-offset-2",

@@ -1,6 +1,6 @@
 import { convertCurrency } from "@/lib/analytics/convert-currency";
 import { isFirstConversion } from "@/lib/analytics/is-first-conversion";
-import { getOrCreateCustomer } from "@/lib/api/customers/get-or-create-customer";
+import { createOrGetCustomer } from "@/lib/api/customers/create-or-get-customer";
 import { DubApiError } from "@/lib/api/errors";
 import { includeTags } from "@/lib/api/links/include-tags";
 import { generateRandomName } from "@/lib/names";
@@ -14,8 +14,14 @@ import {
   recordLead,
   recordSale,
 } from "@/lib/tinybird";
-import { CustomerSource, LeadEventTB, WorkspaceProps } from "@/lib/types";
+import {
+  ClickEventTB,
+  CustomerSource,
+  LeadEventTB,
+  WorkspaceProps,
+} from "@/lib/types";
 import { redis } from "@/lib/upstash";
+import { publishWorkspaceClicksUsageEvent } from "@/lib/upstash/redis-streams/workspace-clicks-usage";
 import { sendWorkspaceWebhook } from "@/lib/webhook/publish";
 import {
   transformLeadEventData,
@@ -70,50 +76,17 @@ export const trackSale = async ({
   }
 
   // Find existing customer
-  const existingCustomerData = await prisma.customer.findUnique({
+  existingCustomer = await prisma.customer.findUnique({
     where: {
       projectId_externalId: {
         projectId: workspace.id,
         externalId: customerExternalId,
       },
     },
-    include: {
-      link: {
-        select: {
-          id: true,
-          projectId: true,
-          disabledAt: true,
-        },
-      },
-    },
   });
 
-  // run link checks for existing customer if found
-  if (existingCustomerData) {
-    const { link: customerLink, ...rest } = existingCustomerData;
-    existingCustomer = rest;
-
-    if (!customerLink) {
-      throw new DubApiError({
-        code: "not_found",
-        message: `Link not found for customer ${existingCustomer.id}`,
-      });
-    }
-
-    if (customerLink.projectId !== workspace.id) {
-      throw new DubApiError({
-        code: "not_found",
-        message: `Link ${customerLink.id} for customer ${existingCustomer.id} does not belong to the workspace`,
-      });
-    }
-
-    if (customerLink.disabledAt) {
-      throw new DubApiError({
-        code: "not_found",
-        message: `Link ${customerLink.id} for customer ${existingCustomer.id} is disabled, sale not tracked`,
-      });
-    }
-
+  // Existing customer is found, find the lead event to associate the sale with
+  if (existingCustomer) {
     const leadEvent = await getLeadEvent({
       customerId: existingCustomer.id,
       eventName: leadEventName,
@@ -134,7 +107,7 @@ export const trackSale = async ({
     };
   }
 
-  // If no existing customer is found and no clickId is provided, return early
+  // If no existing customer is found and no clickId is provided, return an error
   if (!existingCustomer && !clickId) {
     return {
       eventName,
@@ -143,9 +116,11 @@ export const trackSale = async ({
     };
   }
 
-  // Direct sale tracking: create the customer from the passed clickId (if exists)
-  if (!existingCustomer && clickId) {
-    const clickData = await getClickEvent({
+  let clickData: ClickEventTB | null = null;
+
+  // Find the click event for the given clickId
+  if (clickId) {
+    clickData = await getClickEvent({
       clickId,
     });
 
@@ -164,8 +139,12 @@ export const trackSale = async ({
         ...clickData,
       };
     }
+  }
 
-    const clickDataLink = await prisma.link.findUnique({
+  // Direct sale tracking: create the customer from the click event.
+  // On concurrent requests, fall back to fetching the existing row (P2002) instead of failing.
+  if (!existingCustomer && clickData) {
+    const link = await prisma.link.findUnique({
       where: {
         id: clickData.link_id,
       },
@@ -176,25 +155,24 @@ export const trackSale = async ({
       },
     });
 
-    // same link checks as above for existing customer
-    if (!clickDataLink) {
+    if (!link) {
       throw new DubApiError({
         code: "not_found",
         message: `Link not found for clickId: ${clickData.click_id}`,
       });
     }
 
-    if (clickDataLink.projectId !== workspace.id) {
+    if (link.projectId !== workspace.id) {
       throw new DubApiError({
         code: "not_found",
-        message: `Link ${clickDataLink.id} for clickId ${clickData.click_id} does not belong to the workspace`,
+        message: `Link ${link.id} for clickId ${clickData.click_id} does not belong to the workspace`,
       });
     }
 
-    if (clickDataLink.disabledAt) {
+    if (link.disabledAt) {
       throw new DubApiError({
         code: "not_found",
-        message: `Link ${clickDataLink.id} for clickId ${clickData.click_id} is disabled, sale not tracked`,
+        message: `Link ${link.id} for clickId ${clickData.click_id} is disabled, sale not tracked`,
       });
     }
 
@@ -206,8 +184,8 @@ export const trackSale = async ({
         ? `${R2_URL}/customers/${finalCustomerId}/avatar_${nanoid(7)}`
         : customerAvatar;
 
-    const { customer: existingOrNewCustomer, created } =
-      await getOrCreateCustomer({
+    const { customer: createdOrFoundCustomer, created } =
+      await createOrGetCustomer({
         where: {
           projectId_externalId: {
             projectId: workspace.id,
@@ -230,9 +208,9 @@ export const trackSale = async ({
       });
 
     if (created) {
-      newCustomer = existingOrNewCustomer;
+      newCustomer = createdOrFoundCustomer;
     } else {
-      existingCustomer = existingOrNewCustomer;
+      existingCustomer = createdOrFoundCustomer;
     }
 
     // Persist customer avatar to R2 if it's not already stored
@@ -657,15 +635,10 @@ const _trackSale = async ({
             ]
           : []),
 
-        prisma.project.update({
-          where: {
-            id: workspace.id,
-          },
-          data: {
-            usage: {
-              increment: 1,
-            },
-          },
+        publishWorkspaceClicksUsageEvent({
+          linkId: link.id,
+          workspaceId: workspace.id,
+          timestamp: new Date().toISOString(),
         }),
       ]);
 

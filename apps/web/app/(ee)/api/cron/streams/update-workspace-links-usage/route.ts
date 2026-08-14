@@ -1,8 +1,9 @@
+import { handleAndReturnErrorResponse } from "@/lib/api/errors";
 import {
   getSlackWebhooks,
   sendWorkspaceLimitAlert,
 } from "@/lib/cron/send-limit-alert";
-import { withCron } from "@/lib/cron/with-cron";
+import { verifyVercelSignature } from "@/lib/cron/verify-vercel";
 import { prisma } from "@/lib/prisma";
 import { WorkspaceProps } from "@/lib/types";
 import { RedisStreamEntry } from "@/lib/upstash/redis-streams/client";
@@ -11,7 +12,7 @@ import {
   workspaceLinksUsageStream,
 } from "@/lib/upstash/redis-streams/workspace-links-usage";
 import { log } from "@dub/utils";
-import { logAndRespond } from "../../utils";
+import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
@@ -307,32 +308,41 @@ const processWorkspaceLinksUsageBatch = () =>
     },
   );
 
-export const GET = withCron(async () => {
-  const {
-    updates,
-    errors,
-    totalProcessed,
-    notificationsSent,
-    lastProcessedId,
-  } = await processWorkspaceLinksUsageBatch();
+export async function GET(req: Request) {
+  try {
+    await verifyVercelSignature(req);
 
-  if (!updates.length) {
-    return logAndRespond({
+    const {
+      updates,
+      errors,
+      totalProcessed,
+      notificationsSent,
+      lastProcessedId,
+    } = await processWorkspaceLinksUsageBatch();
+
+    if (!updates.length) {
+      return NextResponse.json({
+        success: true,
+        message: "No updates to process",
+        processed: 0,
+      });
+    }
+
+    const streamInfo = await workspaceLinksUsageStream.getStreamInfo();
+    const response = {
       success: true,
-      message: "No updates to process",
-      processed: 0,
-    });
+      processed: totalProcessed,
+      notificationsSent,
+      errors: errors?.length || 0,
+      lastProcessedId,
+      streamInfo,
+      message: `Successfully processed ${totalProcessed} workspace links usage updates`,
+    };
+
+    console.log(response);
+    return NextResponse.json(response);
+  } catch (error) {
+    console.error("Failed to process workspace links usage updates:", error);
+    return handleAndReturnErrorResponse(error);
   }
-
-  const streamInfo = await workspaceLinksUsageStream.getStreamInfo();
-
-  return logAndRespond({
-    success: true,
-    processed: totalProcessed,
-    notificationsSent,
-    errors: errors?.length || 0,
-    lastProcessedId,
-    streamInfo,
-    message: `Successfully processed ${totalProcessed} workspace links usage updates`,
-  });
-});
+}

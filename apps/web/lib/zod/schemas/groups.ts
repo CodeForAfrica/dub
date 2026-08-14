@@ -13,7 +13,7 @@ import { programLanderSchema } from "./program-lander";
 import { RewardSchema } from "./rewards";
 import { centsSchemaWithDefault, parseUrlSchema } from "./utils";
 import { UTMTemplateSchema } from "./utm";
-import { workflowConditionsSchema } from "./workflows";
+import { workflowConditionSchema } from "./workflows";
 
 export const DEFAULT_PARTNER_GROUP = {
   name: "Default Group",
@@ -73,7 +73,7 @@ export const GroupSchema = z.object({
   additionalLinks: z.array(additionalPartnerLinkSchema).nullable(),
   maxPartnerLinks: z.number(),
   linkStructure: z.enum(PartnerLinkStructure),
-  moveRules: workflowConditionsSchema.nullish().default(null),
+  moveRules: z.array(workflowConditionSchema).nullish().default(null),
 });
 
 export const GroupWithFormDataSchema = GroupSchema.extend({
@@ -152,7 +152,7 @@ export const updateGroupSchema = createGroupSchema.partial().extend({
   autoApprovePartners: z.coerce.boolean().optional(),
   updateAutoApprovePartnersForAllGroups: z.coerce.boolean().optional(),
   updateHoldingPeriodDaysForAllGroups: z.coerce.boolean().optional(),
-  moveRules: workflowConditionsSchema.optional(),
+  moveRules: z.array(workflowConditionSchema).optional(),
 });
 
 export const PartnerGroupDefaultLinkSchema = z.object({
@@ -194,14 +194,3 @@ export const getGroupsCountQuerySchema = z.object({
 export const groupRulesSchema = z.array(
   GroupSchema.pick({ id: true, name: true, moveRules: true }),
 );
-
-export function sanitizeAdditionalLinks(links: unknown) {
-  if (!Array.isArray(links)) {
-    return [];
-  }
-
-  return links.flatMap((link) => {
-    const parsed = additionalPartnerLinkSchema.safeParse(link);
-    return parsed.success ? [parsed.data] : [];
-  });
-}

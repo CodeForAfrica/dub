@@ -3,6 +3,8 @@ export const SHORT_DOMAIN = "dub.sh";
 export const APP_HOSTNAMES = new Set([
   "app.dub.co",
   "preview.dub.co",
+  "app.fyi.codeforafrica.org",
+  "dub.dev.codeforafrica.org",
   "localhost:8888",
   "localhost",
 ]);

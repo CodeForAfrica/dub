@@ -18,13 +18,13 @@ interface ProgramRewardsPanelProps {
 // Custom tooltip with smaller icon
 function CustomRewardModifiersTooltip({ reward }: { reward: RewardProps }) {
   return (
-    <span className="inline-block align-text-top">
+    <div className="inline-block align-text-top">
       <Tooltip
         content={<ProgramRewardModifiersTooltipContent reward={reward} />}
       >
         <HelpCircle className="h-3.5 w-3.5 translate-y-px text-neutral-400" />
       </Tooltip>
-    </span>
+    </div>
   );
 }
 
@@ -63,12 +63,10 @@ export const ProgramRewardsPanel = memo(
               </>
             ) : null}
             {!!reward.modifiers?.length && (
-              // whitespace-nowrap keeps the tooltip icon attached to the last
-              // word of the description so it never wraps on its own line
-              <span className="whitespace-nowrap">
+              <>
                 {" "}
                 <CustomRewardModifiersTooltip reward={reward} />
-              </span>
+              </>
             )}
           </>
         ),

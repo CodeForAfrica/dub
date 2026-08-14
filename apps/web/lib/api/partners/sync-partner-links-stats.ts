@@ -9,7 +9,7 @@ export const syncPartnerLinksStats = async ({
 }: {
   partnerId: string;
   programId: string;
-  eventType: "lead" | "sale";
+  eventType: "click" | "lead" | "sale";
 }) => {
   try {
     return await publishPartnerActivityEvent({

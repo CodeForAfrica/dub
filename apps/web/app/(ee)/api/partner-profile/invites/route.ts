@@ -7,8 +7,6 @@ import {
   MAX_PARTNER_USERS,
 } from "@/lib/constants/partner-profile";
 import { prisma } from "@/lib/prisma";
-import { assertRateLimit } from "@/lib/upstash/assert-rate-limit";
-import { RATELIMIT_POLICIES } from "@/lib/upstash/ratelimit-policies";
 import {
   getPartnerUsersQuerySchema,
   invitePartnerUserSchema,
@@ -57,11 +55,6 @@ export const POST = withPartnerProfile(
         message: "You can only invite up to 5 members at a time.",
       });
     }
-
-    await assertRateLimit({
-      policy: RATELIMIT_POLICIES.partnerProfileInvite,
-      identifier: partner.id,
-    });
 
     const emails = Array.from(new Set([...invites.map(({ email }) => email)]));
 

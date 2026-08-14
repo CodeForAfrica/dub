@@ -14,9 +14,7 @@ SCHEMA >
     `program_id` String `json:$.program_id`,
     `tenant_id` String `json:$.tenant_id`,
     `partner_id` String `json:$.partner_id`,
-    `folder_id` String `json:$.folder_id`,
-    `partner_group_id` String `json:$.partner_group_id`,
-    `partner_tag_ids` Array(String) `json:$.partner_tag_ids[:]` DEFAULT []
+    `folder_id` String `json:$.folder_id`
 
 ENGINE "MergeTree"
 ENGINE_PARTITION_KEY "toYear(timestamp)"

@@ -1,7 +1,6 @@
 import { addDomainToVercel } from "@/lib/api/domains/add-domain-vercel";
 import { getDomainOrThrow } from "@/lib/api/domains/get-domain-or-throw";
 import { markDomainAsDeleted } from "@/lib/api/domains/mark-domain-deleted";
-import { parseDomainJsonConfig } from "@/lib/api/domains/parse-domain-json-config";
 import { queueDomainUpdate } from "@/lib/api/domains/queue-domain-update";
 import { removeDomainFromVercel } from "@/lib/api/domains/remove-domain-vercel";
 import { transformDomain } from "@/lib/api/domains/transform-domain";
@@ -15,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { storage } from "@/lib/storage";
 import { updateDomainBodySchema } from "@/lib/zod/schemas/domains";
 import { combineWords, nanoid, R2_URL } from "@dub/utils";
+import { Prisma } from "@prisma/client";
 import { waitUntil } from "@vercel/functions";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
@@ -97,21 +97,6 @@ export const PATCH = withWorkspace(
       }
     }
 
-    const parsedAssetLinks = parseDomainJsonConfig({
-      value: assetLinks,
-      field: "assetLinks",
-    });
-
-    const parsedAppleAppSiteAssociation = parseDomainJsonConfig({
-      value: appleAppSiteAssociation,
-      field: "appleAppSiteAssociation",
-    });
-
-    const parsedDeepviewData = parseDomainJsonConfig({
-      value: deepviewData,
-      field: "deepviewData",
-    });
-
     const domainChanged =
       newDomain && newDomain.toLowerCase() !== currentDomain.toLowerCase();
 
@@ -161,14 +146,16 @@ export const PATCH = withWorkspace(
         expiredUrl,
         notFoundUrl,
         logo: deleteLogo ? null : logoUploaded?.url || existingDomain.logo,
-        ...(parsedAssetLinks !== undefined && {
-          assetLinks: parsedAssetLinks,
+        ...(assetLinks !== undefined && {
+          assetLinks: assetLinks ? JSON.parse(assetLinks) : Prisma.DbNull,
         }),
-        ...(parsedAppleAppSiteAssociation !== undefined && {
-          appleAppSiteAssociation: parsedAppleAppSiteAssociation,
+        ...(appleAppSiteAssociation !== undefined && {
+          appleAppSiteAssociation: appleAppSiteAssociation
+            ? JSON.parse(appleAppSiteAssociation)
+            : Prisma.DbNull,
         }),
-        ...(parsedDeepviewData !== undefined && {
-          deepviewData: parsedDeepviewData,
+        ...(deepviewData !== undefined && {
+          deepviewData: deepviewData ? JSON.parse(deepviewData) : Prisma.DbNull,
         }),
       },
       include: {

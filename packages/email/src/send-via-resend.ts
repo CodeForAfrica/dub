@@ -1,6 +1,6 @@
 import type { CreateEmailOptions } from "resend";
 import { resend } from "./resend";
-import { VARIANT_TO_FROM_MAP } from "./resend/constants";
+import { VARIANT_TO_FROM_MAP, RESEND_REPLY_TO } from "./resend/constants";
 import { ResendBulkEmailOptions, ResendEmailOptions } from "./resend/types";
 
 const resendEmailForOptions = (
@@ -11,7 +11,7 @@ const resendEmailForOptions = (
     from,
     variant = "primary",
     bcc,
-    replyTo,
+    replyTo = RESEND_REPLY_TO,
     subject,
     text,
     react,
@@ -31,9 +31,9 @@ const resendEmailForOptions = (
     from: from || VARIANT_TO_FROM_MAP[variant],
     subject: `${subject}${isPreviewEnv && gitBranch ? ` [${gitBranch}]` : ""}`,
     bcc,
-    // if replyTo is set to "noreply@dub.co", don't set replyTo
-    // else set it to the value of replyTo or fallback to support@dub.co
-    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || "support@dub.co" }),
+    // if replyTo is set to "noreply", don't set replyTo
+    // else set it to the value of replyTo or fallback to RESEND_REPLY_TO
+    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || RESEND_REPLY_TO }),
     scheduledAt,
     tags,
     ...(variant === "marketing"

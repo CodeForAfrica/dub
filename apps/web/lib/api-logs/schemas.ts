@@ -17,7 +17,6 @@ export const apiLogSchemaTB = z.object({
   duration: z.number(),
   user_agent: z.string(),
   request_body: z.string(),
-  query_params: z.string(),
   response_body: z.string(),
   token_id: z.string(),
   user_id: z.string(),
@@ -39,19 +38,13 @@ export const apiLogFilterSchemaTB = z.object({
   offset: z.number().optional(),
 });
 
-export const apiLogCountGroupBySchema = z.enum([
-  "routePattern",
-  "statusCode",
-  "method",
-]);
-
 export const apiLogCountFilterSchemaTB = apiLogFilterSchemaTB
   .omit({
     limit: true,
     offset: true,
   })
   .extend({
-    groupBy: apiLogCountGroupBySchema.optional(),
+    groupBy: z.enum(["routePattern"]).optional(),
   });
 
 // Raw Tinybird shape for the non-grouped count node
@@ -59,23 +52,14 @@ export const apiLogCountAggregateRowSchemaTB = z.object({
   count: z.number(),
 });
 
-// Aggregate / routePattern grouping (aggregate uses routePattern `"all"`)
-export const apiLogCountRowSchemas = {
-  routePattern: z.object({
-    routePattern: z.string(),
-    count: z.number(),
-  }),
+// Single row for GET /api/logs/count (aggregate uses routePattern `"all"`)
+// TODO: extend this to support other groupBy values
+export const apiLogCountRowSchema = z.object({
+  routePattern: z.string(),
+  count: z.number(),
+});
 
-  statusCode: z.object({
-    statusCode: z.number(),
-    count: z.number(),
-  }),
-
-  method: z.object({
-    method: z.string(),
-    count: z.number(),
-  }),
-} as const;
+export const apiLogsCountResponseSchema = z.array(apiLogCountRowSchema);
 
 export const apiLogByIdFilterSchemaTB = z.object({
   workspaceId: z.string(),
@@ -115,5 +99,5 @@ export const getApiLogsQuerySchema = z
 export const getApiLogsCountQuerySchema = getApiLogsQuerySchema
   .omit({ page: true, pageSize: true })
   .extend({
-    groupBy: apiLogCountGroupBySchema.optional(),
+    groupBy: z.enum(["routePattern"]).optional(),
   });

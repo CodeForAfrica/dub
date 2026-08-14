@@ -42,6 +42,13 @@ export type NavItemChildren = (
 
 export const FEATURES_LIST = [
   {
+    id: "links",
+    title: "Dub Links",
+    description: "Short links with superpowers",
+    icon: DubLinksIcon,
+    href: "/links",
+  },
+  {
     id: "partners",
     title: "Dub Partners",
     description: "Grow your revenue with partnerships",
@@ -54,13 +61,6 @@ export const FEATURES_LIST = [
     description: "Powerful real-time analytics",
     icon: DubAnalyticsIcon,
     href: "/analytics",
-  },
-  {
-    id: "links",
-    title: "Dub Links",
-    description: "Short links with superpowers",
-    icon: DubLinksIcon,
-    href: "/links",
   },
   {
     id: "api",
@@ -115,12 +115,6 @@ export const SDKS = [
 
 export const SOLUTIONS: NavItemChildren = [
   {
-    icon: withFillVariant(Users),
-    title: "Affiliate Management",
-    description: "Manage affiliates and automate payouts",
-    href: "/partners",
-  },
-  {
     icon: withFillVariant(DiamondTurnRight),
     title: "Marketing Attribution",
     description: "Easily track and measure marketing impact",
@@ -128,9 +122,15 @@ export const SOLUTIONS: NavItemChildren = [
   },
   {
     icon: withFillVariant(Microphone),
-    title: "For Content Creators",
+    title: "Content Creators",
     description: "Intelligent audience insights and link tracking",
     href: "/solutions/creators",
+  },
+  {
+    icon: withFillVariant(Users),
+    title: "Affiliate Management",
+    description: "Manage affiliates and automate payouts",
+    href: "/partners",
   },
   {
     label: "SDKs",

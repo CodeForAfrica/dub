@@ -4,10 +4,7 @@ import useGroups from "@/lib/swr/use-groups";
 import { usePayoutsCount } from "@/lib/swr/use-payouts-count";
 import useProgram from "@/lib/swr/use-program";
 import useWorkspace from "@/lib/swr/use-workspace";
-import {
-  TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
-  TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS,
-} from "@/lib/tremendous/constants";
+import { TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS } from "@/lib/tremendous/constants";
 import { PayoutResponse } from "@/lib/types";
 import { ExternalPayoutsIndicator } from "@/ui/partners/external-payouts-indicator";
 import { GroupColorCircle } from "@/ui/partners/groups/group-color-circle";
@@ -81,8 +78,7 @@ function isPayoutEligibleForBatchConfirm(
 
   if (
     payout.partner.defaultPayoutMethod === PartnerPayoutMethod.tremendous &&
-    (payout.amount < TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS ||
-      payout.amount > TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS)
+    payout.amount > TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS
   ) {
     return false;
   }
@@ -96,19 +92,6 @@ const payoutsColumns = {
   all: ["periodEnd", "partner", "group", "status", "initiatedAt", "amount"],
   defaultVisible: ["periodEnd", "partner", "status", "initiatedAt", "amount"],
 };
-
-const MIN_GIFT_CARD_PAYOUT_AMOUNT = currencyFormatter(
-  TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS,
-  {
-    trailingZeroDisplay: "stripIfInteger",
-  },
-);
-const MAX_GIFT_CARD_PAYOUT_AMOUNT = currencyFormatter(
-  TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
-  {
-    trailingZeroDisplay: "stripIfInteger",
-  },
-);
 
 export function PayoutTable() {
   const router = useRouter();
@@ -315,6 +298,13 @@ export function PayoutTable() {
           (payout) => !isPayoutEligibleForBatchConfirm(payout, eligibilityCtx),
         );
 
+      const maxGiftCardPayoutAmount = currencyFormatter(
+        TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
+        {
+          trailingZeroDisplay: "stripIfInteger",
+        },
+      );
+
       return (
         <Button
           variant="primary"
@@ -341,9 +331,8 @@ export function PayoutTable() {
                   </li>
                   <li>Partner has not connected payouts</li>
                   <li>
-                    Not within the gift card payout amount range of{" "}
-                    {MIN_GIFT_CARD_PAYOUT_AMOUNT} –{" "}
-                    {MAX_GIFT_CARD_PAYOUT_AMOUNT}
+                    Exceeds the {maxGiftCardPayoutAmount} cap for gift card
+                    payouts
                   </li>
                 </ul>
               </div>
@@ -522,12 +511,18 @@ function AmountRowItem({
 
     if (
       payout.partner.defaultPayoutMethod === PartnerPayoutMethod.tremendous &&
-      (payout.amount < TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS ||
-        payout.amount > TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS)
+      payout.amount > TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS
     ) {
+      const maxPayoutAmount = currencyFormatter(
+        TREMENDOUS_MAX_PAYOUT_AMOUNT_CENTS,
+        {
+          trailingZeroDisplay: "stripIfInteger",
+        },
+      );
+
       return (
         <Tooltip
-          content={`This payout ${payout.amount < TREMENDOUS_MIN_PAYOUT_AMOUNT_CENTS ? `is below the minimum amount (${MIN_GIFT_CARD_PAYOUT_AMOUNT})` : `exceeds the ${MAX_GIFT_CARD_PAYOUT_AMOUNT} cap`} for gift card payouts. The partner must connect another payout method to receive this payout.`}
+          content={`This payout exceeds the ${maxPayoutAmount} cap for gift card payouts. The partner must connect another payout method to receive this amount.`}
         >
           <span className="cursor-help truncate text-neutral-400 underline decoration-dotted underline-offset-2">
             {display}

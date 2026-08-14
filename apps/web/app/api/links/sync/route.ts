@@ -41,7 +41,6 @@ export const POST = withWorkspace(
       return new Response(
         exceededLimitError({
           plan: workspace.plan,
-          planPeriod: workspace.planPeriod,
           limit: workspace.linksLimit,
           type: "links",
         }),

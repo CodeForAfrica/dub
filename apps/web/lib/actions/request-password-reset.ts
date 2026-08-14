@@ -1,8 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { assertRateLimit } from "@/lib/upstash/assert-rate-limit";
-import { RATELIMIT_POLICIES } from "@/lib/upstash/ratelimit-policies";
+import { ratelimit } from "@/lib/upstash";
 import { sendEmail } from "@dub/email";
 import ResetPasswordLink from "@dub/email/templates/reset-password-link";
 import { randomBytes } from "crypto";
@@ -22,10 +21,13 @@ export const requestPasswordResetAction = actionClient
   .action(async ({ parsedInput }) => {
     const { email } = parsedInput;
 
-    await assertRateLimit({
-      policy: RATELIMIT_POLICIES.passwordResetRequest,
-      identifier: email.toLowerCase(),
-    });
+    const { success } = await ratelimit(2, "1 m").limit(
+      `request-password-reset:${email.toLowerCase()}`,
+    );
+
+    if (!success) {
+      throw new Error("Too many requests. Please try again later.");
+    }
 
     const user = await prisma.user.findUnique({
       where: {

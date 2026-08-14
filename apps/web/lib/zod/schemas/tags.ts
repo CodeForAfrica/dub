@@ -48,22 +48,23 @@ export const tagColorSchema = z
   })
   .describe("The color of the tag");
 
-const tagName = z
-  .string()
-  .trim()
-  .min(1)
-  .max(190)
-  .describe("The name of the tag to create.");
-
 export const createTagBodySchema = z
   .object({
-    name: tagName,
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(50)
+      .describe("The name of the tag to create."),
     color: tagColorSchema.describe(
       `The color of the tag. If not provided, a random color will be used from the list: ${RESOURCE_COLORS.join(", ")}.`,
     ),
-    tag: tagName.meta({
-      deprecated: true,
-    }),
+    tag: z
+      .string()
+      .trim()
+      .min(1)
+      .describe("The name of the tag to create.")
+      .meta({ deprecated: true }),
   })
   .partial()
   .superRefine((data, ctx) => {

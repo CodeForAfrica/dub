@@ -3,11 +3,8 @@ import { RESOURCE_COLORS } from "@/ui/colors";
 import { getDomainWithoutWWW, randomValue } from "@dub/utils";
 import slugify from "@sindresorhus/slugify";
 import { createId } from "../api/create-id";
-import {
-  DEFAULT_ADDITIONAL_PARTNER_LINKS,
-  sanitizeAdditionalLinks,
-} from "../zod/schemas/groups";
-import { TapfiliateClient } from "./client";
+import { DEFAULT_ADDITIONAL_PARTNER_LINKS } from "../zod/schemas/groups";
+import { TapfiliateApi } from "./api";
 import { tapfiliateImporter } from "./importer";
 import { TapfiliateImportPayload } from "./types";
 
@@ -46,7 +43,7 @@ export async function importGroups(payload: TapfiliateImportPayload) {
     program.workspaceId,
   );
 
-  const tapfiliateApi = new TapfiliateClient({
+  const tapfiliateApi = new TapfiliateApi({
     apiKey,
   });
 
@@ -68,12 +65,12 @@ export async function importGroups(payload: TapfiliateImportPayload) {
         name: group.title,
         slug,
         color: randomValue(RESOURCE_COLORS),
-        additionalLinks: sanitizeAdditionalLinks([
+        additionalLinks: [
           {
             domain: getDomainWithoutWWW(program.url),
             validationMode: "domain",
           },
-        ]),
+        ],
         ...(defaultGroup
           ? {
               linkStructure: defaultGroup.linkStructure,

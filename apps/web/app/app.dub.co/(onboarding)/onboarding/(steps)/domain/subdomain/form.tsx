@@ -19,7 +19,6 @@ export function Form() {
       onSuccess={() => {
         continueTo(product === "partners" ? "program" : "plan");
       }}
-      isOnboardingSubdomainFlow={true}
     />
   );
 }

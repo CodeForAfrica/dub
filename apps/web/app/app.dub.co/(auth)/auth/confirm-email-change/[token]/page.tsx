@@ -1,15 +1,13 @@
 import { getSession, hashToken } from "@/lib/auth";
-import {
-  assertCanConfirmEmailChange,
-  deleteEmailChangeRequest,
-  EmailChangeAuthError,
-  EmailChangeRequestData,
-} from "@/lib/auth/confirm-email-change";
+import { hasPermission } from "@/lib/auth/partner-users/partner-user-permissions";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/upstash";
-import { AuthLayout } from "@/ui/layout/auth-layout";
 import EmptyState from "@/ui/shared/empty-state";
+import { sendEmail } from "@dub/email";
+import EmailUpdated from "@dub/email/templates/email-updated";
 import { InputPassword, LoadingSpinner } from "@dub/ui";
+import { VerificationToken } from "@prisma/client";
+import { waitUntil } from "@vercel/functions";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import ConfirmEmailChangePageClient from "./page-client";
@@ -21,17 +19,19 @@ interface PageProps {
 
 export default async function ConfirmEmailChangePage(props: PageProps) {
   return (
-    <Suspense
-      fallback={
-        <EmptyState
-          icon={LoadingSpinner}
-          title="Verifying Email Change"
-          description="Verifying your email change request. This might take a few seconds..."
-        />
-      }
-    >
-      <VerifyEmailChange {...props} />
-    </Suspense>
+    <div className="flex flex-col items-center justify-center gap-6 text-center">
+      <Suspense
+        fallback={
+          <EmptyState
+            icon={LoadingSpinner}
+            title="Verifying Email Change"
+            description="Verifying your email change request. This might take a few seconds..."
+          />
+        }
+      >
+        <VerifyEmailChange {...props} />
+      </Suspense>
+    </div>
   );
 }
 
@@ -41,11 +41,6 @@ const VerifyEmailChange = async ({ params, searchParams }: PageProps) => {
   const tokenFound = await prisma.verificationToken.findUnique({
     where: {
       token: await hashToken(token, { secret: true }),
-    },
-    select: {
-      token: true,
-      expires: true,
-      identifier: true,
     },
   });
 
@@ -63,7 +58,7 @@ const VerifyEmailChange = async ({ params, searchParams }: PageProps) => {
   const { cancel } = await searchParams;
 
   if (cancel && cancel === "true") {
-    await deleteEmailChangeRequest(token);
+    await deleteRequest(tokenFound);
 
     return (
       <EmptyState
@@ -74,15 +69,57 @@ const VerifyEmailChange = async ({ params, searchParams }: PageProps) => {
     );
   }
 
+  // Process the email change request
   const session = await getSession();
 
   if (!session) {
     redirect(`/login?next=/auth/confirm-email-change/${token}`);
   }
 
-  const data = await redis.get<EmailChangeRequestData>(
-    `email-change-request:token:${tokenFound.token}`,
-  );
+  const { id: userId } = session.user;
+  const tokenIdentifier = tokenFound.identifier;
+
+  if (tokenIdentifier.startsWith("pn_")) {
+    const partnerUser = await prisma.partnerUser.findUnique({
+      where: {
+        userId_partnerId: {
+          userId,
+          partnerId: tokenIdentifier,
+        },
+      },
+      select: { role: true },
+    });
+
+    if (
+      !partnerUser ||
+      !hasPermission(partnerUser.role, "partner_profile.update")
+    ) {
+      return (
+        <EmptyState
+          icon={InputPassword}
+          title="Invalid Token"
+          description="This token is invalid. Please request a new one."
+        />
+      );
+    }
+  } else if (tokenIdentifier !== userId) {
+    return (
+      <EmptyState
+        icon={InputPassword}
+        title="Invalid Token"
+        description="This token is invalid. Please request a new one."
+      />
+    );
+  }
+
+  const data = await redis.get<{
+    email: string;
+    newEmail: string;
+    isPartnerProfile?: boolean;
+    syncIdentity?: boolean;
+    partnerId?: string;
+    redirectTo?: "/profile" | "/account/settings";
+  }>(`email-change-request:user:${tokenIdentifier}`);
 
   if (!data) {
     return (
@@ -94,41 +131,119 @@ const VerifyEmailChange = async ({ params, searchParams }: PageProps) => {
     );
   }
 
-  try {
-    await assertCanConfirmEmailChange({
-      userId: session.user.id,
-      tokenFound,
-      data,
-    });
-  } catch (error) {
-    if (error instanceof EmailChangeAuthError) {
+  if (data.syncIdentity) {
+    const syncedPartnerId = data.partnerId;
+
+    if (!syncedPartnerId) {
       return (
         <EmptyState
           icon={InputPassword}
-          title={
-            error.reason === "unauthorized" ? "Unauthorized" : "Invalid Token"
-          }
-          description={error.message}
+          title="Invalid Token"
+          description="This token is invalid. Please request a new one."
         />
       );
     }
 
-    return (
-      <EmptyState
-        icon={InputPassword}
-        title="Something Went Wrong"
-        description="We couldn't verify your email change request. Please try again later."
-      />
-    );
+    const partnerUser = await prisma.partnerUser.findUnique({
+      where: {
+        userId_partnerId: {
+          userId,
+          partnerId: syncedPartnerId,
+        },
+      },
+      select: { role: true },
+    });
+
+    if (
+      !partnerUser ||
+      !hasPermission(partnerUser.role, "partner_profile.update")
+    ) {
+      return (
+        <EmptyState
+          icon={InputPassword}
+          title="Unauthorized"
+          description="You don't have access to update the partner profile associated with this email change request."
+        />
+      );
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: {
+          id: userId,
+        },
+        data: {
+          email: data.newEmail,
+        },
+      }),
+      prisma.partner.update({
+        where: {
+          id: syncedPartnerId,
+        },
+        data: {
+          email: data.newEmail,
+        },
+      }),
+    ]);
   }
 
-  return (
-    <AuthLayout>
-      <ConfirmEmailChangePageClient
-        token={token}
-        email={data.email}
-        newEmail={data.newEmail}
-      />
-    </AuthLayout>
+  // Update the partner profile email
+  else if (data.isPartnerProfile) {
+    await prisma.partner.update({
+      where: {
+        id: tokenIdentifier,
+      },
+      data: {
+        email: data.newEmail,
+      },
+    });
+  }
+
+  // Update the user email
+  else {
+    await prisma.user.update({
+      where: {
+        id: userId,
+      },
+      data: {
+        email: data.newEmail,
+      },
+    });
+  }
+
+  waitUntil(
+    Promise.allSettled([
+      deleteRequest(tokenFound),
+
+      sendEmail({
+        subject: "Your email address has been changed",
+        to: data.email,
+        react: EmailUpdated({
+          oldEmail: data.email,
+          newEmail: data.newEmail,
+          isPartnerProfile: !!data.isPartnerProfile,
+          syncIdentity: !!data.syncIdentity,
+        }),
+      }),
+    ]),
   );
+
+  return (
+    <ConfirmEmailChangePageClient
+      isPartnerProfile={!!data.isPartnerProfile}
+      redirectTo={data.redirectTo}
+    />
+  );
+};
+
+const deleteRequest = async (tokenFound: VerificationToken) => {
+  await Promise.allSettled([
+    prisma.verificationToken.delete({
+      where: {
+        token: tokenFound.token,
+      },
+    }),
+
+    redis.del(`email-change-request:user:${tokenFound.identifier}`),
+  ]);
 };

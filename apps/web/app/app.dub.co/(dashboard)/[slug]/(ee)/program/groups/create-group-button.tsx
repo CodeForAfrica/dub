@@ -3,7 +3,7 @@
 import { clientAccessCheck } from "@/lib/client-access-check";
 import useGroupsCount from "@/lib/swr/use-groups-count";
 import useWorkspace from "@/lib/swr/use-workspace";
-import { useAdvancedUpsellModal } from "@/ui/partners/advanced-upsell-modal";
+import { usePartnersUpgradeModal } from "@/ui/partners/partners-upgrade-modal";
 import { Button, useKeyboardShortcut, useMediaQuery } from "@dub/ui";
 import { useCreateGroupModal } from "./create-group-modal";
 
@@ -17,8 +17,12 @@ export function CreateGroupButton() {
     role,
   }).error;
 
-  const { advancedUpsellModal, setShowAdvancedUpsellModal } =
-    useAdvancedUpsellModal();
+  const { partnersUpgradeModal, setShowPartnersUpgradeModal } =
+    usePartnersUpgradeModal({
+      plan: ["Advanced", "Enterprise"].includes(nextPlan.name)
+        ? nextPlan.name
+        : "Enterprise",
+    });
 
   const { createGroupModal, setIsOpen: setShowCreateGroupSheet } =
     useCreateGroupModal({});
@@ -27,7 +31,7 @@ export function CreateGroupButton() {
 
   const handleCreateGroup = () => {
     if (!disabled && groupsCount >= groupsLimit)
-      setShowAdvancedUpsellModal(true);
+      setShowPartnersUpgradeModal(true);
     else setShowCreateGroupSheet(true);
   };
 
@@ -37,7 +41,7 @@ export function CreateGroupButton() {
 
   return (
     <>
-      {advancedUpsellModal}
+      {partnersUpgradeModal}
       {createGroupModal}
       <Button
         type="button"

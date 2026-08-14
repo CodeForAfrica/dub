@@ -12,10 +12,10 @@ export interface PartnerActivityEvent {
   programId: string;
   partnerId: string;
   timestamp: string;
-  eventType: "lead" | "sale" | "commission";
+  eventType: "click" | "lead" | "sale" | "commission";
 }
 
-// Publishes a partner activity event to the stream to update programEnrollment stats (e.g. totalClicks, totalLeads, totalSales, totalCommissions)
+// Publishes a partner activity event to the stream
 export const publishPartnerActivityEvent = async (
   event: PartnerActivityEvent,
 ) => {

@@ -1,5 +1,5 @@
 import { createId } from "@/lib/api/create-id";
-import { getOrCreateCustomer } from "@/lib/api/customers/get-or-create-customer";
+import { createOrGetCustomer } from "@/lib/api/customers/create-or-get-customer";
 import { DubApiError } from "@/lib/api/errors";
 import { includeTags } from "@/lib/api/links/include-tags";
 import { generateRandomName } from "@/lib/names";
@@ -167,7 +167,7 @@ export const trackLead = async ({
     };
 
     if (!customer) {
-      const { customer: existingOrNewCustomer } = await getOrCreateCustomer({
+      const { customer: createdOrFoundCustomer } = await createOrGetCustomer({
         where: {
           projectId_externalId: {
             projectId: workspace.id,
@@ -191,7 +191,7 @@ export const trackLead = async ({
         },
       });
 
-      customer = existingOrNewCustomer;
+      customer = createdOrFoundCustomer;
     }
 
     // if wait mode, record the lead event synchronously

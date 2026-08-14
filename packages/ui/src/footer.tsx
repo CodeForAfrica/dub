@@ -46,13 +46,16 @@ const socials = [
 ];
 
 const navigation = {
-  product: FEATURES_LIST.filter(
-    ({ title }) => title !== "Dub Integrations",
-  ).map(({ id, title, href }) => ({
-    id,
-    name: title,
-    href,
-  })),
+  product: [
+    ...FEATURES_LIST.filter(({ title }) => title !== "Dub Integrations").map(
+      ({ id, title, href }) => ({
+        id,
+        name: title,
+        href,
+      }),
+    ),
+    { id: null, name: "Dub Enterprise", href: "/enterprise" },
+  ],
   solutions: [
     { name: "Marketing attribution", href: "/analytics" },
     { name: "Content creators", href: "/solutions/creators" },
@@ -61,8 +64,6 @@ const navigation = {
   resources: [
     { name: "Docs", href: "/docs" },
     { name: "Help Center", href: "/help" },
-    { name: "Enterprise", href: "/enterprise" },
-    { name: "Startups", href: "/startups" },
     { name: "Integrations", href: "/integrations" },
     { name: "Pricing", href: "/pricing" },
     {
