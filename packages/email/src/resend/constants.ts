@@ -1,11 +1,5 @@
-const primary = process.env.RESEND_EMAIL_FROM_PRIMARY || "Dub.co <system@dub.co>";
-const notifications = process.env.RESEND_EMAIL_FROM_NOTIFICATIONS || "Dub.co <notifications@mail.dub.co>";
-const marketing = process.env.RESEND_EMAIL_FROM_MARKETING || "Steven from Dub.co <steven@ship.dub.co>";
-
 export const VARIANT_TO_FROM_MAP = {
-  primary,
-  notifications,
-  marketing,
+  primary: "Dub.co <system@dub.co>",
+  notifications: "Dub.co <notifications@mail.dub.co>",
+  marketing: "Steven from Dub.co <steven@ship.dub.co>",
 };
-
-export const RESEND_REPLY_TO = process.env.RESEND_EMAIL_REPLY_TO || "support@dub.co";
