@@ -3,6 +3,8 @@ export const SHORT_DOMAIN = "dub.sh";
 export const APP_HOSTNAMES = new Set([
   "app.dub.co",
   "preview.dub.co",
+  ...(process.env.NEXT_PUBLIC_APP_HOSTNAMES?.split(",").map((h) => h.trim()) ??
+    []),
   "localhost:8888",
   "localhost",
 ]);
