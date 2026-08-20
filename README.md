@@ -44,7 +44,7 @@ Our platform powers 100M+ clicks and 2M+ links monthly, and is used by world-cla
 - [Tinybird](https://tinybird.com/) – analytics
 - [PlanetScale](https://planetscale.com/) – database
 - [NextAuth.js](https://next-auth.js.org/) – auth
-- [BoxyHQ](https://boxyhq.com/enterprise-sso) – SSO/SAML
+- [BoxyHQ](https://boxyhq.com/enterprise-sso) – SAML/SSO
 - [Turborepo](https://turbo.build/repo) – monorepo
 - [Stripe](https://stripe.com/) – payments
 - [Resend](https://resend.com/) – emails
@@ -52,19 +52,7 @@ Our platform powers 100M+ clicks and 2M+ links monthly, and is used by world-cla
 
 ## Self-Hosting
 
-You can self-host Dub for greater control over your data and design.
-
-**📖 [Read the comprehensive self-hosting guide](./docs/SELF-HOSTING.md)**
-
-This guide includes:
-- Quick start with Docker for local development
-- Production deployment options (Vercel, Docker, Railway, etc.)
-- Step-by-step configuration for all required services
-- Environment variables reference
-- Cron job setup for self-hosted deployments
-- Troubleshooting and common issues
-
-For the latest updates, also check the [official documentation](https://dub.co/docs/self-hosting/guide).
+You can self-host Dub for greater control over your data and design. [Read this guide](https://dub.co/docs/self-hosting/guide) to learn more.
 
 ## Contributing
 

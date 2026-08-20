@@ -5,7 +5,7 @@ import { isEligibleForTrial } from "@/lib/stripe/is-eligible-for-trial";
 import useWorkspace from "@/lib/swr/use-workspace";
 import { PageContent } from "@/ui/layout/page-content";
 import { PageWidthWrapper } from "@/ui/layout/page-width-wrapper";
-import { usePartnersUpgradeModal } from "@/ui/partners/partners-upgrade-modal";
+import { useAdvancedUpsellModal } from "@/ui/partners/advanced-upsell-modal";
 import { UpgradePlanButton } from "@/ui/workspaces/upgrade-plan-button";
 import {
   Badge,
@@ -20,6 +20,7 @@ import {
   Plug2,
   ToggleGroup,
   useMediaQuery,
+  useRouterStuff,
   Users2,
 } from "@dub/ui";
 import {
@@ -39,7 +40,6 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { motion } from "motion/react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { CSSProperties, useEffect, useMemo, useState } from "react";
 import { AdjustUsageRow } from "./adjust-usage-row";
 
@@ -57,7 +57,7 @@ const COMPARE_FEATURE_ICONS: Record<
 };
 
 export default function WorkspaceBillingUpgradePage() {
-  const searchParams = useSearchParams();
+  const { searchParams, queryParams } = useRouterStuff();
   const { data: session } = useSession();
   const workspace = useWorkspace();
   const {
@@ -69,6 +69,7 @@ export default function WorkspaceBillingUpgradePage() {
     stripeId,
     partnersLimit,
     trialEndsAt,
+    defaultProgramId,
   } = workspace;
 
   const { error: permissionsError } = clientAccessCheck({
@@ -78,21 +79,21 @@ export default function WorkspaceBillingUpgradePage() {
 
   const [mobilePlanIndex, setMobilePlanIndex] = useState(0);
 
-  const planPeriod = searchParams.get("planPeriod") ?? "";
-  const [period, setPeriod] = useState<"monthly" | "yearly">(
-    ["monthly", "yearly"].includes(planPeriod)
-      ? (planPeriod as "monthly" | "yearly")
-      : currentPlanPeriod === "yearly"
-        ? "yearly"
-        : "monthly",
-  );
+  const planPeriodParam = searchParams.get("planPeriod") ?? "";
+  const period: "monthly" | "yearly" = ["monthly", "yearly"].includes(
+    planPeriodParam,
+  )
+    ? (planPeriodParam as "monthly" | "yearly")
+    : currentPlanPeriod === "yearly"
+      ? "yearly"
+      : "monthly";
 
-  const { partnersUpgradeModal, setShowPartnersUpgradeModal } =
-    usePartnersUpgradeModal();
+  const { advancedUpsellModal, setShowAdvancedUpsellModal } =
+    useAdvancedUpsellModal();
 
   useEffect(() => {
-    if (searchParams.get("showPartnersUpgradeModal")) {
-      setShowPartnersUpgradeModal(true);
+    if (searchParams.get("showAdvancedUpsellModal")) {
+      setShowAdvancedUpsellModal(true);
     }
   }, [searchParams]);
 
@@ -108,20 +109,66 @@ export default function WorkspaceBillingUpgradePage() {
     });
   }, [linksUsage, eventsUsage]);
 
+  const planQueryParam = searchParams.get("plan");
+
+  const hideProPlan = Boolean(defaultProgramId && currentPlan !== "pro");
+
   const plans: { plan: PlanDetails; planTier: number }[] = useMemo(
     () =>
-      ["Pro", "Business", "Advanced", "Enterprise"].map((p) => {
-        const planDetails = PLANS.find(({ name }) => name === p)!;
-        if (
-          recommendedPlan &&
-          recommendedPlan.plan.name.toLowerCase() === p.toLowerCase()
-        ) {
-          return recommendedPlan;
-        }
-        return { plan: planDetails, planTier: 1 };
-      }),
-    [recommendedPlan],
+      ["Pro", "Business", "Advanced", "Enterprise"]
+        .filter((p) => !(hideProPlan && p === "Pro"))
+        .map((p) => {
+          const planDetails = PLANS.find(({ name }) => name === p)!;
+          if (
+            recommendedPlan &&
+            recommendedPlan.plan.name.toLowerCase() === p.toLowerCase()
+          ) {
+            return recommendedPlan;
+          }
+          return { plan: planDetails, planTier: 1 };
+        }),
+    [recommendedPlan, hideProPlan],
   );
+
+  const resolvedRequestedPlan = useMemo(() => {
+    if (!planQueryParam) return null;
+
+    return (
+      plans.find(
+        ({ plan }) => plan.name.toLowerCase() === planQueryParam.toLowerCase(),
+      ) ?? null
+    );
+  }, [planQueryParam, plans]);
+
+  const highlightedPlan = useMemo(() => {
+    if (resolvedRequestedPlan) return resolvedRequestedPlan;
+    if (!planQueryParam) return recommendedPlan;
+    return null;
+  }, [resolvedRequestedPlan, planQueryParam, recommendedPlan]);
+
+  const highlightedPlanIndex = useMemo(() => {
+    if (!highlightedPlan) return null;
+
+    const index = plans.findIndex(
+      ({ plan, planTier }) =>
+        plan.name === highlightedPlan.plan.name &&
+        planTier === highlightedPlan.planTier,
+    );
+
+    return index >= 0 ? index : null;
+  }, [plans, highlightedPlan]);
+
+  useEffect(() => {
+    if (highlightedPlanIndex !== null) {
+      setMobilePlanIndex(highlightedPlanIndex);
+    }
+  }, [highlightedPlanIndex]);
+
+  useEffect(() => {
+    if (mobilePlanIndex >= plans.length) {
+      setMobilePlanIndex(Math.max(0, plans.length - 1));
+    }
+  }, [mobilePlanIndex, plans.length]);
 
   const { isMobile } = useMediaQuery();
 
@@ -155,7 +202,12 @@ export default function WorkspaceBillingUpgradePage() {
               },
             ]}
             selected={period}
-            selectAction={(option) => setPeriod(option as "monthly" | "yearly")}
+            selectAction={(option) => {
+              queryParams({
+                set: { planPeriod: option },
+                replace: true,
+              });
+            }}
             className="rounded-lg border-neutral-300 bg-neutral-100 p-0.5"
             optionClassName="text-xs normal-case text-neutral-800 data-[selected=true]:text-neutral-800 px-3 h-8 leading-none"
             indicatorClassName="bg-white border-neutral-200 rounded-md"
@@ -163,16 +215,17 @@ export default function WorkspaceBillingUpgradePage() {
         </div>
       }
     >
-      {partnersUpgradeModal}
+      {advancedUpsellModal}
       <PageWidthWrapper className="grid gap-8">
         <div className="sticky -top-px z-10">
           <div className="overflow-x-hidden rounded-b-[12px] from-neutral-200 [container-type:inline-size] lg:bg-gradient-to-t lg:p-px">
             <div
               className={cn(
-                "grid grid-cols-4 gap-px overflow-hidden rounded-b-[11px] text-sm text-neutral-800 [&_strong]:font-medium",
+                "grid gap-px overflow-hidden rounded-b-[11px] text-sm text-neutral-800 [&_strong]:font-medium",
+                getPlanGridClasses(plans.length),
 
                 // Mobile
-                "max-lg:w-[calc(400cqw+3*32px)] max-lg:translate-x-[calc(-1*var(--index)*(100cqw+32px))] max-lg:gap-x-8 max-lg:transition-transform",
+                "max-lg:translate-x-[calc(-1*var(--index)*(100cqw+32px))] max-lg:gap-x-8 max-lg:transition-transform",
               )}
               style={
                 {
@@ -181,6 +234,12 @@ export default function WorkspaceBillingUpgradePage() {
               }
             >
               {plans.map(({ plan, planTier }, idx) => {
+                const isRecommended = Boolean(
+                  highlightedPlan &&
+                    plan.name === highlightedPlan.plan.name &&
+                    planTier === highlightedPlan.planTier,
+                );
+
                 // disable upgrade button if user has a Stripe ID and is on the current plan
                 // (trialing subscriptions still use Checkout in some edge cases; portal handles plan changes)
                 // edge case:
@@ -213,9 +272,10 @@ export default function WorkspaceBillingUpgradePage() {
                   <div
                     key={plan.name}
                     className={cn(
-                      "relative top-0 flex h-full flex-col gap-6 bg-white p-5 lg:p-3 xl:p-5",
+                      "relative top-0 flex h-full flex-col gap-6 bg-white p-5 transition-[background-color,box-shadow] lg:p-3 xl:p-5",
                       "max-lg:rounded-xl max-lg:border max-lg:border-neutral-200",
-
+                      isRecommended &&
+                        "lg:z-10 lg:bg-blue-50 lg:shadow-sm lg:ring-2 lg:ring-blue-500",
                       idx !== mobilePlanIndex && "max-lg:opacity-0",
                     )}
                   >
@@ -224,15 +284,11 @@ export default function WorkspaceBillingUpgradePage() {
                         <h3 className="py-1 text-base font-semibold leading-none text-neutral-800">
                           {plan.name}
                         </h3>
-                        {recommendedPlan &&
-                          !isDowngrade &&
-                          plan.name === recommendedPlan.plan.name &&
-                          planTier === recommendedPlan.planTier &&
-                          !isCurrentPlan && (
-                            <div className="animate-fade-in flex h-6 min-w-0 items-center rounded-lg border border-blue-100 bg-blue-50 px-1.5 text-xs font-medium text-blue-600">
-                              <span className="truncate">Recommended</span>
-                            </div>
-                          )}
+                        {isRecommended && !isDowngrade && !isCurrentPlan && (
+                          <div className="animate-fade-in flex h-6 min-w-0 items-center rounded-lg border border-blue-100 bg-blue-50 px-1.5 text-xs font-medium text-blue-600">
+                            <span className="truncate">Recommended</span>
+                          </div>
+                        )}
                       </div>
                       <div className="relative mt-0.5 flex items-center gap-1">
                         {plan.name === "Enterprise" ? (
@@ -276,6 +332,7 @@ export default function WorkspaceBillingUpgradePage() {
                           className={cn(
                             "flex h-8 w-full items-center justify-center rounded-md text-center text-sm ring-gray-200 transition-all duration-200 ease-in-out",
                             "border border-neutral-200 bg-white text-neutral-900 shadow-sm hover:bg-neutral-50",
+                            !hideProPlan && "xl:text-xs",
                           )}
                         >
                           Contact us
@@ -312,7 +369,10 @@ export default function WorkspaceBillingUpgradePage() {
                                         : `Upgrade to ${plan.name} ${capitalize(period)}`
                           }
                           variant={isDowngrade ? "secondary" : "primary"}
-                          className="h-8 shadow-sm"
+                          className={cn(
+                            "h-8 shadow-sm",
+                            !hideProPlan && "xl:text-xs",
+                          )}
                         />
                       )}
                       <button
@@ -352,11 +412,21 @@ export default function WorkspaceBillingUpgradePage() {
               mobilePlanIndex={mobilePlanIndex}
               plans={plans}
               planPeriod={period}
+              recommendedPlan={highlightedPlan}
             />
           ))}
         </div>
       </PageWidthWrapper>
     </PageContent>
+  );
+}
+
+function getPlanGridClasses(planCount: number) {
+  return cn(
+    planCount === 3 ? "grid-cols-3" : "grid-cols-4",
+    planCount === 3
+      ? "max-lg:w-[calc(300cqw+2*32px)]"
+      : "max-lg:w-[calc(400cqw+3*32px)]",
   );
 }
 
@@ -407,10 +477,12 @@ function BillingCompareSection({
   mobilePlanIndex,
   plans,
   planPeriod,
+  recommendedPlan,
 }: (typeof PRICING_PLAN_COMPARE_FEATURES)[number] & {
   mobilePlanIndex: number;
   plans: { plan: PlanDetails; planTier: number }[];
   planPeriod: "monthly" | "yearly";
+  recommendedPlan: ReturnType<typeof getSuggestedPlan> | null;
 }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const { defaultProgramId } = useWorkspace();
@@ -467,10 +539,11 @@ function BillingCompareSection({
       >
         <table
           className={cn(
-            "grid grid-cols-4 overflow-hidden text-sm text-neutral-800 [&_strong]:font-medium",
+            "grid overflow-hidden text-sm text-neutral-800 [&_strong]:font-medium",
+            getPlanGridClasses(plans.length),
 
             // Mobile
-            "max-lg:w-[calc(400cqw+3*32px)] max-lg:translate-x-[calc(-1*var(--index)*(100cqw+32px))] max-lg:gap-x-8 max-lg:transition-transform",
+            "max-lg:translate-x-[calc(-1*var(--index)*(100cqw+32px))] max-lg:gap-x-8 max-lg:transition-transform",
           )}
           style={
             {
@@ -491,8 +564,13 @@ function BillingCompareSection({
 
               return (
                 <tr key={idx} className="contents bg-white">
-                  {plans.map(({ plan }) => {
+                  {plans.map(({ plan, planTier }) => {
                     const id = plan.name.toLowerCase();
+                    const isRecommended = Boolean(
+                      recommendedPlan &&
+                        plan.name === recommendedPlan.plan.name &&
+                        planTier === recommendedPlan.planTier,
+                    );
                     const isChecked =
                       typeof check === "boolean"
                         ? check
@@ -503,8 +581,9 @@ function BillingCompareSection({
                       <td
                         key={id}
                         className={cn(
-                          "flex items-center gap-2 border-b border-neutral-200 bg-white px-5 py-4",
+                          "flex items-center gap-2 border-b border-neutral-200 bg-white px-5 py-4 transition-colors",
                           !isChecked && "text-neutral-300",
+                          isRecommended && recommendedPlan && "lg:bg-blue-50",
                         )}
                       >
                         {isChecked ? (
