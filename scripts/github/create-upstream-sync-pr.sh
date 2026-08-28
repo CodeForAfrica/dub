@@ -10,10 +10,14 @@ git fetch origin "${COMPARE_BRANCH}"
 git fetch upstream "${UPSTREAM_BRANCH}"
 git fetch origin "${SYNC_BRANCH}:refs/remotes/origin/${SYNC_BRANCH}" || true
 
+# Measure drift from the branch that represents production/source-of-truth.
+# This count is informational; it does not decide where the generated PR lands.
 read -r ahead behind < <(git rev-list --left-right --count "origin/${COMPARE_BRANCH}...upstream/${UPSTREAM_BRANCH}")
 echo "ahead=${ahead}" >> "$GITHUB_OUTPUT"
 echo "behind=${behind}" >> "$GITHUB_OUTPUT"
 
+# Capture exact SHAs so reviewers can see which branch tips were compared and
+# which branch tip the generated sync PR started from.
 upstream_sha="$(git rev-parse "upstream/${UPSTREAM_BRANCH}")"
 base_sha="$(git rev-parse "origin/${BASE_BRANCH}")"
 compare_sha="$(git rev-parse "origin/${COMPARE_BRANCH}")"
@@ -21,16 +25,22 @@ echo "upstream_sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
 echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
 echo "compare_sha=${compare_sha}" >> "$GITHUB_OUTPUT"
 
+# If upstream has no commits missing from the compare branch, stay quiet. The
+# workflow will also skip Slack because behind=0.
 if [ "${behind}" = "0" ]; then
   echo "status=current" >> "$GITHUB_OUTPUT"
   exit 0
 fi
 
+# Start the generated sync PR from the staging branch, even though the drift
+# calculation above used main.
 git switch -C "${SYNC_BRANCH}" "origin/${BASE_BRANCH}"
 
 sync_status="created"
 conflict_files="None"
 
+# This is the important history-preserving step: the generated PR contains a
+# real merge from upstream, not a copied tree or squashed replacement commit.
 if ! git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"; then
   sync_status="created_with_conflicts_resolved_to_upstream_tree"
   conflict_files="$(git diff --name-only --diff-filter=U | sed -n '1,80p')"
@@ -58,10 +68,14 @@ fi
   echo "EOF"
 } >> "$GITHUB_OUTPUT"
 
+# Guardrail: prove the generated branch really contains the upstream branch in
+# its history. This is the check that prevents the old "copied files" problem.
 git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD
 
 git push --force-with-lease origin "HEAD:${SYNC_BRANCH}"
 
+# Reuse the existing automation PR if it is already open; otherwise create one.
+# This keeps the monthly workflow from opening duplicate PRs.
 existing_pr_url="$(
   gh pr list \
     --base "${BASE_BRANCH}" \
@@ -73,6 +87,8 @@ existing_pr_url="$(
 
 body_file="$(mktemp)"
 {
+  # The generated PR body should make the review process clear without needing
+  # reviewers to inspect the workflow internals.
   printf '%s\n\n' "This PR was created by the monthly upstream sync workflow."
   printf '%s\n' "It syncs \`${UPSTREAM_REPO}/${UPSTREAM_BRANCH}\` into \`${BASE_BRANCH}\` using a real merge so upstream commit history is preserved."
   printf '%s\n' "Behind/ahead counts are measured against \`${COMPARE_BRANCH}\`, because that is the production/default branch."
