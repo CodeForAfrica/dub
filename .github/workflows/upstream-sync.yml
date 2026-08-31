@@ -1,0 +1,106 @@
+name: Upstream sync PR
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # Generated upstream-sync PRs land here first so the team can test before
+  # promoting the staged result to main.
+  BASE_BRANCH: main-staging
+  # Behind/ahead reporting compares the production/default branch with upstream,
+  # even though the generated PR targets main-staging.
+  COMPARE_BRANCH: main
+  SYNC_BRANCH: automation/sync-upstream-main-staging
+  UPSTREAM_REPO: dubinc/dub
+  UPSTREAM_BRANCH: main
+
+jobs:
+  create-sync-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check first Monday schedule
+        id: schedule
+        if: ${{ github.event_name == 'schedule' }}
+        run: |
+          set -euo pipefail
+
+          # GitHub cron cannot express "first Monday" directly, so the cron
+          # runs every Monday and this guard skips Mondays after the 7th.
+          day_of_month="$(date -u +%d)"
+          if [ "${day_of_month#0}" -gt 7 ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "This is not the first Monday of the month; skipping PR creation and Slack notification."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create upstream merge branch
+        id: sync
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The script does the Git work: fetch fork/upstream branches, create an
+        # upstream merge branch from main-staging, and open/update the PR.
+        run: bash scripts/github/create-upstream-sync-pr.sh
+
+      - name: Build Slack payload
+        id: slack_payload
+        if: ${{ always() && (github.event_name == 'workflow_dispatch' || steps.schedule.outputs.should_run == 'true') && steps.sync.outputs.behind != '' && steps.sync.outputs.behind != '0' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          SYNC_STATUS: ${{ steps.sync.outputs.status }}
+          AHEAD: ${{ steps.sync.outputs.ahead }}
+          BEHIND: ${{ steps.sync.outputs.behind }}
+          BASE_BRANCH: ${{ env.BASE_BRANCH }}
+          COMPARE_BRANCH: ${{ env.COMPARE_BRANCH }}
+          UPSTREAM_REPO: ${{ env.UPSTREAM_REPO }}
+          UPSTREAM_BRANCH: ${{ env.UPSTREAM_BRANCH }}
+          PULL_REQUEST_URL: ${{ steps.sync.outputs.pull_request_url }}
+          CONFLICT_FILES: ${{ steps.sync.outputs.conflict_files }}
+        run: |
+          set -euo pipefail
+
+          # No Slack noise when there is no webhook configured, or when the
+          # sync script found zero upstream commits to merge.
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "should_notify_slack=false" >> "$GITHUB_OUTPUT"
+            echo "SLACK_WEBHOOK_URL is not configured; skipping Slack notification."
+            exit 0
+          fi
+
+          if [ "${JOB_STATUS}" != "success" ]; then
+            message="Upstream sync found ${BEHIND} commit(s) missing from ${GITHUB_REPOSITORY}/${COMPARE_BRANCH}, but the workflow failed. Check the run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          elif [ "${SYNC_STATUS}" = "created_with_conflicts_resolved_to_upstream_tree" ]; then
+            message="Monthly upstream sync created/updated a PR for ${GITHUB_REPOSITORY}: ${PULL_REQUEST_URL}. ${COMPARE_BRANCH} is ${BEHIND} commit(s) behind ${UPSTREAM_REPO}/${UPSTREAM_BRANCH} and ${AHEAD} commit(s) ahead. The PR targets ${BASE_BRANCH} for staging review. Merge conflicts were detected and resolved to the upstream tree to keep the PR upstream-clean. Conflicted files: ${CONFLICT_FILES}. Review it, merge into ${BASE_BRANCH} with a merge commit, test staging, then promote ${BASE_BRANCH} to main."
+          else
+            message="Monthly upstream sync created/updated a PR for ${GITHUB_REPOSITORY}: ${PULL_REQUEST_URL}. ${COMPARE_BRANCH} is ${BEHIND} commit(s) behind ${UPSTREAM_REPO}/${UPSTREAM_BRANCH} and ${AHEAD} commit(s) ahead. The PR targets ${BASE_BRANCH} for staging review. No merge conflicts were detected. Review it, merge into ${BASE_BRANCH} with a merge commit, test staging, then promote ${BASE_BRANCH} to main. This workflow never auto-merges."
+          fi
+
+          {
+            echo "should_notify_slack=true"
+            echo "payload<<EOF"
+            jq -n --arg text "${message}" '{text: $text}'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack
+        if: ${{ steps.slack_payload.outputs.should_notify_slack == 'true' }}
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.slack_payload.outputs.payload }}
