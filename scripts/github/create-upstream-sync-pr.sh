@@ -41,7 +41,12 @@ conflict_files="None"
 
 # This is the important history-preserving step: the generated PR contains a
 # real merge from upstream, not a copied tree or squashed replacement commit.
-if ! git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+# Stop before committing so upstream workflow changes can be excluded even
+# when Git merges every file cleanly.
+if ! git merge --no-ff --no-commit "upstream/${UPSTREAM_BRANCH}"; then
+  # A non-conflict error must fail, not be treated as a resolved merge.
+  git rev-parse -q --verify MERGE_HEAD >/dev/null
+  test -n "$(git diff --name-only --diff-filter=U)"
   sync_status="created_with_conflicts_resolved_to_upstream_tree"
   conflict_files="$(git diff --name-only --diff-filter=U | sed -n '1,80p')"
 
@@ -51,7 +56,6 @@ if ! git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"; then
   git read-tree --reset -u "upstream/${UPSTREAM_BRANCH}"
 
   for path in \
-    ".github/workflows/upstream-sync.yml" \
     "scripts/github/create-upstream-sync-pr.sh"
   do
     if git cat-file -e "origin/${BASE_BRANCH}:${path}" 2>/dev/null; then
@@ -59,6 +63,18 @@ if ! git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"; then
     fi
   done
 
+fi
+
+# Workflows belong to the fork. Restore the whole directory from staging,
+# including files upstream deleted, and remove workflows added by upstream.
+# This retains both merge parents without introducing workflow-file changes
+# that GITHUB_TOKEN is not permitted to push.
+git rm -r -f --ignore-unmatch -- .github/workflows
+if git cat-file -e "${base_sha}:.github/workflows" 2>/dev/null; then
+  git restore --source "${base_sha}" --staged --worktree -- .github/workflows
+fi
+git diff --cached --exit-code "${base_sha}" -- .github/workflows
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
   git commit --no-edit
 fi
 
@@ -91,6 +107,7 @@ body_file="$(mktemp)"
   # reviewers to inspect the workflow internals.
   printf '%s\n\n' "This PR was created by the monthly upstream sync workflow."
   printf '%s\n' "It syncs \`${UPSTREAM_REPO}/${UPSTREAM_BRANCH}\` into \`${BASE_BRANCH}\` using a real merge so upstream commit history is preserved."
+  printf '%s\n' "Upstream workflow changes are excluded: \`.github/workflows/\` is kept exactly as it is on the staging base. Upstream commits remain in the merge history."
   printf '%s\n' "Behind/ahead counts are measured against \`${COMPARE_BRANCH}\`, because that is the production/default branch."
   printf '%s\n\n' "It does not auto-merge."
   printf '%s\n\n' "## Sync status"
@@ -104,7 +121,7 @@ body_file="$(mktemp)"
   if [ "${sync_status}" = "created" ]; then
     printf '%s\n\n' "No merge conflicts were detected by the workflow."
   else
-    printf '%s\n\n' "Merge conflicts were detected. To keep this PR upstream-clean, the workflow preserved merge ancestry and resolved the sync branch to the upstream tree, while keeping this workflow file and helper script."
+    printf '%s\n\n' "Merge conflicts were detected. The workflow preserved merge ancestry and resolved the sync branch to the upstream tree, while keeping the fork's entire workflow directory and sync helper script."
     printf '%s\n\n' "Conflicted files:"
     printf '```text\n%s\n```\n\n' "${conflict_files}"
   fi
