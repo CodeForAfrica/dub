@@ -91,7 +91,7 @@ git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD
 git push --force-with-lease origin "HEAD:${SYNC_BRANCH}"
 
 # Reuse the existing automation PR if it is already open; otherwise create one.
-# This keeps the monthly workflow from opening duplicate PRs.
+# This keeps the weekly workflow from opening duplicate PRs.
 existing_pr_url="$(
   gh pr list \
     --base "${BASE_BRANCH}" \
@@ -105,7 +105,7 @@ body_file="$(mktemp)"
 {
   # The generated PR body should make the review process clear without needing
   # reviewers to inspect the workflow internals.
-  printf '%s\n\n' "This PR was created by the monthly upstream sync workflow."
+  printf '%s\n\n' "This PR was created by the weekly upstream sync workflow."
   printf '%s\n' "It syncs \`${UPSTREAM_REPO}/${UPSTREAM_BRANCH}\` into \`${BASE_BRANCH}\` using a real merge so upstream commit history is preserved."
   printf '%s\n' "Upstream workflow changes are excluded: \`.github/workflows/\` is kept exactly as it is on the staging base. Upstream commits remain in the merge history."
   printf '%s\n' "Behind/ahead counts are measured against \`${COMPARE_BRANCH}\`, because that is the production/default branch."
