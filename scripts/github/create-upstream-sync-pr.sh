@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# gh can default a fork's PR operations to its upstream repository. Always
+# target the repository running this workflow, matching the origin push.
+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must identify the fork receiving the sync PR}"
+
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -94,6 +98,7 @@ git push --force-with-lease origin "HEAD:${SYNC_BRANCH}"
 # This keeps the weekly workflow from opening duplicate PRs.
 existing_pr_url="$(
   gh pr list \
+    --repo "${GITHUB_REPOSITORY}" \
     --base "${BASE_BRANCH}" \
     --head "${SYNC_BRANCH}" \
     --state open \
@@ -135,11 +140,13 @@ body_file="$(mktemp)"
 if [ -n "${existing_pr_url}" ]; then
   pr_url="${existing_pr_url}"
   gh pr edit "${existing_pr_url}" \
+    --repo "${GITHUB_REPOSITORY}" \
     --title "chore: sync upstream ${UPSTREAM_REPO} ${UPSTREAM_BRANCH} into ${BASE_BRANCH}" \
     --body-file "${body_file}"
 else
   pr_url="$(
     gh pr create \
+      --repo "${GITHUB_REPOSITORY}" \
       --base "${BASE_BRANCH}" \
       --head "${SYNC_BRANCH}" \
       --title "chore: sync upstream ${UPSTREAM_REPO} ${UPSTREAM_BRANCH} into ${BASE_BRANCH}" \
