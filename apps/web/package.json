@@ -9,6 +9,7 @@
     "start": "next start",
     "script": "tsx ./scripts/run.ts",
     "test": "pnpm prisma:generate && vitest -no-file-parallelism --bail=1",
+    "test:email": "vitest run --config vitest.email.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",

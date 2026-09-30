@@ -42,6 +42,7 @@ export async function inviteUser({
         message: `User ${email} has already been invited to this workspace.`,
       });
     }
+    throw error;
   }
 
   await prisma.verificationToken.create({
@@ -60,7 +61,7 @@ export async function inviteUser({
 
   const url = `${process.env.NEXTAUTH_URL}/api/auth/callback/email?${params}`;
 
-  return await sendEmail({
+  const result = await sendEmail({
     subject: "You've been invited to join a workspace on Dub",
     to: email,
     react: WorkspaceInvite({
@@ -71,4 +72,15 @@ export async function inviteUser({
       workspaceUserEmail: session?.user.email || null,
     }),
   });
+
+  // Resend resolves with an error object instead of rejecting the promise.
+  // Keep the invitation valid for direct acceptance, but do not report delivery success.
+  if (!result || ("error" in result && result.error)) {
+    throw new DubApiError({
+      code: "bad_request",
+      message: `Invitation for ${email} was saved, but its email could not be sent. Please contact your workspace administrator.`,
+    });
+  }
+
+  return result;
 }

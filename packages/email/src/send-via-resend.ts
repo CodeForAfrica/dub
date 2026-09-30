@@ -28,12 +28,17 @@ const resendEmailForOptions = (
   // CreateEmailOptions requires at least one of react or text
   const baseOptions = {
     to: isPreviewEnv ? "delivered@resend.dev" : to,
-    from: from || VARIANT_TO_FROM_MAP[variant],
+    // Self-hosted deployments must use a domain verified in their Resend account.
+    from: from || process.env.EMAIL_FROM || VARIANT_TO_FROM_MAP[variant],
     subject: `${subject}${isPreviewEnv && gitBranch ? ` [${gitBranch}]` : ""}`,
     bcc,
-    // if replyTo is set to "noreply@dub.co", don't set replyTo
-    // else set it to the value of replyTo or fallback to support@dub.co
-    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || "support@dub.co" }),
+    // "noreply" explicitly disables replies, including the configured default.
+    ...(replyTo === "noreply"
+      ? {}
+      : {
+          replyTo:
+            replyTo || process.env.EMAIL_REPLY_TO || "tech@codeforafrica.org",
+        }),
     scheduledAt,
     tags,
     ...(variant === "marketing"
