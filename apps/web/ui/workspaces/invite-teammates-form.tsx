@@ -49,7 +49,8 @@ export function InviteTeammatesForm({
     control,
     register,
     handleSubmit,
-    formState: { isSubmitting, isSubmitSuccessful },
+    setError,
+    formState: { isSubmitting, isSubmitSuccessful, errors },
   } = useForm<FormData>({
     defaultValues: {
       teammates: invites.length ? invites : [{ email: "", role: "member" }],
@@ -88,10 +89,13 @@ export function InviteTeammatesForm({
             onSuccess?.();
           } else {
             const { code, message } = response.error;
+            // A failed email can still leave a saved invitation, including in mixed batches.
+            await mutatePrefix(`/api/workspaces/${id}/invites`);
+            setError("root.server", { message });
 
             if (trialActive && code === "exceeded_limit") {
               openTrialLimitModal("users");
-              throw new Error(message);
+              return;
             }
 
             if (message.includes("upgrade")) {
@@ -108,11 +112,11 @@ export function InviteTeammatesForm({
                   { duration: 4000 },
                 );
               }
-              throw new Error(message);
+              return;
             }
 
             toast.error(message);
-            throw new Error(message);
+            return;
           }
         })}
         className={cn("flex flex-col gap-8 text-left", className)}
@@ -178,7 +182,7 @@ export function InviteTeammatesForm({
           />
         </div>
         <Button
-          loading={isSubmitting || isSubmitSuccessful}
+          loading={isSubmitting || (isSubmitSuccessful && !errors.root)}
           text={`Send ${pluralize("invite", fields.length)}`}
         />
       </form>

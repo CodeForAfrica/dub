@@ -17,6 +17,7 @@ export default {
     include: [
       "tests/email/resend-sender.test.ts",
       "tests/email/workspace-invite.test.ts",
+      "tests/email/workspace-invite-route.test.ts",
     ],
     environment: "node",
   },

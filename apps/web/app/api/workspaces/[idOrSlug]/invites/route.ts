@@ -154,18 +154,44 @@ export const POST = withWorkspace(
       ),
     );
 
-    if (results.some((result) => result.status === "rejected")) {
-      const failedInvites = results.filter(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
-      throw new DubApiError({
-        code: "bad_request",
-        message: `Failed to send ${pluralize("invitation", failedInvites.length)}: ${failedInvites.map((result) => result.reason.message).join(", ")}`,
+    const outcomes = results.map((result, index) => {
+      if (result.status === "fulfilled") return result.value;
+
+      // Unexpected storage failures must not leak database details to the client.
+      console.error("Workspace invitation could not be completed", {
+        workspaceId: workspace.id,
+        category: "unexpected_invitation_failure",
       });
+      return {
+        status: "failed" as const,
+        email: teammates[index].email,
+        message: `Invitation for ${teammates[index].email} could not be completed. Check pending invitations before retrying.`,
+      };
+    });
+    const failures = outcomes.filter(
+      (
+        result,
+      ): result is Exclude<(typeof outcomes)[number], { status: "sent" }> =>
+        result.status !== "sent",
+    );
+    if (failures.length) {
+      const serverFailure = failures.some(
+        (result) => result.status !== "already_invited",
+      );
+      const sentCount = outcomes.length - failures.length;
+      return NextResponse.json(
+        {
+          error: {
+            code: serverFailure ? "internal_server_error" : "conflict",
+            message: `${sentCount} of ${outcomes.length} invitation emails accepted for sending. ${failures.map((result) => result.message).join(" ")}`,
+          },
+          results: outcomes,
+        },
+        { status: serverFailure ? 500 : 409 },
+      );
     }
 
-    return NextResponse.json({ message: "Invite(s) sent" });
+    return NextResponse.json({ message: "Invite(s) sent", results: outcomes });
   },
   {
     requiredPermissions: ["workspaces.write"],

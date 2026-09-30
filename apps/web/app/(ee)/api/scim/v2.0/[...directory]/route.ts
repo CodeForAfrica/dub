@@ -94,10 +94,16 @@ const handleEvents = async (event: DirectorySyncEvent) => {
 
   // User has been activated for the first time
   if (action === "user.created" && !userInWorkspace && !userInvited) {
-    await inviteUser({
+    const result = await inviteUser({
       email: data.email,
       workspace,
     });
+    // Provisioning succeeded even if its notification failed; retain the pending invite.
+    if (result.status === "email_failed") {
+      console.warn("SCIM invitation saved without email delivery", {
+        workspaceId,
+      });
+    }
   }
 
   // User has been activated
@@ -107,10 +113,15 @@ const handleEvents = async (event: DirectorySyncEvent) => {
     (data.active === true || data.active === "True")
   ) {
     if (!userInWorkspace && !userInvited) {
-      await inviteUser({
+      const result = await inviteUser({
         email: data.email,
         workspace,
       });
+      if (result.status === "email_failed") {
+        console.warn("SCIM invitation saved without email delivery", {
+          workspaceId,
+        });
+      }
     }
   }
 

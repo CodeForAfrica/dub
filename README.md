@@ -111,9 +111,17 @@ In Vercel, set the variables for the intended environment and redeploy after
 merging. Preview sends remain redirected to `delivered@resend.dev`, so a preview
 deployment cannot prove real inbox delivery.
 
-The invitation endpoint now reports Resend rejections and missing email-provider
-configuration as failures instead of claiming the invitation email was sent.
-The saved invitation remains pending. Once sending is fixed, use Members >
+The invitation helper returns explicit outcomes for email failures and duplicate
+invitations instead of throwing exceptions for these expected cases. The endpoint
+returns per-recipient outcomes, with HTTP 500 for sending/storage failures and
+409 for duplicates, instead of claiming all invitation emails were sent. Mixed
+batches retain their successful outcomes. Logs include only safe error categories,
+provider HTTP status (when available), and workspace ID, not provider messages or
+invitation tokens. Directory provisioning retains saved invites when their email
+fails and logs a warning without failing the provisioning operation.
+
+The saved invitation remains pending, and the form refreshes pending invitations
+even when sending fails. Once sending is fixed, use Members >
 Pending invites to revoke and re-invite the affected recipient, preserving
 their intended role. Existing failed invitations are not automatically retried.
 Verify the new request and delivery status in Resend; API acceptance alone does
