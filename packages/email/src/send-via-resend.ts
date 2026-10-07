@@ -33,7 +33,7 @@ const resendEmailForOptions = (
     bcc,
     // if replyTo is set to "noreply@dub.co", don't set replyTo
     // else set it to the value of replyTo or fallback to support@dub.co
-    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || "support@dub.co" }),
+    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || process.env.EMAIL_REPLY_TO || "support@dub.co" }),
     scheduledAt,
     tags,
     ...(variant === "marketing"
