@@ -12,7 +12,13 @@ import { CommissionStatusBadges } from "@/ui/partners/commission-status-badges";
 import SimpleDateRangePicker from "@/ui/shared/simple-date-range-picker";
 import { Filter, LoadingSpinner, ToggleGroup, useRouterStuff } from "@dub/ui";
 import { Areas, TimeSeriesChart, XAxis, YAxis } from "@dub/ui/charts";
-import { CircleDotted, Hyperlink, MoneyBill2, Sliders, User } from "@dub/ui/icons";
+import {
+  CircleDotted,
+  Hyperlink,
+  MoneyBill2,
+  Sliders,
+  User,
+} from "@dub/ui/icons";
 import {
   capitalize,
   cn,
@@ -52,7 +58,7 @@ export function EarningsCompositeChart() {
     start,
     end,
     interval = DUB_PARTNERS_ANALYTICS_INTERVAL,
-    groupBy = "linkId",
+    groupBy = "type",
   } = searchParamsObj as {
     start?: string;
     end?: string;
@@ -150,20 +156,20 @@ export function EarningsCompositeChart() {
               {
                 label: (
                   <div className="flex items-center gap-1.5 text-neutral-600">
-                    <Hyperlink className="size-4" />
-                    <span className="text-sm">Link</span>
-                  </div>
-                ),
-                value: "linkId",
-              },
-              {
-                label: (
-                  <div className="flex items-center gap-1.5 text-neutral-600">
                     <Sliders className="size-4" />
                     <span className="text-sm">Type</span>
                   </div>
                 ),
                 value: "type",
+              },
+              {
+                label: (
+                  <div className="flex items-center gap-1.5 text-neutral-600">
+                    <Hyperlink className="size-4" />
+                    <span className="text-sm">Link</span>
+                  </div>
+                ),
+                value: "linkId",
               },
             ]}
             selected={groupBy}

@@ -56,8 +56,6 @@ model DefaultDomains {
   ggllink     Boolean @default(true)
   figpage     Boolean @default(true)
   loooooooong Boolean @default(false)
-  fyicodeforafricaorg Boolean @default(true)
-  cfafyi Boolean @default(true)
   projectId   String  @unique
   project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
@@ -68,6 +66,9 @@ enum EmailDomainStatus {
   failed
   temporary_failure
   not_started
+  // Resend aggregate statuses when send/receive (or dual sending CNAMEs) diverge
+  partially_verified
+  partially_failed
 }
 
 model EmailDomain {
