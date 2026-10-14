@@ -154,14 +154,16 @@ export const POST = withWorkspace(
       ),
     );
 
-    if (results.some((result) => result.status === "rejected")) {
-      const failedInvites = results.filter(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
+    const failedEmails = results.flatMap((result, index) => {
+      if (result.status === "rejected") return [teammates[index].email];
+      if (!result.value.success) return [result.value.email];
+      return [];
+    });
+
+    if (failedEmails.length > 0) {
       throw new DubApiError({
-        code: "bad_request",
-        message: `Failed to send ${pluralize("invitation", failedInvites.length)}: ${failedInvites.map((result) => result.reason.message).join(", ")}`,
+        code: "internal_server_error",
+        message: `Could not send ${pluralize("invitation", failedEmails.length)} to: ${failedEmails.join(", ")}. Check pending invitations before retrying.`,
       });
     }
 
