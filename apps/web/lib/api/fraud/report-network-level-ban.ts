@@ -2,9 +2,52 @@ import { createFraudEvents } from "@/lib/api/fraud/create-fraud-events";
 import { isFraudRuleEnabled } from "@/lib/api/fraud/get-merged-fraud-rules";
 import { prisma } from "@/lib/prisma";
 import { INACTIVE_ENROLLMENT_STATUSES } from "@/lib/zod/schemas/partners";
-import { FraudRuleType, PartnerBannedReason } from "@prisma/client";
+import { NETWORK_PROGRAM_ID } from "@dub/utils";
+import {
+  FraudAlert,
+  FraudRuleType,
+  PartnerBannedReason,
+  ProgramApplication,
+  ProgramEnrollment,
+} from "@prisma/client";
 import { holdPendingCommissions } from "./hold-pending-commissions";
 import { holdProcessedCommissions } from "./hold-processed-commissions";
+
+type NetworkBanFraudAlert = Pick<
+  FraudAlert,
+  "programId" | "source" | "reviewedAt" | "createdAt"
+> & {
+  programEnrollment: Pick<ProgramEnrollment, "bannedReason" | "bannedAt"> & {
+    application: Pick<ProgramApplication, "reviewedAt"> | null;
+  };
+};
+
+// Returns the source program and ban details that a confirmed fraud alert reports to other programs.
+// Admin bans come from the network program, because no program banned the partner.
+export function getNetworkBanDetails(fraudAlert: NetworkBanFraudAlert): {
+  sourceProgramId: string;
+  bannedReason: PartnerBannedReason;
+  bannedAt: Date;
+} {
+  if (fraudAlert.source === "admin") {
+    return {
+      sourceProgramId: NETWORK_PROGRAM_ID,
+      bannedReason: "fraud",
+      bannedAt: fraudAlert.reviewedAt ?? fraudAlert.createdAt,
+    };
+  }
+
+  const { programEnrollment } = fraudAlert;
+
+  return {
+    sourceProgramId: fraudAlert.programId,
+    bannedReason: programEnrollment.bannedReason ?? "fraud",
+    bannedAt:
+      programEnrollment.bannedAt ??
+      programEnrollment.application?.reviewedAt ??
+      fraudAlert.createdAt,
+  };
+}
 
 // Creates partnerCrossProgramBan fraud events in other programs where the partner is enrolled.
 // Used when a program bans a partner so that other programs can be alerted about network-level
@@ -43,7 +86,10 @@ export async function reportNetworkLevelBan({
   });
 
   if (affectedProgramEnrollments.length === 0) {
-    return;
+    console.log(
+      `No eligible program enrollments found for partner ${partnerId}, skipping reportNetworkLevelBan...`,
+    );
+    return 0;
   }
 
   // Filter out programs where the partnerCrossProgramBan rule is disabled
@@ -55,7 +101,10 @@ export async function reportNetworkLevelBan({
   );
 
   if (affectedProgramEnrollments.length === 0) {
-    return;
+    console.log(
+      `No eligible program enrollments found for partner ${partnerId}, skipping reportNetworkLevelBan...`,
+    );
+    return 0;
   }
 
   const { affectedGroups } = await createFraudEvents(
@@ -71,6 +120,10 @@ export async function reportNetworkLevelBan({
     })),
   );
 
+  console.log(
+    `Reporting network level ban for partner ${partnerId} to ${affectedGroups.length} programs...`,
+  );
+
   const results = await Promise.allSettled([
     holdPendingCommissions(affectedGroups),
     holdProcessedCommissions(affectedGroups),
@@ -78,4 +131,6 @@ export async function reportNetworkLevelBan({
   results
     .filter((r): r is PromiseRejectedResult => r.status === "rejected")
     .forEach((r) => console.error("Failed to hold commissions:", r.reason));
+
+  return affectedGroups.length;
 }
