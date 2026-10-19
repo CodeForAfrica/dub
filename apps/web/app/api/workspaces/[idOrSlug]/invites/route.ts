@@ -154,6 +154,13 @@ export const POST = withWorkspace(
       ),
     );
 
+    // Conflict errors (duplicate invite) must surface as 409, not collapse into 500.
+    for (const result of results) {
+      if (result.status === "rejected" && result.reason?.code === "conflict") {
+        throw result.reason;
+      }
+    }
+
     const failedEmails = results.flatMap((result, index) => {
       if (result.status === "rejected") return [teammates[index].email];
       if (!result.value.success) return [result.value.email];
