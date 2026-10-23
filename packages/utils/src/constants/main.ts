@@ -57,7 +57,11 @@ export const APP_DOMAIN_WITH_NGROK =
       ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL || "preview.dub.co"}`
       : process.env.NEXT_PUBLIC_NGROK_URL || "http://localhost:8888";
 
+const EXTRA_APP_HOSTNAMES: string[] =
+  process.env.NEXT_PUBLIC_APP_HOSTNAMES?.split(",").map((h) => h.trim()) ?? [];
+
 export const isAppHostname = (hostname: string) => {
+  if (EXTRA_APP_HOSTNAMES.includes(hostname)) return true;
   if (process.env.NEXT_PUBLIC_VERCEL_ENV === "preview") {
     // pattern of our preview URLs are always "dub-<random-string>.dub.co"
     return hostname.startsWith("dub-") && hostname.endsWith(".dub.co");
