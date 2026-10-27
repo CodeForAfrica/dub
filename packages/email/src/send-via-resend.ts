@@ -3,6 +3,35 @@ import { resend } from "./resend";
 import { VARIANT_TO_FROM_MAP } from "./resend/constants";
 import { ResendBulkEmailOptions, ResendEmailOptions } from "./resend/types";
 
+// Resend 422s reserved test domains:
+// https://resend.com/docs/knowledge-base/what-email-addresses-to-use-for-testing
+const RESEND_BLOCKED_DOMAINS = [
+  "example.com",
+  "example.net",
+  "example.org",
+  "test.com",
+] as const;
+
+const isResendBlockedRecipient = (to: string) => {
+  const domain = to.toLowerCase().trim().split("@").at(1);
+  if (!domain) return false;
+
+  return RESEND_BLOCKED_DOMAINS.some(
+    (blocked) => domain === blocked || domain.endsWith(`.${blocked}`),
+  );
+};
+
+// Keep batch cardinality so callers can zip Resend IDs by index.
+// delivered+label@resend.dev is a Resend test sink (no real inbox).
+const rewriteBlockedRecipient = (to: string) => {
+  if (!isResendBlockedRecipient(to)) return to;
+
+  const username = to.toLowerCase().trim().split("@").at(0) || "unknown";
+  const rewritten = `delivered+${username}@resend.dev`;
+  console.info(`Rewriting reserved Resend recipient ${to} → ${rewritten}`);
+  return rewritten;
+};
+
 const resendEmailForOptions = (
   opts: ResendEmailOptions,
 ): CreateEmailOptions => {
@@ -27,13 +56,13 @@ const resendEmailForOptions = (
   // Build base options without rendered outputs (react/text)
   // CreateEmailOptions requires at least one of react or text
   const baseOptions = {
-    to: isPreviewEnv ? "delivered@resend.dev" : to,
+    to: isPreviewEnv ? "delivered@resend.dev" : rewriteBlockedRecipient(to),
     from: from || VARIANT_TO_FROM_MAP[variant],
     subject: `${subject}${isPreviewEnv && gitBranch ? ` [${gitBranch}]` : ""}`,
     bcc,
     // if replyTo is set to "noreply@dub.co", don't set replyTo
     // else set it to the value of replyTo or fallback to support@dub.co
-    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || "support@dub.co" }),
+    ...(replyTo === "noreply" ? {} : { replyTo: replyTo || process.env.EMAIL_REPLY_TO || "support@codeforafrica.org" }),
     scheduledAt,
     tags,
     ...(variant === "marketing"

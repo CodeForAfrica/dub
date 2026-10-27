@@ -1,8 +1,11 @@
 import { createId } from "@/lib/api/create-id";
 import { hashPassword } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
+import { createStagingProgram } from "@/lib/sandbox/create-staging-program";
+import { createStagingWorkspace } from "@/lib/sandbox/create-staging-workspace";
 import {
   Domain,
+  EmailDomain,
   Folder,
   Integration,
   Partner,
@@ -18,7 +21,7 @@ import {
 import "dotenv-flow/config";
 import fs from "fs";
 import path from "path";
-import readline from "readline";
+import { assertLocalDatabaseEnv } from "../../playwright/assert-local-database";
 
 type Workspace = Pick<
   Project,
@@ -44,9 +47,12 @@ type Workspace = Pick<
   | "webhookEnabled"
   | "dotLinkClaimed"
   | "fastDirectDebitPayouts"
+  | "publishableKey"
 >;
 
 type DomainSeed = Pick<Domain, "id" | "slug" | "verified">;
+
+type EmailDomainSeed = Pick<EmailDomain, "id" | "slug" | "status">;
 
 type FolderSeed = Pick<Folder, "id" | "name" | "description" | "accessLevel">;
 
@@ -54,6 +60,7 @@ type RewardSeed = Pick<
   Reward,
   | "id"
   | "programId"
+  | "groupId"
   | "event"
   | "type"
   | "amountInCents"
@@ -118,6 +125,7 @@ type SeedData = {
   workspace: Workspace;
   users: WorkspaceUser[];
   domains: DomainSeed[];
+  emailDomains: EmailDomainSeed[];
   folders: FolderSeed[];
   rewards: RewardSeed[];
   groups: GroupSeed[];
@@ -225,6 +233,33 @@ const createDomains = async (data: SeedData) => {
   console.log(`Created ${count} domains`);
 };
 
+// Create email domains
+const createEmailDomains = async (data: SeedData) => {
+  const { emailDomains, workspace, program } = data;
+
+  if (!emailDomains || emailDomains.length === 0) {
+    console.log("No email domains to insert");
+    return;
+  }
+
+  if (!program) {
+    console.log("Program is required to create email domains");
+    return;
+  }
+
+  const { count } = await prisma.emailDomain.createMany({
+    data: emailDomains.map((emailDomain) => ({
+      id: emailDomain.id,
+      slug: emailDomain.slug,
+      status: emailDomain.status,
+      workspaceId: workspace.id,
+      programId: program.id,
+    })),
+  });
+
+  console.log(`Created ${count} email domains`);
+};
+
 // Create folders
 const createFolders = async (data: SeedData) => {
   const { folders, workspace } = data;
@@ -265,6 +300,7 @@ const createRewards = async (data: SeedData) => {
     data: rewards.map((reward) => ({
       id: reward.id,
       programId: program.id,
+      groupId: reward.groupId ?? null,
       event: reward.event,
       type: reward.type,
       amountInCents: reward.amountInCents,
@@ -433,13 +469,35 @@ const createPartners = async (data: SeedData) => {
     `Created ${notificationPreferencesCount} partner notification preferences`,
   );
 
+  const applications = partners.map((partner) => ({
+    id: createId({ prefix: "pga_" }),
+    programId: program.id,
+    partnerId: partner.id,
+    groupId: program.defaultGroupId,
+    name: partner.name,
+    email: partner.email ?? `${partner.id}@dub-internal-test.com`,
+    country: partner.country,
+    formData: { fields: [] },
+    status: "pending" as const,
+    createdAt: new Date(partner.createdAt),
+  }));
+
+  const { count: applicationCount } =
+    await prisma.programApplication.createMany({
+      data: applications,
+    });
+
+  console.log(`Created ${applicationCount} program applications`);
+
   // Create program enrollments
   const { count: enrollmentCount } = await prisma.programEnrollment.createMany({
-    data: partners.map((partner) => ({
+    data: partners.map((partner, index) => ({
       id: createId({ prefix: "pge_" }),
       partnerId: partner.id,
       programId: program.id,
       groupId: program.defaultGroupId,
+      applicationId: applications[index].id,
+      status: "pending" as const,
     })),
   });
 
@@ -482,6 +540,12 @@ const truncate = async () => {
   });
 
   const tables = [
+    "Job",
+    "jackson_index",
+    "jackson_store",
+    "jackson_ttl",
+    "OAuthCode",
+    "OAuthApp",
     "InstalledIntegration",
     "FolderWebhook",
     "LinkWebhook",
@@ -496,7 +560,10 @@ const truncate = async () => {
     "VerificationToken",
     "EmailVerificationToken",
     "NotificationPreference",
+    "UserNotificationPreferences",
     "Integration",
+    "LinkReward",
+    "SubmittedLead",
     "Commission",
     "PartnerComment",
     "Payout",
@@ -507,32 +574,57 @@ const truncate = async () => {
     "Discount",
     "FolderAccessRequest",
     "EmailDomain",
+    "MessageAttachment",
+    "NotificationEmail",
     "Message",
     "PartnerGroupDefaultLink",
     "FolderUser",
     "Folder",
     "Link",
     "Workflow",
+    "BountyPartnerTag",
     "BountyGroup",
     "BountySubmission",
     "Bounty",
+    "CampaignPartnerTag",
     "CampaignGroup",
     "Campaign",
+    "FraudAlert",
     "FraudEvent",
     "FraudEventGroup",
     "FraudRule",
     "ActivityLog",
+    "ProgramPartnerTag",
     "ProgramApplicationEvent",
     "ProgramApplication",
     "ProgramEnrollment",
     "PartnerGroup",
+    "PartnerNotificationPreferences",
     "PartnerUser",
+    "Postback",
+    "PartnerIndustryInterest",
+    "PartnerPreferredEarningStructure",
+    "PartnerSalesChannel",
+    "PartnerPlatform",
+    "PartnerRewind",
     "Partner",
     "PartnerInvite",
     "Domain",
+    "Account",
+    "Session",
+    "Dashboard",
     "ProjectUsers",
     "User",
+    "PartnerTag",
+    "ProgramCategory",
+    "ProgramSimilarity",
+    "DiscoveredPartner",
     "Program",
+    "RegisteredDomain",
+    "DefaultDomains",
+    "ProjectInvite",
+    "SentEmail",
+    "YearInReview",
     "Project",
   ];
 
@@ -566,44 +658,14 @@ const truncate = async () => {
   console.log("Database truncated successfully");
 };
 
-// Ask for confirmation - requires typing "YES DELETE DATA"
-const askConfirmation = (question: string): Promise<boolean> => {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question(
-      `${question}\nType "YES DELETE DATA" to confirm: `,
-      (answer) => {
-        rl.close();
-        resolve(answer === "YES DELETE DATA");
-      },
-    );
-  });
-};
-
 async function main() {
+  assertLocalDatabaseEnv();
+
   // Check for --truncate flag
   // process.argv[0] = node, process.argv[1] = script path, process.argv[2+] = arguments
   const shouldTruncate = process.argv.slice(2).includes("--truncate");
 
   if (shouldTruncate) {
-    console.log(
-      "\n⚠️  WARNING: This will delete ALL data from the database.\n",
-    );
-    console.log("⚠️  Make sure you are NOT on production database!\n");
-    const confirmed = await askConfirmation(
-      "Are you sure you want to delete ALL data from the database?",
-    );
-
-    if (!confirmed) {
-      console.log("\nTruncate canceled. Exiting...");
-      process.exit(0);
-    }
-
-    console.log("\n");
     await truncate();
     console.log("\n");
   }
@@ -615,8 +677,12 @@ async function main() {
   await createDomains(data);
   await createFolders(data);
   await createProgram(data);
+  await createStagingWorkspace(data.workspace.id);
+  await createEmailDomains(data);
   await createRewards(data);
   await createGroups(data);
+  await createStagingProgram(data.workspace.id);
+  console.log("Created staging workspace and program");
   await createPartners(data);
   await createIntegrations(data);
 }
