@@ -45,14 +45,14 @@ export const PARTNERS_DOMAIN_WITH_NGROK =
 
 export const APP_DOMAIN =
   process.env.NEXT_PUBLIC_VERCEL_ENV === "production"
-    ? "https://app.dub.co"
+    ? `https://app.${process.env.NEXT_PUBLIC_APP_DOMAIN || "dub.co"}`
     : process.env.NEXT_PUBLIC_VERCEL_ENV === "preview"
       ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL || "preview.dub.co"}`
       : "http://localhost:8888";
 
 export const APP_DOMAIN_WITH_NGROK =
   process.env.NEXT_PUBLIC_VERCEL_ENV === "production"
-    ? "https://app.dub.co"
+    ? `https://app.${process.env.NEXT_PUBLIC_APP_DOMAIN || "dub.co"}`
     : process.env.NEXT_PUBLIC_VERCEL_ENV === "preview"
       ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL || "preview.dub.co"}`
       : process.env.NEXT_PUBLIC_NGROK_URL || "http://localhost:8888";
