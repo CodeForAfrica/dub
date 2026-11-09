@@ -140,7 +140,7 @@ module.exports = withPlausibleProxy({
         missing: [
           {
             type: "host",
-            value: ".*(\\.dub\\.co|localhost)",
+            value: ".*(\\.dub\\.co|\\.codeforafrica\\.org|localhost)",
           },
         ],
         destination: "/",
