@@ -60,7 +60,7 @@ export async function inviteUser({
 
   const url = `${APP_DOMAIN}/api/auth/callback/email?${params}`;
 
-  const response = await sendEmail({
+  return await sendEmail({
     subject: "You've been invited to join a workspace on Dub",
     to: email,
     react: WorkspaceInvite({
@@ -71,10 +71,4 @@ export async function inviteUser({
       workspaceUserEmail: session?.user.email || null,
     }),
   });
-
-  if (!response || ("error" in response && response.error)) {
-    return { success: false as const, email };
-  }
-
-  return { success: true as const, email };
 }
