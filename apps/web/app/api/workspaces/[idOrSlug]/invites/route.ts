@@ -4,7 +4,6 @@ import { assertRoleAllowedForPlan } from "@/lib/api/workspaces/assert-role-plan"
 import { withWorkspace } from "@/lib/auth";
 import { exceededLimitError } from "@/lib/exceeded-limit-error";
 import { prisma } from "@/lib/prisma";
-import { assertNotStagingWorkspace } from "@/lib/sandbox/workspace-guards";
 import { redis } from "@/lib/upstash";
 import { assertRateLimit } from "@/lib/upstash/assert-rate-limit";
 import { RATELIMIT_POLICIES } from "@/lib/upstash/ratelimit-policies";
@@ -52,8 +51,6 @@ export const GET = withWorkspace(
 // POST /api/workspaces/[idOrSlug]/invites – invite a teammate
 export const POST = withWorkspace(
   async ({ req, workspace, session }) => {
-    assertNotStagingWorkspace(workspace);
-
     const { teammates } = inviteTeammatesSchema.parse(await req.json());
 
     for (const teammate of teammates) {
@@ -153,23 +150,14 @@ export const POST = withWorkspace(
       ),
     );
 
-    // Conflict errors (duplicate invite) must surface as 409, not collapse into 500.
-    for (const result of results) {
-      if (result.status === "rejected" && result.reason?.code === "conflict") {
-        throw result.reason;
-      }
-    }
-
-    const failedEmails = results.flatMap((result, index) => {
-      if (result.status === "rejected") return [teammates[index].email];
-      if (!result.value.success) return [result.value.email];
-      return [];
-    });
-
-    if (failedEmails.length > 0) {
+    if (results.some((result) => result.status === "rejected")) {
+      const failedInvites = results.filter(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
       throw new DubApiError({
-        code: "internal_server_error",
-        message: `Could not send ${pluralize("invitation", failedEmails.length)} to: ${failedEmails.join(", ")}. Check pending invitations before retrying.`,
+        code: "bad_request",
+        message: `Failed to send ${pluralize("invitation", failedInvites.length)}: ${failedInvites.map((result) => result.reason.message).join(", ")}`,
       });
     }
 
@@ -188,8 +176,6 @@ const updateInviteRoleSchema = z.object({
 // PATCH /api/workspaces/[idOrSlug]/invites - update an invite's role
 export const PATCH = withWorkspace(
   async ({ req, workspace }) => {
-    assertNotStagingWorkspace(workspace);
-
     const { email, role } = updateInviteRoleSchema.parse(await req.json());
 
     assertRoleAllowedForPlan({
@@ -235,8 +221,6 @@ export const PATCH = withWorkspace(
 // DELETE /api/workspaces/[idOrSlug]/invites – delete a pending invite
 export const DELETE = withWorkspace(
   async ({ searchParams, workspace }) => {
-    assertNotStagingWorkspace(workspace);
-
     const { email } = z
       .object({
         email: z.email(),

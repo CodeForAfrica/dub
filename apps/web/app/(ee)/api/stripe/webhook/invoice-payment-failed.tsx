@@ -25,7 +25,6 @@ export async function invoicePaymentFailed(
       name: true,
       slug: true,
       plan: true,
-      defaultProgramId: true,
       users: {
         select: {
           user: {
@@ -80,7 +79,6 @@ export async function invoicePaymentFailed(
             workspace={workspace}
           />
         ),
-        variant: "notifications",
       }),
     ),
   ]);
