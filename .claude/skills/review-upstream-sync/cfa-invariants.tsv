@@ -1,0 +1,17 @@
+# CFA customizations that must survive every upstream sync.
+# Format: path<TAB>extended-regex<TAB>what breaks if it is missing
+# Add a line whenever a new CFA customization lands on main-staging.
+apps/web/next.config.js	codeforafrica	/api/* redirects to / on codeforafrica.org hosts: login redirect loop
+apps/web/lib/auth/options.ts	NEXTAUTH_COOKIE_DOMAIN	session cookie scoped to .dub.co: login fails on our domains
+packages/utils/src/constants/main.ts	NEXT_PUBLIC_APP_DOMAIN	APP_DOMAIN hardcoded to app.dub.co: invite and email links point to dub.co
+packages/utils/src/constants/main.ts	NEXT_PUBLIC_APP_HOSTNAMES	our app hostnames not recognised as the app
+packages/email/src/resend/constants.ts	EMAIL_FROM_PRIMARY	emails sent from dub.co sender addresses
+packages/email/src/send-via-resend.ts	EMAIL_REPLY_TO	reply-to goes to support@dub.co
+apps/web/lib/api/users.ts	success: false	failed invite emails reported as sent
+apps/web/app/api/workspaces/[idOrSlug]/invites/route.ts	failedEmails	invite route hides send failures and duplicate (409) errors
+apps/web/lib/upstash/vector.ts	getInstance	build fails without UPSTASH_VECTOR env vars
+apps/web/prisma/schema/domain.prisma	fyicodeforafricaorg	CFA default domain flag missing from schema (db push would drop the column)
+apps/web/prisma/schema/domain.prisma	cfafyi	CFA default domain flag missing from schema (db push would drop the column)
+apps/web/tests/misc/invite-route.test.ts	describe	CFA invite route tests deleted
+apps/web/tests/misc/invite-user.test.ts	describe	CFA invite user tests deleted
+scripts/github/create-upstream-sync-pr.sh	\.claude	sync script no longer preserves .claude (this skill gets deleted on conflict)
