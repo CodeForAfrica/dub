@@ -60,7 +60,8 @@ if ! git merge --no-ff --no-commit "upstream/${UPSTREAM_BRANCH}"; then
   git read-tree --reset -u "upstream/${UPSTREAM_BRANCH}"
 
   for path in \
-    "scripts/github/create-upstream-sync-pr.sh"
+    "scripts/github/create-upstream-sync-pr.sh" \
+    ".claude"
   do
     if git cat-file -e "origin/${BASE_BRANCH}:${path}" 2>/dev/null; then
       git restore --source "origin/${BASE_BRANCH}" --staged --worktree -- "${path}"
